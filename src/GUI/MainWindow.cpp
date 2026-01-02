@@ -93,14 +93,15 @@ void MainWindow::LoadBackgroundImage() {
 void MainWindow::ApplyPsychedelicStyling() {
     // Set window background to black
     SetBackgroundColour(wxColour(10, 10, 26));
-    
+
     // Apply neon colors to UI elements
     wxColour cyan(0, 217, 255);
     wxColour purple(139, 0, 255);
     wxColour darkBg(20, 20, 40);
-    
+
     if (m_mainPanel) {
-        m_mainPanel->SetBackgroundColour(darkBg);
+        // Make panel transparent to show background image
+        m_mainPanel->SetBackgroundStyle(wxBG_STYLE_PAINT);
     }
     
     // Style buttons
@@ -129,6 +130,14 @@ void MainWindow::ApplyPsychedelicStyling() {
 
 void MainWindow::CreateControls() {
     m_mainPanel = new wxPanel(this);
+
+    // Bind erase background event to draw custom background
+    m_mainPanel->Bind(wxEVT_ERASE_BACKGROUND, [this](wxEraseEvent& evt) {
+        wxDC* dc = evt.GetDC();
+        if (dc && m_backgroundBitmap.IsOk()) {
+            dc->DrawBitmap(m_backgroundBitmap, 0, 0, false);
+        }
+    });
     
     // Input Files Section
     m_audioFilePicker = new wxFilePickerCtrl(m_mainPanel, wxID_ANY, "",
