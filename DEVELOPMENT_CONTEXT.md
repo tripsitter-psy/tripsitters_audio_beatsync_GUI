@@ -87,8 +87,16 @@ cmake --build build --config Release
 ✅ Both executables built and tested locally (beatsync.exe CLI works perfectly)
 ✅ PNG image loading fixed - wxInitAllImageHandlers() added to GUI initialization
 ✅ TripSitter.exe rebuilt and verified - background images load correctly
+✅ GUI transparency working - psychedelic background fully visible
+✅ Window aspect ratio set to 16:9 (1344x768) matching background image
+✅ Static boxes removed in favor of section labels for full transparency
 ✅ Quick rebuild scripts added (quick_rebuild.bat, rebuild_gui.bat)
 ✅ Project is ready for production use and distribution
+
+**Known Limitations:**
+- wxWidgets on Windows uses native controls (file pickers, dropdowns) that don't support custom background styling
+- Input controls remain with system default styling (white backgrounds)
+- Future enhancement: Consider custom-drawn controls for full theme control
 
 **Repository Structure:**
 - `main` branch — stable release code with assets
