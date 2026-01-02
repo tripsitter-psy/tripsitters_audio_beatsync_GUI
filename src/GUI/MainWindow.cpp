@@ -131,12 +131,17 @@ void MainWindow::ApplyPsychedelicStyling() {
 void MainWindow::CreateControls() {
     m_mainPanel = new wxPanel(this);
 
-    // Bind erase background event to draw custom background
-    m_mainPanel->Bind(wxEVT_ERASE_BACKGROUND, [this](wxEraseEvent& evt) {
-        wxDC* dc = evt.GetDC();
-        if (dc && m_backgroundBitmap.IsOk()) {
-            dc->DrawBitmap(m_backgroundBitmap, 0, 0, false);
+    // Bind paint event to draw custom background on panel
+    m_mainPanel->Bind(wxEVT_PAINT, [this](wxPaintEvent& evt) {
+        wxPaintDC dc(m_mainPanel);
+        if (m_backgroundBitmap.IsOk()) {
+            dc.DrawBitmap(m_backgroundBitmap, 0, 0, false);
         }
+    });
+
+    // Prevent default erase to avoid flicker
+    m_mainPanel->Bind(wxEVT_ERASE_BACKGROUND, [](wxEraseEvent& evt) {
+        // Do nothing - prevents flicker
     });
     
     // Input Files Section
