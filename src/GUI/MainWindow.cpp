@@ -113,13 +113,54 @@ void MainWindow::ApplyPsychedelicStyling() {
         }
     }
     
+    // Style text inputs and dropdowns with dark backgrounds
+    wxColour darkInput(20, 20, 40);
+    wxColour lightText(200, 220, 255);
+
+    if (m_audioFilePicker) {
+        m_audioFilePicker->SetBackgroundColour(darkInput);
+        m_audioFilePicker->SetForegroundColour(lightText);
+    }
+    if (m_singleVideoPicker) {
+        m_singleVideoPicker->SetBackgroundColour(darkInput);
+        m_singleVideoPicker->SetForegroundColour(lightText);
+    }
+    if (m_videoFolderPicker) {
+        m_videoFolderPicker->SetBackgroundColour(darkInput);
+        m_videoFolderPicker->SetForegroundColour(lightText);
+    }
+    if (m_outputFilePicker) {
+        m_outputFilePicker->SetBackgroundColour(darkInput);
+        m_outputFilePicker->SetForegroundColour(lightText);
+    }
+    if (m_beatRateChoice) {
+        m_beatRateChoice->SetBackgroundColour(darkInput);
+        m_beatRateChoice->SetForegroundColour(lightText);
+    }
+    if (m_resolutionChoice) {
+        m_resolutionChoice->SetBackgroundColour(darkInput);
+        m_resolutionChoice->SetForegroundColour(lightText);
+    }
+    if (m_fpsChoice) {
+        m_fpsChoice->SetBackgroundColour(darkInput);
+        m_fpsChoice->SetForegroundColour(lightText);
+    }
+    if (m_previewTimestampCtrl) {
+        m_previewTimestampCtrl->SetBackgroundColour(darkInput);
+        m_previewTimestampCtrl->SetForegroundColour(lightText);
+    }
+    if (m_previewBeatsCtrl) {
+        m_previewBeatsCtrl->SetBackgroundColour(darkInput);
+        m_previewBeatsCtrl->SetForegroundColour(lightText);
+    }
+
     // Style buttons
     if (m_startButton) {
         m_startButton->SetBackgroundColour(cyan);
         m_startButton->SetForegroundColour(*wxBLACK);
         m_startButton->SetFont(m_titleFont);
     }
-    
+
     if (m_cancelButton) {
         m_cancelButton->SetBackgroundColour(purple);
         m_cancelButton->SetForegroundColour(*wxWHITE);
