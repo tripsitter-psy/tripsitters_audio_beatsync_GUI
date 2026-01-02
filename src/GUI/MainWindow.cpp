@@ -101,6 +101,16 @@ void MainWindow::ApplyPsychedelicStyling() {
     if (m_mainPanel) {
         // Make panel transparent to show background image
         m_mainPanel->SetBackgroundStyle(wxBG_STYLE_PAINT);
+
+        // Make all child static boxes transparent
+        wxWindowList& children = m_mainPanel->GetChildren();
+        for (wxWindowList::iterator it = children.begin(); it != children.end(); ++it) {
+            wxWindow* child = *it;
+            if (child->GetClassInfo()->GetClassName() == wxString("wxStaticBox")) {
+                child->SetBackgroundStyle(wxBG_STYLE_PAINT);
+                child->Bind(wxEVT_ERASE_BACKGROUND, [](wxEraseEvent&) { /* Skip erase */ });
+            }
+        }
     }
     
     // Style buttons
