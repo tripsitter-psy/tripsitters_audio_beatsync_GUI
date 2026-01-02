@@ -263,16 +263,13 @@ void MainWindow::CreateLayout() {
     mainSizer->Add(subtitle, 0, wxALIGN_CENTER_HORIZONTAL | wxBOTTOM, 10);
     
     // Input Files Section
-    wxStaticBoxSizer* inputBox = new wxStaticBoxSizer(wxVERTICAL, m_mainPanel, " Input Files ");
-    inputBox->GetStaticBox()->SetBackgroundStyle(wxBG_STYLE_PAINT);
-    inputBox->GetStaticBox()->SetBackgroundColour(wxColour(0, 0, 0, wxALPHA_TRANSPARENT));
-    inputBox->GetStaticBox()->SetForegroundColour(wxColour(0, 217, 255)); // Cyan border
-    // Bind paint to make truly transparent
-    inputBox->GetStaticBox()->Bind(wxEVT_PAINT, [](wxPaintEvent& evt) {
-        wxPaintDC dc((wxWindow*)evt.GetEventObject());
-        dc.SetBackground(*wxTRANSPARENT_BRUSH);
-        dc.Clear();
-    });
+    wxStaticText* inputSectionLabel = new wxStaticText(m_mainPanel, wxID_ANY, "══ INPUT FILES ══");
+    inputSectionLabel->SetFont(m_labelFont.Bold());
+    inputSectionLabel->SetForegroundColour(wxColour(0, 217, 255)); // Cyan
+    mainSizer->Add(inputSectionLabel, 0, wxLEFT | wxTOP, 15);
+    mainSizer->AddSpacer(5);
+
+    wxBoxSizer* inputBox = new wxBoxSizer(wxVERTICAL);
     wxGridBagSizer* inputGrid = new wxGridBagSizer(8, 10);
     
     wxStaticText* audioLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Audio File:");
@@ -298,17 +295,15 @@ void MainWindow::CreateLayout() {
     inputBox->Add(inputGrid, 1, wxEXPAND | wxALL, 10);
     mainSizer->Add(inputBox, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
     mainSizer->AddSpacer(10);
-    
+
     // Sync Settings Section
-    wxStaticBoxSizer* settingsBox = new wxStaticBoxSizer(wxVERTICAL, m_mainPanel, " Sync Settings ");
-    settingsBox->GetStaticBox()->SetBackgroundStyle(wxBG_STYLE_PAINT);
-    settingsBox->GetStaticBox()->SetBackgroundColour(wxColour(0, 0, 0, wxALPHA_TRANSPARENT));
-    settingsBox->GetStaticBox()->SetForegroundColour(wxColour(139, 0, 255)); // Purple border
-    settingsBox->GetStaticBox()->Bind(wxEVT_PAINT, [](wxPaintEvent& evt) {
-        wxPaintDC dc((wxWindow*)evt.GetEventObject());
-        dc.SetBackground(*wxTRANSPARENT_BRUSH);
-        dc.Clear();
-    });
+    wxStaticText* settingsSectionLabel = new wxStaticText(m_mainPanel, wxID_ANY, "══ SYNC SETTINGS ══");
+    settingsSectionLabel->SetFont(m_labelFont.Bold());
+    settingsSectionLabel->SetForegroundColour(wxColour(139, 0, 255)); // Purple
+    mainSizer->Add(settingsSectionLabel, 0, wxLEFT | wxTOP, 15);
+    mainSizer->AddSpacer(5);
+
+    wxBoxSizer* settingsBox = new wxBoxSizer(wxVERTICAL);
     wxGridBagSizer* settingsGrid = new wxGridBagSizer(8, 10);
     
     wxStaticText* beatLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Beat Sync Rate:");
@@ -366,17 +361,15 @@ void MainWindow::CreateLayout() {
 
     mainSizer->Add(m_videoPreview, 0, wxALIGN_CENTER_HORIZONTAL);
     mainSizer->AddSpacer(10);
-    
+
     // Output Section
-    wxStaticBoxSizer* outputBox = new wxStaticBoxSizer(wxHORIZONTAL, m_mainPanel, " Output ");
-    outputBox->GetStaticBox()->SetBackgroundStyle(wxBG_STYLE_PAINT);
-    outputBox->GetStaticBox()->SetBackgroundColour(wxColour(0, 0, 0, wxALPHA_TRANSPARENT));
-    outputBox->GetStaticBox()->SetForegroundColour(wxColour(0, 217, 255)); // Cyan border
-    outputBox->GetStaticBox()->Bind(wxEVT_PAINT, [](wxPaintEvent& evt) {
-        wxPaintDC dc((wxWindow*)evt.GetEventObject());
-        dc.SetBackground(*wxTRANSPARENT_BRUSH);
-        dc.Clear();
-    });
+    wxStaticText* outputSectionLabel = new wxStaticText(m_mainPanel, wxID_ANY, "══ OUTPUT ══");
+    outputSectionLabel->SetFont(m_labelFont.Bold());
+    outputSectionLabel->SetForegroundColour(wxColour(0, 217, 255)); // Cyan
+    mainSizer->Add(outputSectionLabel, 0, wxLEFT | wxTOP, 15);
+    mainSizer->AddSpacer(5);
+
+    wxBoxSizer* outputBox = new wxBoxSizer(wxHORIZONTAL);
     wxStaticText* outputLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Save To:");
     outputLabel->SetForegroundColour(*wxWHITE);
     outputBox->Add(outputLabel, 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
@@ -390,17 +383,15 @@ void MainWindow::CreateLayout() {
     buttonSizer->Add(m_cancelButton, 0, wxALL, 5);
     mainSizer->Add(buttonSizer, 0, wxALIGN_CENTER_HORIZONTAL);
     mainSizer->AddSpacer(15);
-    
+
     // Progress Section
-    wxStaticBoxSizer* progressBox = new wxStaticBoxSizer(wxVERTICAL, m_mainPanel, " Progress ");
-    progressBox->GetStaticBox()->SetBackgroundStyle(wxBG_STYLE_PAINT);
-    progressBox->GetStaticBox()->SetBackgroundColour(wxColour(0, 0, 0, wxALPHA_TRANSPARENT));
-    progressBox->GetStaticBox()->SetForegroundColour(wxColour(139, 0, 255)); // Purple border
-    progressBox->GetStaticBox()->Bind(wxEVT_PAINT, [](wxPaintEvent& evt) {
-        wxPaintDC dc((wxWindow*)evt.GetEventObject());
-        dc.SetBackground(*wxTRANSPARENT_BRUSH);
-        dc.Clear();
-    });
+    wxStaticText* progressSectionLabel = new wxStaticText(m_mainPanel, wxID_ANY, "══ PROGRESS ══");
+    progressSectionLabel->SetFont(m_labelFont.Bold());
+    progressSectionLabel->SetForegroundColour(wxColour(139, 0, 255)); // Purple
+    mainSizer->Add(progressSectionLabel, 0, wxLEFT | wxTOP, 15);
+    mainSizer->AddSpacer(5);
+
+    wxBoxSizer* progressBox = new wxBoxSizer(wxVERTICAL);
     progressBox->Add(m_statusText, 0, wxALL | wxEXPAND, 5);
     progressBox->Add(m_progressBar, 0, wxEXPAND | wxALL, 5);
     progressBox->Add(m_etaText, 0, wxALL | wxALIGN_RIGHT, 5);
