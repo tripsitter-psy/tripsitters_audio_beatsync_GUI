@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(git -C /Users/tripsitter/tripsitters_audio_beatsync_GUI log --oneline -10)",
+      "Bash(brew list:*)",
+      "Bash(brew install:*)",
+      "Bash(cmake:*)",
+      "Bash(xcode-select:*)",
+      "Bash(xcrun --show-sdk-path:*)",
+      "Bash(clang++:*)",
+      "Bash(/usr/bin/c++:*)",
+      "Bash(echo:*)",
+      "Bash(xcrun --sdk macosx15.5 clang++:*)",
+      "Bash(sudo xcode-select:*)",
+      "Bash(timeout 5 /Users/tripsitter/tripsitters_audio_beatsync_GUI/build/bin/Release/TripSitter:*)",
+      "Bash(cpack:*)",
+      "Bash(ls:*)",
+      "Bash(git -C /Users/tripsitter/tripsitters_audio_beatsync_GUI status)",
+      "Bash(git -C /Users/tripsitter/tripsitters_audio_beatsync_GUI diff)",
+      "Bash(git -C /Users/tripsitter/tripsitters_audio_beatsync_GUI log --oneline -5)",
+      "Bash(git -C /Users/tripsitter/tripsitters_audio_beatsync_GUI add CMakeLists.txt src/GUI/MainWindow.cpp src/GUI_main.cpp src/video/VideoWriter.cpp)",
+      "Bash(git -C /Users/tripsitter/tripsitters_audio_beatsync_GUI commit -m \"$\\(cat <<''EOF''\nAdd macOS build support\n\n- CMakeLists.txt: Add cross-platform FFmpeg detection \\(pkg-config on macOS,\n  hardcoded paths on Windows\\) and platform-specific linking\n- CMakeLists.txt: Add macOS packaging with DMG/DragNDrop generator\n- VideoWriter.cpp: Add cross-platform popen/pclose macros and use\n  ''which'' instead of ''where'' on Unix systems\n- MainWindow.cpp: Fix wxCommandEvent temporary binding for stricter compilers\n- GUI_main.cpp: Fix include path case sensitivity\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(gh auth:*)",
+      "Bash(git -C /Users/tripsitter/tripsitters_audio_beatsync_GUI push origin ci/nsis-smoke-test)"
+    ]
+  }
+}
