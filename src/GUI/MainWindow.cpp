@@ -25,8 +25,8 @@ wxBEGIN_EVENT_TABLE(MainWindow, wxFrame)
 wxEND_EVENT_TABLE()
 
 MainWindow::MainWindow()
-    : wxFrame(nullptr, wxID_ANY, "Trip Sitter - Audio Beat Sync GUI", 
-              wxDefaultPosition, wxSize(950, 850),
+    : wxFrame(nullptr, wxID_ANY, "Trip Sitter - Audio Beat Sync GUI",
+              wxDefaultPosition, wxSize(1344, 768),
               wxDEFAULT_FRAME_STYLE & ~(wxRESIZE_BORDER | wxMAXIMIZE_BOX))
 {
     m_settingsManager = std::make_unique<SettingsManager>();
@@ -70,21 +70,20 @@ void MainWindow::SetupFonts() {
 void MainWindow::LoadBackgroundImage() {
     wxString bgPath = wxStandardPaths::Get().GetExecutablePath();
     bgPath = wxFileName(bgPath).GetPath() + "/assets/background.png";
-    
+
     if (wxFileExists(bgPath)) {
         wxImage img(bgPath, wxBITMAP_TYPE_PNG);
         if (img.IsOk()) {
-            // Scale to fit window
-            img = img.Scale(950, 850, wxIMAGE_QUALITY_HIGH);
+            // Use native image size (1344x768) - matches window size
             m_backgroundBitmap = wxBitmap(img);
         }
     }
-    
+
     // Fallback: Create gradient background
     if (!m_backgroundBitmap.IsOk()) {
-        wxBitmap bmp(950, 850);
+        wxBitmap bmp(1344, 768);
         wxMemoryDC dc(bmp);
-        dc.GradientFillLinear(wxRect(0, 0, 950, 850),
+        dc.GradientFillLinear(wxRect(0, 0, 1344, 768),
             wxColour(10, 10, 26), wxColour(25, 0, 50), wxSOUTH);
         m_backgroundBitmap = bmp;
     }
@@ -255,7 +254,8 @@ void MainWindow::CreateLayout() {
     
     // Input Files Section
     wxStaticBoxSizer* inputBox = new wxStaticBoxSizer(wxVERTICAL, m_mainPanel, " Input Files ");
-    inputBox->GetStaticBox()->SetForegroundColour(wxColour(0, 217, 255));
+    inputBox->GetStaticBox()->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+    inputBox->GetStaticBox()->SetForegroundColour(wxColour(0, 217, 255)); // Cyan border
     wxGridBagSizer* inputGrid = new wxGridBagSizer(8, 10);
     
     wxStaticText* audioLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Audio File:");
@@ -284,7 +284,8 @@ void MainWindow::CreateLayout() {
     
     // Sync Settings Section
     wxStaticBoxSizer* settingsBox = new wxStaticBoxSizer(wxVERTICAL, m_mainPanel, " Sync Settings ");
-    settingsBox->GetStaticBox()->SetForegroundColour(wxColour(139, 0, 255));
+    settingsBox->GetStaticBox()->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+    settingsBox->GetStaticBox()->SetForegroundColour(wxColour(139, 0, 255)); // Purple border
     wxGridBagSizer* settingsGrid = new wxGridBagSizer(8, 10);
     
     wxStaticText* beatLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Beat Sync Rate:");
@@ -345,7 +346,8 @@ void MainWindow::CreateLayout() {
     
     // Output Section
     wxStaticBoxSizer* outputBox = new wxStaticBoxSizer(wxHORIZONTAL, m_mainPanel, " Output ");
-    outputBox->GetStaticBox()->SetForegroundColour(wxColour(0, 217, 255));
+    outputBox->GetStaticBox()->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+    outputBox->GetStaticBox()->SetForegroundColour(wxColour(0, 217, 255)); // Cyan border
     wxStaticText* outputLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Save To:");
     outputLabel->SetForegroundColour(*wxWHITE);
     outputBox->Add(outputLabel, 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
@@ -362,7 +364,8 @@ void MainWindow::CreateLayout() {
     
     // Progress Section
     wxStaticBoxSizer* progressBox = new wxStaticBoxSizer(wxVERTICAL, m_mainPanel, " Progress ");
-    progressBox->GetStaticBox()->SetForegroundColour(wxColour(139, 0, 255));
+    progressBox->GetStaticBox()->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+    progressBox->GetStaticBox()->SetForegroundColour(wxColour(139, 0, 255)); // Purple border
     progressBox->Add(m_statusText, 0, wxALL | wxEXPAND, 5);
     progressBox->Add(m_progressBar, 0, wxEXPAND | wxALL, 5);
     progressBox->Add(m_etaText, 0, wxALL | wxALIGN_RIGHT, 5);
