@@ -117,41 +117,76 @@ void MainWindow::ApplyPsychedelicStyling() {
     wxColour darkInput(20, 20, 40);
     wxColour lightText(200, 220, 255);
 
+    // Style file pickers and their children
     if (m_audioFilePicker) {
         m_audioFilePicker->SetBackgroundColour(darkInput);
         m_audioFilePicker->SetForegroundColour(lightText);
+        // Style the text control inside the file picker
+        wxWindowList& children = m_audioFilePicker->GetChildren();
+        for (auto child : children) {
+            child->SetBackgroundColour(darkInput);
+            child->SetForegroundColour(lightText);
+        }
+        m_audioFilePicker->Refresh();
     }
     if (m_singleVideoPicker) {
         m_singleVideoPicker->SetBackgroundColour(darkInput);
         m_singleVideoPicker->SetForegroundColour(lightText);
+        wxWindowList& children = m_singleVideoPicker->GetChildren();
+        for (auto child : children) {
+            child->SetBackgroundColour(darkInput);
+            child->SetForegroundColour(lightText);
+        }
+        m_singleVideoPicker->Refresh();
     }
     if (m_videoFolderPicker) {
         m_videoFolderPicker->SetBackgroundColour(darkInput);
         m_videoFolderPicker->SetForegroundColour(lightText);
+        wxWindowList& children = m_videoFolderPicker->GetChildren();
+        for (auto child : children) {
+            child->SetBackgroundColour(darkInput);
+            child->SetForegroundColour(lightText);
+        }
+        m_videoFolderPicker->Refresh();
     }
     if (m_outputFilePicker) {
         m_outputFilePicker->SetBackgroundColour(darkInput);
         m_outputFilePicker->SetForegroundColour(lightText);
+        wxWindowList& children = m_outputFilePicker->GetChildren();
+        for (auto child : children) {
+            child->SetBackgroundColour(darkInput);
+            child->SetForegroundColour(lightText);
+        }
+        m_outputFilePicker->Refresh();
     }
+
+    // Style dropdowns
     if (m_beatRateChoice) {
         m_beatRateChoice->SetBackgroundColour(darkInput);
         m_beatRateChoice->SetForegroundColour(lightText);
+        m_beatRateChoice->Refresh();
     }
     if (m_resolutionChoice) {
         m_resolutionChoice->SetBackgroundColour(darkInput);
         m_resolutionChoice->SetForegroundColour(lightText);
+        m_resolutionChoice->Refresh();
     }
     if (m_fpsChoice) {
         m_fpsChoice->SetBackgroundColour(darkInput);
         m_fpsChoice->SetForegroundColour(lightText);
+        m_fpsChoice->Refresh();
     }
+
+    // Style text inputs
     if (m_previewTimestampCtrl) {
         m_previewTimestampCtrl->SetBackgroundColour(darkInput);
         m_previewTimestampCtrl->SetForegroundColour(lightText);
+        m_previewTimestampCtrl->Refresh();
     }
     if (m_previewBeatsCtrl) {
         m_previewBeatsCtrl->SetBackgroundColour(darkInput);
         m_previewBeatsCtrl->SetForegroundColour(lightText);
+        m_previewBeatsCtrl->Refresh();
     }
 
     // Style buttons
