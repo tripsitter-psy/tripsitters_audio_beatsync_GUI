@@ -1,0 +1,12 @@
+{
+  "name": "beatsynceditor",
+  "version": "1.0.0",
+  "dependencies": [
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": ["avcodec", "avformat", "avutil", "swresample"]
+    }
+  ],
+  "builtin-baseline": "2024-12-09"
+}

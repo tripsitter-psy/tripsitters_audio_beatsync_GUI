@@ -80,14 +80,18 @@ cmake --build build --config Release
 **Recent Packaging Run (2026-01-02):**
 - Ran `cpack -C Release` locally. Result: `build/TripSitter--Windows-AMD64.zip` generated and moved to `build/artifacts/TripSitter--Windows-AMD64.zip` (83,296 KB).
 - NSIS packaging failed locally: CPack reported `makensis` not found. Attempts to install NSIS locally failed due to the downloaded NSIS installer not running (error: "file or directory is corrupted and unreadable").
+- To address this, the Windows CI workflow (`.github/workflows/windows-build.yml`) was updated to install NSIS via Chocolatey and to run `cpack` on the runner so the NSIS installer can be built in CI.
+- I created and pushed a branch `ci/nsis-smoke-test` with these workflow changes to the repo: https://github.com/tripsitter-psy/tripsitters_audio_beatsync_GUI/tree/ci/nsis-smoke-test. Attempting to create a PR from this environment failed because the GitHub CLI (`gh`) is not available here; you can open the PR in the GitHub UI or I can open it after you confirm.
+- Local binary behavior: `TripSitter.exe --version`/`--help` exited with code 128 and produced no stdout/stderr, but launching `TripSitter.exe` without arguments starts the GUI and it remained running for several seconds during a smoke launch (local GUI launch appears to work).
+- The CI smoke test was updated to launch `TripSitter.exe` for 6 seconds and fail if it exits immediately; this will help validate the GUI in a fresh runner environment.
 
 **Next steps (updated):**
-1. Verify GUI preview at runtime (use PREVIEW FRAME with timestamp) — not started.
-2. Resolve NSIS installer availability so NSIS `.exe` can be produced either by:
-   - Installing NSIS locally and re-running `cpack`, or
-   - Updating CI (`.github/workflows/windows-build.yml`) to install NSIS (e.g., via Chocolatey) and generate the NSIS package in the runner. (CI option recommended.)
-3. Add CI artifact verification (smoke tests) in the Windows build workflow.
-4. Import user-provided GUI assets (`C:\Users\samue\Downloads\assets for GUI aesthetics`) using `scripts/import_assets.ps1` and re-enable the icon resource once a real `assets/icon.ico` is present.
+1. Merge the `ci/nsis-smoke-test` branch (or open a PR) and trigger the GitHub Actions workflow to build packages and produce the NSIS installer in CI (recommended).
+2. If you want NSIS locally, retry installing NSIS after reboot (verify installer integrity or install via Chocolatey if available), then re-run `cpack -C Release` to produce the `.exe` locally.
+3. Verify GUI preview at runtime (use PREVIEW FRAME with timestamp) — still not fully verified end-to-end; I can run this after CI artifacts are available or after a local GUI run.
+4. Import user GUI assets (`C:\Users\samue\Downloads\assets for GUI aesthetics`) using `scripts/import_assets.ps1`, re-enable the icon resource when a valid `assets/icon.ico` is present, and re-run packaging.
+
+**Note:** You mentioned restarting your PC — after reboot, please either merge the PR or let me know and I can open it for you; I’ll continue work (CI monitoring / NSIS retry / GUI verification) once you’re back.
 
 ---
 
