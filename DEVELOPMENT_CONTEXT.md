@@ -85,6 +85,9 @@ cmake --build build --config Release
 ✅ CI branch `ci/nsis-smoke-test` updated with latest code and workflow
 ✅ GUI assets imported (2 splash screen variants, background.png set)
 ✅ Both executables built and tested locally (beatsync.exe CLI works perfectly)
+✅ PNG image loading fixed - wxInitAllImageHandlers() added to GUI initialization
+✅ TripSitter.exe rebuilt and verified - background images load correctly
+✅ Quick rebuild scripts added (quick_rebuild.bat, rebuild_gui.bat)
 ✅ Project is ready for production use and distribution
 
 **Repository Structure:**
