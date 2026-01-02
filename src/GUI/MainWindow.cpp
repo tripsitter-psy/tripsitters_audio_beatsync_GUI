@@ -714,7 +714,8 @@ void MainWindow::LoadSettings() {
         }
     }
     
-    OnVideoSourceChanged(wxCommandEvent());
+    wxCommandEvent dummyEvent;
+    OnVideoSourceChanged(dummyEvent);
 }
 
 void MainWindow::SaveSettings() {

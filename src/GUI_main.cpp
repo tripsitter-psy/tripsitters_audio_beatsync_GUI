@@ -1,5 +1,5 @@
 #include <wx/wx.h>
-#include "gui/MainWindow.h"
+#include "GUI/MainWindow.h"
 
 class TripSitterApp : public wxApp {
 public:

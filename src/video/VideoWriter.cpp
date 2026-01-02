@@ -5,6 +5,12 @@
 #include <cstdio>
 #include <cstdlib>
 
+// Cross-platform popen/pclose
+#ifdef _WIN32
+#define popen _popen
+#define pclose _pclose
+#endif
+
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
@@ -28,21 +34,33 @@ std::string VideoWriter::getFFmpegPath() const {
         return envPath;
     }
 
-    // 2. Try to find ffmpeg in PATH by testing if "ffmpeg" command works
-    // On Windows, we can try "where ffmpeg" to find it
-    FILE* pipe = _popen("where ffmpeg 2>nul", "r");
+    // 2. Try to find ffmpeg in PATH
+#ifdef _WIN32
+    const char* findCmd = "where ffmpeg 2>nul";
+    const char* fallbackPath = "C:\\ffmpeg-dev\\ffmpeg-master-latest-win64-gpl-shared\\bin\\ffmpeg.exe";
+#else
+    const char* findCmd = "which ffmpeg 2>/dev/null";
+    const char* fallbackPath = "/usr/local/bin/ffmpeg";
+#endif
+
+    FILE* pipe = popen(findCmd, "r");
     if (pipe) {
         char buffer[512];
         std::string result;
         while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
             result += buffer;
         }
-        _pclose(pipe);
+        pclose(pipe);
 
-        // Get first line (first match from where command)
+        // Get first line (first match)
         size_t newline = result.find('\n');
         if (newline != std::string::npos) {
             result = result.substr(0, newline);
+        }
+
+        // Remove trailing whitespace
+        while (!result.empty() && (result.back() == '\n' || result.back() == '\r' || result.back() == ' ')) {
+            result.pop_back();
         }
 
         // If we found something, use it
@@ -52,7 +70,7 @@ std::string VideoWriter::getFFmpegPath() const {
     }
 
     // 3. Fall back to hardcoded path
-    return "C:\\ffmpeg-dev\\ffmpeg-master-latest-win64-gpl-shared\\bin\\ffmpeg.exe";
+    return fallbackPath;
 }
 
 bool VideoWriter::cutAtBeats(const std::string& inputVideo,
@@ -212,7 +230,7 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
                                    double duration,
                                    const std::string& outputVideo) {
     // Use FFmpeg command-line for reliable segment extraction
-    // Note: _popen() on Windows passes commands to cmd.exe, so we need proper quote escaping
+    // Note: popen() on Windows passes commands to cmd.exe, so we need proper quote escaping
     //
     // FIX: Normalize ALL clips to same resolution (1920x1080), frame rate (24fps),
     // and pixel format to prevent freezing from mixed source formats
@@ -233,7 +251,7 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
     bool shouldDebug = (debugCount < 2);
 
     // Execute FFmpeg
-    FILE* pipe = _popen(cmd.str().c_str(), "r");
+    FILE* pipe = popen(cmd.str().c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg";
         return false;
@@ -246,7 +264,7 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
         ffmpegOutput += buffer;
     }
 
-    int exitCode = _pclose(pipe);
+    int exitCode = pclose(pipe);
 
     if (exitCode != 0) {
         m_lastError = "Segment extraction failed";
@@ -303,7 +321,7 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
         << " -y \"" << outputVideo << "\"\"";
 
     // Execute FFmpeg
-    FILE* pipe = _popen(cmd.str().c_str(), "r");
+    FILE* pipe = popen(cmd.str().c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg for precise copy";
         return false;
@@ -316,7 +334,7 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
         ffmpegOutput += buffer;
     }
 
-    int exitCode = _pclose(pipe);
+    int exitCode = pclose(pipe);
 
     if (exitCode != 0) {
         m_lastError = "Precise segment extraction failed";
@@ -364,7 +382,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
         << "\" -c copy -video_track_timescale 90000 -y \"" << outputVideo << "\"\"";
 
     // Execute FFmpeg
-    FILE* pipe = _popen(cmd.str().c_str(), "r");
+    FILE* pipe = popen(cmd.str().c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg";
         std::remove(listFile.c_str());
@@ -378,7 +396,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
         ffmpegOutput += buffer;
     }
 
-    int exitCode = _pclose(pipe);
+    int exitCode = pclose(pipe);
 
     // Remove concat list file
     std::remove(listFile.c_str());
@@ -423,7 +441,7 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
     std::cout << "Adding audio track...\n";
 
     // Execute FFmpeg
-    FILE* pipe = _popen(cmd.str().c_str(), "r");
+    FILE* pipe = popen(cmd.str().c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg for audio muxing";
         return false;
@@ -436,7 +454,7 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
         ffmpegOutput += buffer;
     }
 
-    int exitCode = _pclose(pipe);
+    int exitCode = pclose(pipe);
 
     if (exitCode != 0) {
         m_lastError = "FFmpeg audio muxing failed";
