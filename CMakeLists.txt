@@ -22,12 +22,21 @@ elseif(APPLE)
     )
 endif()
 
-# Platform-specific wxWidgets setup
+# wxWidgets setup
+# Set USE_WXUNIVERSAL=ON to use wxUniversal build with custom theming
+option(USE_WXUNIVERSAL "Use wxUniversal build for custom theming" OFF)
+
 if(WIN32)
     set(wxWidgets_ROOT_DIR "C:/wxWidgets-3.2.4")
-    set(wxWidgets_CONFIGURATION mswu)
+    if(USE_WXUNIVERSAL)
+        set(wxWidgets_CONFIGURATION mswunivu)
+        set(wxWidgets_LIB_DIR "C:/wxWidgets-3.2.4/lib/vc_x64_dll")
+        add_definitions(-D__WXUNIVERSAL__)
+    else()
+        set(wxWidgets_CONFIGURATION mswu)
+    endif()
 endif()
-find_package(wxWidgets REQUIRED COMPONENTS core base adv gl)
+find_package(wxWidgets REQUIRED COMPONENTS core base adv)
 include(${wxWidgets_USE_FILE})
 
 # Source files
@@ -44,6 +53,8 @@ set(GUI_SOURCES
     src/gui/VideoPreview.cpp
     src/gui/ProcessingThread.cpp
     src/gui/SettingsManager.cpp
+    src/gui/PsychedelicTheme.cpp
+    src/utils/LogArchiver.cpp
 )
 
 # CLI executable (existing)
@@ -80,6 +91,18 @@ else()
     )
 endif()
 
+# macOS App Bundle configuration
+if(APPLE)
+    set_target_properties(TripSitter PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "TripSitter"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${CPACK_PACKAGE_VERSION_MAJOR}.${CPACK_PACKAGE_VERSION_MINOR}.${CPACK_PACKAGE_VERSION_PATCH}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${CPACK_PACKAGE_VERSION_MAJOR}.${CPACK_PACKAGE_VERSION_MINOR}.${CPACK_PACKAGE_VERSION_PATCH}"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.tripsitter.beatsync"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/assets/Info.plist.in"
+    )
+endif()
+
 # Output directory
 set_target_properties(beatsync TripSitter PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
@@ -111,7 +134,7 @@ endif()
 install(TARGETS TripSitter RUNTIME DESTINATION .)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/assets DESTINATION .)
 
-# CPack packaging configuration (ZIP + NSIS for Windows)
+# CPack packaging configuration
 include(InstallRequiredSystemLibraries)
 set(CPACK_PACKAGE_NAME "TripSitter")
 set(CPACK_PACKAGE_VENDOR "TripSitter")
@@ -121,6 +144,8 @@ set(CPACK_PACKAGE_VERSION_MINOR "1")
 set(CPACK_PACKAGE_VERSION_PATCH "0")
 set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${CPACK_PACKAGE_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
+
+# Platform-specific CPack generators
 if(WIN32)
     set(CPACK_GENERATOR "ZIP;NSIS")
     set(CPACK_NSIS_DISPLAY_NAME "TripSitter")
@@ -128,9 +153,19 @@ if(WIN32)
 elseif(APPLE)
     set(CPACK_GENERATOR "ZIP;DragNDrop")
     set(CPACK_DMG_VOLUME_NAME "TripSitter")
+    set(CPACK_DMG_FORMAT "UDZO")
     set(CPACK_BUNDLE_NAME "TripSitter")
+    # Install the .app bundle
+    install(TARGETS TripSitter BUNDLE DESTINATION .)
 else()
     set(CPACK_GENERATOR "ZIP;TGZ")
+endif()
+
+# Tests (disabled by default). Enable with -DBUILD_TESTS=ON
+option(BUILD_TESTS "Build unit tests" OFF)
+if(BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
 endif()
 
 include(CPack)
