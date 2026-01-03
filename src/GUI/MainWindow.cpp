@@ -46,6 +46,15 @@ MainWindow::MainWindow()
     CreateControls();
     CreateLayout();
     ApplyPsychedelicStyling();
+
+#ifdef __WXUNIVERSAL__
+    // Make all child windows have dark backgrounds to complement psychedelic background
+    SetAllChildrenTransparent(m_mainPanel);
+    // Force refresh to apply the new colors
+    m_mainPanel->Refresh();
+    m_mainPanel->Update();
+#endif
+
     LoadSettings();
     
     Centre();
@@ -87,22 +96,49 @@ void MainWindow::SetupFonts() {
 }
 
 void MainWindow::LoadBackgroundImage() {
-    wxString bgPath = wxStandardPaths::Get().GetExecutablePath();
-    bgPath = wxFileName(bgPath).GetPath() + "/assets/background.png";
+    wxString exePath = wxStandardPaths::Get().GetExecutablePath();
+    wxString assetsDir = wxFileName(exePath).GetPath() + "/assets/";
 
-    if (wxFileExists(bgPath)) {
-        wxImage img(bgPath, wxBITMAP_TYPE_PNG);
-        if (img.IsOk()) {
-            // Keep original aspect ratio - just use image as-is
-            m_backgroundBitmap = wxBitmap(img);
+    // Try the upscaled version first, then fall back to background.png
+    wxArrayString candidates;
+    candidates.Add(assetsDir + "ComfyUI_03324_.png");
+    candidates.Add(assetsDir + "background.png");
+
+    wxImage img;
+    for (size_t i = 0; i < candidates.GetCount(); ++i) {
+        if (wxFileExists(candidates[i])) {
+            img.LoadFile(candidates[i], wxBITMAP_TYPE_PNG);
+            if (img.IsOk()) {
+                break;
+            }
         }
     }
 
-    // Fallback: Create gradient background matching virtual size
+    if (img.IsOk()) {
+        // Scale image to fit the window size (1344x768) while preserving aspect ratio
+        int targetW = 1344;
+        int targetH = 768;
+
+        int imgW = img.GetWidth();
+        int imgH = img.GetHeight();
+
+        // Calculate scaling to cover the entire window
+        double scaleW = (double)targetW / imgW;
+        double scaleH = (double)targetH / imgH;
+        double scale = std::max(scaleW, scaleH);  // Use max to cover, min to fit
+
+        int newW = (int)(imgW * scale);
+        int newH = (int)(imgH * scale);
+
+        img.Rescale(newW, newH, wxIMAGE_QUALITY_HIGH);
+        m_backgroundBitmap = wxBitmap(img);
+    }
+
+    // Fallback: Create gradient background if no image loaded
     if (!m_backgroundBitmap.IsOk()) {
-        wxBitmap bmp(1344, 1400);
+        wxBitmap bmp(1344, 768);
         wxMemoryDC dc(bmp);
-        dc.GradientFillLinear(wxRect(0, 0, 1344, 1400),
+        dc.GradientFillLinear(wxRect(0, 0, 1344, 768),
             wxColour(10, 10, 26), wxColour(25, 0, 50), wxSOUTH);
         m_backgroundBitmap = bmp;
     }
@@ -243,25 +279,87 @@ void MainWindow::ApplyPsychedelicStyling() {
 }
 
 void MainWindow::CreateControls() {
-    m_mainPanel = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxHSCROLL | wxVSCROLL | wxCLIP_CHILDREN);
+    m_mainPanel = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxHSCROLL | wxVSCROLL | wxCLIP_CHILDREN | wxFULL_REPAINT_ON_RESIZE);
     m_mainPanel->SetScrollRate(10, 10);
     m_mainPanel->SetVirtualSize(1344, 1400);  // Taller virtual size for scrolling
+    m_mainPanel->SetDoubleBuffered(true);  // Enable double buffering
 
 #ifdef __WXUNIVERSAL__
-    // wxUniversal: Theme handles rendering, simpler background approach
-    // The background is drawn by the frame, controls are transparent
-    m_mainPanel->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+    // wxUniversal: Custom paint for static background
+    m_mainPanel->SetBackgroundStyle(wxBG_STYLE_PAINT);
 
-    // Draw fixed background on the frame itself
-    Bind(wxEVT_PAINT, [this](wxPaintEvent& evt) {
-        wxPaintDC dc(this);
-        if (m_backgroundBitmap.IsOk()) {
-            dc.DrawBitmap(m_backgroundBitmap, 0, 0, false);
-        } else {
-            dc.SetBackground(wxBrush(TripSitter::PsychedelicColors::Background()));
-            dc.Clear();
-        }
+    // Disable erase background to prevent flicker
+    m_mainPanel->Bind(wxEVT_ERASE_BACKGROUND, [](wxEraseEvent& evt) {
+        // Do nothing - we handle everything in paint
     });
+
+    m_mainPanel->Bind(wxEVT_PAINT, [this](wxPaintEvent& evt) {
+        wxBufferedPaintDC dc(m_mainPanel);
+
+        // Get the scroll position and client size
+        int scrollX, scrollY;
+        m_mainPanel->GetViewStart(&scrollX, &scrollY);
+        int scrollUnitX, scrollUnitY;
+        m_mainPanel->GetScrollPixelsPerUnit(&scrollUnitX, &scrollUnitY);
+
+        // Convert scroll units to pixels
+        int scrollPixelsX = scrollX * scrollUnitX;
+        int scrollPixelsY = scrollY * scrollUnitY;
+
+        // Get client size (viewport size in pixels)
+        wxSize clientSize = m_mainPanel->GetClientSize();
+
+        // Draw static background ALWAYS at 0,0 regardless of scroll position
+        // Fill the entire client area (stretch to fit)
+        if (m_backgroundBitmap.IsOk()) {
+            wxImage img = m_backgroundBitmap.ConvertToImage();
+
+            // Calculate scaling to cover entire area (aspect-fill)
+            wxSize bmpSize = m_backgroundBitmap.GetSize();
+            double scaleW = (double)clientSize.x / bmpSize.x;
+            double scaleH = (double)clientSize.y / bmpSize.y;
+            double scale = std::max(scaleW, scaleH);
+
+            int scaledW = (int)(bmpSize.x * scale);
+            int scaledH = (int)(bmpSize.y * scale);
+
+            // Center the image
+            int offsetX = (clientSize.x - scaledW) / 2;
+            int offsetY = (clientSize.y - scaledH) / 2;
+
+            // Only rescale if size changed (cache the result)
+            static wxSize lastClientSize(0, 0);
+            static wxBitmap cachedScaledBitmap;
+
+            if (lastClientSize != clientSize || !cachedScaledBitmap.IsOk()) {
+                wxImage scaledImg = img.Scale(scaledW, scaledH, wxIMAGE_QUALITY_BILINEAR);
+                cachedScaledBitmap = wxBitmap(scaledImg);
+                lastClientSize = clientSize;
+            }
+
+            dc.DrawBitmap(cachedScaledBitmap, offsetX, offsetY, false);
+        } else {
+            dc.GradientFillLinear(wxRect(0, 0, clientSize.x, clientSize.y),
+                wxColour(10, 10, 26), wxColour(25, 0, 50), wxSOUTH);
+        }
+
+        // Now manually draw children with scroll offset applied
+        // This gives us full control over the paint order
+        dc.SetDeviceOrigin(-scrollPixelsX, -scrollPixelsY);
+
+        // CRITICAL: Now let wxWidgets paint children with the scroll offset
+        evt.Skip();
+    });
+
+    // Force full repaint on scroll to avoid glitching
+    m_mainPanel->Bind(wxEVT_SCROLLWIN_TOP, [this](wxScrollWinEvent& evt) { evt.Skip(); m_mainPanel->RefreshRect(m_mainPanel->GetClientRect(), false); m_mainPanel->Update(); });
+    m_mainPanel->Bind(wxEVT_SCROLLWIN_BOTTOM, [this](wxScrollWinEvent& evt) { evt.Skip(); m_mainPanel->RefreshRect(m_mainPanel->GetClientRect(), false); m_mainPanel->Update(); });
+    m_mainPanel->Bind(wxEVT_SCROLLWIN_LINEUP, [this](wxScrollWinEvent& evt) { evt.Skip(); m_mainPanel->RefreshRect(m_mainPanel->GetClientRect(), false); m_mainPanel->Update(); });
+    m_mainPanel->Bind(wxEVT_SCROLLWIN_LINEDOWN, [this](wxScrollWinEvent& evt) { evt.Skip(); m_mainPanel->RefreshRect(m_mainPanel->GetClientRect(), false); m_mainPanel->Update(); });
+    m_mainPanel->Bind(wxEVT_SCROLLWIN_PAGEUP, [this](wxScrollWinEvent& evt) { evt.Skip(); m_mainPanel->RefreshRect(m_mainPanel->GetClientRect(), false); m_mainPanel->Update(); });
+    m_mainPanel->Bind(wxEVT_SCROLLWIN_PAGEDOWN, [this](wxScrollWinEvent& evt) { evt.Skip(); m_mainPanel->RefreshRect(m_mainPanel->GetClientRect(), false); m_mainPanel->Update(); });
+    m_mainPanel->Bind(wxEVT_SCROLLWIN_THUMBTRACK, [this](wxScrollWinEvent& evt) { evt.Skip(); m_mainPanel->RefreshRect(m_mainPanel->GetClientRect(), false); m_mainPanel->Update(); });
+    m_mainPanel->Bind(wxEVT_SCROLLWIN_THUMBRELEASE, [this](wxScrollWinEvent& evt) { evt.Skip(); m_mainPanel->RefreshRect(m_mainPanel->GetClientRect(), false); m_mainPanel->Update(); });
 #else
     // Native widgets: Complex paint handling for static background
     m_mainPanel->SetBackgroundStyle(wxBG_STYLE_PAINT);
@@ -723,6 +821,16 @@ void MainWindow::OnStartProcessing(wxCommandEvent& event) {
         return;
     }
     
+    // Normalize output extension to .mp4 if the user omitted it
+    {
+        wxFileName outFn(outputPath);
+        if (!outFn.HasExt()) {
+            outFn.SetExt("mp4");
+            outputPath = outFn.GetFullPath();
+            m_outputFilePicker->SetPath(outputPath);
+        }
+    }
+
     // Build config
     ProcessingConfig config;
     config.audioPath = audioPath;
@@ -776,10 +884,36 @@ void MainWindow::OnClose(wxCloseEvent& event) {
 }
 
 void MainWindow::OnPaint(wxPaintEvent& event) {
+#ifdef __WXUNIVERSAL__
     wxPaintDC dc(this);
+    wxSize clientSize = GetClientSize();
+
+    // Draw static background on frame
     if (m_backgroundBitmap.IsOk()) {
+        // Draw background image at original size (don't scale - let it tile/crop naturally)
         dc.DrawBitmap(m_backgroundBitmap, 0, 0, false);
+
+        // Fill any remaining area if window is larger than bitmap
+        wxSize bmpSize = m_backgroundBitmap.GetSize();
+        if (clientSize.x > bmpSize.x || clientSize.y > bmpSize.y) {
+            dc.SetBrush(wxBrush(wxColour(10, 10, 26)));
+            dc.SetPen(*wxTRANSPARENT_PEN);
+            if (clientSize.x > bmpSize.x) {
+                dc.DrawRectangle(bmpSize.x, 0, clientSize.x - bmpSize.x, clientSize.y);
+            }
+            if (clientSize.y > bmpSize.y) {
+                dc.DrawRectangle(0, bmpSize.y, clientSize.x, clientSize.y - bmpSize.y);
+            }
+        }
+    } else {
+        // Fallback gradient (background image didn't load)
+        dc.GradientFillLinear(GetClientRect(),
+            wxColour(10, 10, 26), wxColour(25, 0, 50), wxSOUTH);
     }
+#else
+    // Native: Skip to allow default handling
+    event.Skip();
+#endif
 }
 
 void MainWindow::UpdateUIState(bool processing) {
@@ -852,19 +986,56 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             std::vector<std::string> videoFiles;
             if (config.isMultiClip) {
                 namespace fs = std::filesystem;
-                for (const auto& entry : fs::directory_iterator(config.videoPath.ToStdString())) {
-                    if (entry.is_regular_file()) {
-                        std::string ext = entry.path().extension().string();
-                        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                        if (ext == ".mp4" || ext == ".avi" || ext == ".mov" || 
-                            ext == ".mkv" || ext == ".webm") {
-                            videoFiles.push_back(entry.path().string());
+                std::string folderPath = config.videoPath.ToStdString();
+
+                // Debug log to file
+                FILE* debugLog = fopen("tripsitter_debug.log", "a");
+                if (debugLog) {
+                    fprintf(debugLog, "\n=== Processing Started ===\n");
+                    fprintf(debugLog, "Scanning folder for videos: %s\n", folderPath.c_str());
+                    fclose(debugLog);
+                }
+
+                std::cout << "Scanning folder for videos: " << folderPath << "\n";
+
+                try {
+                    for (const auto& entry : fs::directory_iterator(folderPath)) {
+                        if (entry.is_regular_file()) {
+                            std::string ext = entry.path().extension().string();
+                            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                            if (ext == ".mp4" || ext == ".avi" || ext == ".mov" ||
+                                ext == ".mkv" || ext == ".webm") {
+                                std::cout << "  Found video: " << entry.path().filename().string() << "\n";
+                                videoFiles.push_back(entry.path().string());
+
+                                // Debug log
+                                debugLog = fopen("tripsitter_debug.log", "a");
+                                if (debugLog) {
+                                    fprintf(debugLog, "  Found video: %s\n", entry.path().string().c_str());
+                                    fclose(debugLog);
+                                }
+                            }
                         }
                     }
+                } catch (const std::exception& e) {
+                    debugLog = fopen("tripsitter_debug.log", "a");
+                    if (debugLog) {
+                        fprintf(debugLog, "ERROR scanning folder: %s\n", e.what());
+                        fclose(debugLog);
+                    }
+                    throw std::runtime_error(std::string("Error scanning folder: ") + e.what());
                 }
-                
+
+                std::cout << "Total videos found: " << videoFiles.size() << "\n";
+
+                debugLog = fopen("tripsitter_debug.log", "a");
+                if (debugLog) {
+                    fprintf(debugLog, "Total videos found: %zu\n", videoFiles.size());
+                    fclose(debugLog);
+                }
+
                 if (videoFiles.empty()) {
-                    throw std::runtime_error("No video files found in folder");
+                    throw std::runtime_error("No video files found in folder: " + folderPath);
                 }
             } else {
                 videoFiles.push_back(config.videoPath.ToStdString());
@@ -898,8 +1069,18 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             bool hasEffects = config.enableColorGrade || config.enableVignette ||
                               config.enableBeatFlash || config.enableBeatZoom;
 
+            FILE* debugLog = fopen("tripsitter_debug.log", "a");
+            if (debugLog) {
+                fprintf(debugLog, "Processing %zu beats (filtered from %zu total)\n", filteredBeats.size(), beatGrid.getBeats().size());
+                fclose(debugLog);
+            }
+
+            if (filteredBeats.empty()) {
+                throw std::runtime_error("No beats to process in selected range");
+            }
+
             std::vector<std::string> segmentPaths;
-            
+
             for (size_t i = 0; i < filteredBeats.size(); i++) {
                 if (m_cancelRequested) {
                     // Cleanup temp files
@@ -915,9 +1096,18 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
                 
                 // Calculate segment duration based on beat timing
                 double beatTime = filteredBeats[i];
-                double duration = (i + 1 < filteredBeats.size()) ?
-                    (filteredBeats[i + 1] - beatTime) :
-                    (beatGrid.getAudioDuration() - beatTime);
+
+                // Clamp segment end to selection end to avoid overrun
+                double selectionEnd = config.selectionEnd;
+                if (selectionEnd < 0 || selectionEnd > beatGrid.getAudioDuration()) {
+                    selectionEnd = beatGrid.getAudioDuration();
+                }
+                double nextMark = (i + 1 < filteredBeats.size()) ? filteredBeats[i + 1] : selectionEnd;
+                double segmentEnd = std::min(nextMark, selectionEnd);
+                double duration = segmentEnd - beatTime;
+                if (duration <= 0.0) {
+                    continue;  // nothing to cut for this beat
+                }
 
                 std::string videoFile = videoFiles[i % videoFiles.size()];
                 std::string segmentPath = "temp_segment_" + std::to_string(i) + ".mp4";
@@ -993,7 +1183,8 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             wxQueueEvent(this, evt);
 
             if (!writer.addAudioTrack(videoForAudio, config.audioPath.ToStdString(),
-                config.outputPath.ToStdString(), false)) {
+                config.outputPath.ToStdString(), true,
+                config.selectionStart, config.selectionEnd)) {
                 for (const auto& s : segmentPaths) std::remove(s.c_str());
                 std::remove("temp_video.mp4");
                 if (hasEffects) std::remove("temp_video_fx.mp4");
@@ -1002,6 +1193,39 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
                 errorEvt->SetString(wxString::Format("Adding audio failed: %s", wxString(writer.getLastError())));
                 wxQueueEvent(this, errorEvt);
                 return;
+            }
+
+            // Fallback: ensure final output exists even if mux step produced nothing (e.g., odd path without extension).
+            {
+                const std::string finalOut = config.outputPath.ToStdString();
+                std::filesystem::path outPath(finalOut);
+                std::error_code ec;
+                auto ensureParent = outPath.parent_path();
+                if (!ensureParent.empty()) {
+                    std::filesystem::create_directories(ensureParent, ec);
+                }
+
+                bool outMissing = !std::filesystem::exists(outPath, ec);
+                bool outTiny = false;
+                if (!outMissing) {
+                    auto sz = std::filesystem::file_size(outPath, ec);
+                    outTiny = (!ec && sz < 1024);
+                }
+
+                if (outMissing || outTiny) {
+                    const char* src = hasEffects ? "temp_video_fx.mp4" : "temp_video.mp4";
+                    std::filesystem::copy_file(src, outPath, std::filesystem::copy_options::overwrite_existing, ec);
+                    if (ec) {
+                        for (const auto& s : segmentPaths) std::remove(s.c_str());
+                        std::remove("temp_video.mp4");
+                        if (hasEffects) std::remove("temp_video_fx.mp4");
+                        wxThreadEvent* errorEvt = new wxThreadEvent(wxEVT_PROCESSING_COMPLETE);
+                        errorEvt->SetInt(0);
+                        errorEvt->SetString(wxString::Format("Output copy failed: %s", wxString(ec.message())));
+                        wxQueueEvent(this, errorEvt);
+                        return;
+                    }
+                }
             }
 
             // Cleanup
@@ -1121,6 +1345,10 @@ void MainWindow::OnViewLogs(wxCommandEvent& WXUNUSED(event)) {
         }
     }
 
+    // Show the resolved fallback used by VideoWriter for clarity
+    BeatSync::VideoWriter diagWriter;
+    full << "FFmpeg Path (resolved): " << diagWriter.resolveFfmpegPath() << "\n";
+
     full << "wxWidgets Version: " << wxVERSION_STRING << "\n";
 
     // Show dialog with full log and actions
@@ -1216,6 +1444,26 @@ void MainWindow::SaveSettings() {
     m_settingsManager->SetInt("PreviewBeats", m_previewBeatsCtrl->GetValue());
     m_settingsManager->SetString("PreviewTimestamp", m_previewTimestampCtrl->GetValue());
     m_settingsManager->SetString("LastAudioPath", m_audioFilePicker->GetPath());
-    m_settingsManager->SetString("LastVideoPath", 
+    m_settingsManager->SetString("LastVideoPath",
         m_multiClipRadio->GetValue() ? m_videoFolderPicker->GetPath() : m_singleVideoPicker->GetPath());
 }
+
+#ifdef __WXUNIVERSAL__
+void MainWindow::SetAllChildrenTransparent(wxWindow* parent) {
+    if (!parent) return;
+
+    wxWindowList& children = parent->GetChildren();
+    for (wxWindowList::iterator it = children.begin(); it != children.end(); ++it) {
+        wxWindow* child = *it;
+
+        // CRITICAL: Tell children NOT to paint their own backgrounds
+        child->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+
+        // Set foreground color to ensure text is visible
+        child->SetForegroundColour(wxColour(200, 220, 255));
+
+        // Recursively process all descendants
+        SetAllChildrenTransparent(child);
+    }
+}
+#endif

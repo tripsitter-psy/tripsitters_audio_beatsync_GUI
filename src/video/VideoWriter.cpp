@@ -4,7 +4,10 @@
 #include <iomanip>
 #include <cstdio>
 #include <cstdlib>
-
+#include <string>
+#include <chrono>
+#include <ctime>
+#include <cstring>
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
@@ -14,11 +17,61 @@ extern "C" {
 
 namespace BeatSync {
 
+namespace {
+// Lightweight logger to capture FFmpeg command, exit code, and recent output.
+void appendFfmpegLog(const std::string& logFile,
+                     const std::string& label,
+                     const std::string& command,
+                     int exitCode,
+                     const std::string& output,
+                     const std::string& extra = "") {
+    FILE* log = fopen(logFile.c_str(), "a");
+    if (!log) {
+        return;
+    }
+
+    auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    char timeBuf[64] = {0};
+#ifdef _WIN32
+    ctime_s(timeBuf, sizeof(timeBuf), &now);
+#else
+    std::strftime(timeBuf, sizeof(timeBuf), "%c", std::localtime(&now));
+#endif
+
+    // Trim trailing newline from ctime output
+    size_t len = std::strlen(timeBuf);
+    if (len > 0 && timeBuf[len - 1] == '\n') {
+        timeBuf[len - 1] = '\0';
+    }
+
+    fprintf(log, "\n[%s] %s\n", timeBuf, label.c_str());
+    fprintf(log, "cmd: %s\n", command.c_str());
+    fprintf(log, "exit: %d\n", exitCode);
+    if (!extra.empty()) {
+        fprintf(log, "extra: %s\n", extra.c_str());
+    }
+
+    // Avoid huge logs by only keeping the tail of the output if very long.
+    const size_t maxTail = 4000;
+    if (output.size() <= maxTail) {
+        fprintf(log, "output:\n%s\n", output.c_str());
+    } else {
+        fprintf(log, "output (last %zu chars):\n%s\n", maxTail, output.substr(output.size() - maxTail).c_str());
+    }
+
+    fclose(log);
+}
+} // namespace
+
 VideoWriter::VideoWriter()
 {
 }
 
 VideoWriter::~VideoWriter() {
+}
+
+std::string VideoWriter::resolveFfmpegPath() const {
+    return getFFmpegPath();
 }
 
 std::string VideoWriter::getFFmpegPath() const {
@@ -230,6 +283,8 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
                                    double startTime,
                                    double duration,
                                    const std::string& outputVideo) {
+    std::cout << "Extracting segment: " << inputVideo << " @ " << startTime << "s for " << duration << "s -> " << outputVideo << "\n";
+
     // Use FFmpeg command-line for reliable segment extraction
     // Note: _popen() on Windows passes commands to cmd.exe, so we need proper quote escaping
     //
@@ -237,7 +292,7 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
     // and pixel format to prevent freezing from mixed source formats
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"\"" << ffmpegPath << "\" -i \"" << inputVideo << "\""
+    cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideo << "\""
         << " -ss " << startTime
         << " -t " << duration
         << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
@@ -247,16 +302,23 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
         << " -c:a aac -b:a 192k -ar 44100"
         << " -video_track_timescale 90000"
         << " -avoid_negative_ts make_zero"
-        << " -y \"" << outputVideo << "\"\"";
+        << " -y \"" << outputVideo << "\"";
 
     // DEBUG: Print command for first failure
     static int debugCount = 0;
     bool shouldDebug = (debugCount < 2);
 
-    // Execute FFmpeg
-    FILE* pipe = _popen(cmd.str().c_str(), "r");
+    // Execute FFmpeg (redirect stderr to stdout to capture all output)
+#ifdef _WIN32
+    // Wrap with cmd /C to avoid PowerShell/cmd parsing quirks when filters contain parentheses/commas.
+    std::string fullCmd = "cmd /C \"" + cmd.str() + " 2>&1\"";
+#else
+    std::string fullCmd = cmd.str() + " 2>&1";
+#endif
+    FILE* pipe = _popen(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg";
+        appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentFast::_popen_failed", fullCmd, -1, "", "start=" + std::to_string(startTime) + ", dur=" + std::to_string(duration));
         return false;
     }
 
@@ -269,8 +331,22 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
 
     int exitCode = _pclose(pipe);
 
+    // Check file size regardless of exit code for better diagnostics
+    long fileSize = -1;
+    {
+        FILE* test = fopen(outputVideo.c_str(), "rb");
+        if (test) {
+            fseek(test, 0, SEEK_END);
+            fileSize = ftell(test);
+            fclose(test);
+        }
+    }
+
     if (exitCode != 0) {
         m_lastError = "Segment extraction failed";
+        std::string extra = "start=" + std::to_string(startTime) + ", dur=" + std::to_string(duration) + ", size=" + std::to_string(fileSize);
+        appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentFast", cmd.str(), exitCode, ffmpegOutput, extra);
+
         // Check if it's a genuine error or just warnings
         if (ffmpegOutput.find("Output file is empty") != std::string::npos ||
             ffmpegOutput.find("No such file or directory") != std::string::npos ||
@@ -284,11 +360,9 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
             return false;
         }
         // FFmpeg often returns non-zero for warnings, but file might still be created
-        // Check if output file exists
-        FILE* test = fopen(outputVideo.c_str(), "rb");
-        if (test) {
-            fclose(test);
-            return true;  // File was created despite non-zero exit
+        // Check if output file exists AND has content
+        if (fileSize > 1024) {  // Minimum viable video file (1KB)
+            return true;  // File was created with content despite non-zero exit
         }
         if (shouldDebug) {
             std::cerr << "\nDEBUG Failed extraction #" << (++debugCount) << ":\n";
@@ -298,6 +372,12 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
             std::cerr << "Output (last 500 chars): " << ffmpegOutput.substr(ffmpegOutput.length() > 500 ? ffmpegOutput.length() - 500 : 0) << "\n";
         }
         return false;
+    }
+
+    // If exit code is zero but file is suspiciously small, log it for debugging.
+    if (fileSize >= 0 && fileSize <= 1024) {
+        std::string extra = "start=" + std::to_string(startTime) + ", dur=" + std::to_string(duration) + ", size=" + std::to_string(fileSize);
+        appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentFast_small_file", cmd.str(), exitCode, ffmpegOutput, extra);
     }
 
     return true;
@@ -313,7 +393,7 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
     // FIX: Normalize ALL clips to same resolution, frame rate, and pixel format
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"\"" << ffmpegPath << "\" -i \"" << inputVideo << "\""
+    cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideo << "\""
         << " -ss " << startTime
         << " -t " << duration
         << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
@@ -323,12 +403,18 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
         << " -c:a aac -b:a 192k -ar 44100"
         << " -video_track_timescale 90000"
         << " -avoid_negative_ts make_zero"
-        << " -y \"" << outputVideo << "\"\"";
+        << " -y \"" << outputVideo << "\"";
 
-    // Execute FFmpeg
-    FILE* pipe = _popen(cmd.str().c_str(), "r");
+    // Execute FFmpeg (redirect stderr to stdout to capture all output)
+#ifdef _WIN32
+    std::string fullCmd = "cmd /C \"" + cmd.str() + " 2>&1\"";
+#else
+    std::string fullCmd = cmd.str() + " 2>&1";
+#endif
+    FILE* pipe = _popen(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg for precise copy";
+        appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentPrecise::_popen_failed", fullCmd, -1, "", "start=" + std::to_string(startTime) + ", dur=" + std::to_string(duration));
         return false;
     }
 
@@ -341,15 +427,29 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
 
     int exitCode = _pclose(pipe);
 
-    if (exitCode != 0) {
-        m_lastError = "Precise segment extraction failed";
-        // Check if output file was created anyway
+    long fileSize = -1;
+    {
         FILE* test = fopen(outputVideo.c_str(), "rb");
         if (test) {
+            fseek(test, 0, SEEK_END);
+            fileSize = ftell(test);
             fclose(test);
+        }
+    }
+
+    if (exitCode != 0) {
+        m_lastError = "Precise segment extraction failed";
+        std::string extra = "start=" + std::to_string(startTime) + ", dur=" + std::to_string(duration) + ", size=" + std::to_string(fileSize);
+        appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentPrecise", cmd.str(), exitCode, ffmpegOutput, extra);
+        if (fileSize > 1024) {
             return true;  // File was created despite non-zero exit
         }
         return false;
+    }
+
+    if (fileSize >= 0 && fileSize <= 1024) {
+        std::string extra = "start=" + std::to_string(startTime) + ", dur=" + std::to_string(duration) + ", size=" + std::to_string(fileSize);
+        appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentPrecise_small_file", cmd.str(), exitCode, ffmpegOutput, extra);
     }
 
     return true;
@@ -370,10 +470,60 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
         return false;
     }
 
+    // Log what we're concatenating for debugging
+    std::cout << "Creating concat list with " << inputVideos.size() << " videos:\n";
+
+    FILE* debugLog = fopen("tripsitter_debug.log", "a");
+    if (debugLog) {
+        fprintf(debugLog, "\n=== Concatenation Step ===\n");
+        fprintf(debugLog, "Creating concat list with %zu videos:\n", inputVideos.size());
+        fclose(debugLog);
+    }
+
+    int missingCount = 0;
     for (const auto& video : inputVideos) {
         fprintf(f, "file '%s'\n", video.c_str());
+        std::cout << "  - " << video;
+
+        // Check if file exists
+        FILE* check = fopen(video.c_str(), "rb");
+        if (!check) {
+            std::cout << " [MISSING!]\n";
+            missingCount++;
+
+            debugLog = fopen("tripsitter_debug.log", "a");
+            if (debugLog) {
+                fprintf(debugLog, "  - %s [MISSING!]\n", video.c_str());
+                fclose(debugLog);
+            }
+        } else {
+            // Get file size
+            fseek(check, 0, SEEK_END);
+            long size = ftell(check);
+            std::cout << " [OK, " << size << " bytes]\n";
+            fclose(check);
+
+            debugLog = fopen("tripsitter_debug.log", "a");
+            if (debugLog) {
+                fprintf(debugLog, "  - %s [OK, %ld bytes]\n", video.c_str(), size);
+                fclose(debugLog);
+            }
+        }
     }
     fclose(f);
+
+    if (missingCount > 0) {
+        m_lastError = "Cannot concatenate: " + std::to_string(missingCount) + " segment files are missing!";
+
+        debugLog = fopen("tripsitter_debug.log", "a");
+        if (debugLog) {
+            fprintf(debugLog, "ERROR: %d segment files are missing!\n", missingCount);
+            fclose(debugLog);
+        }
+
+        std::remove(listFile.c_str());
+        return false;
+    }
 
     // Use FFmpeg command-line to concatenate pre-normalized segments
     // Since all segments are now normalized to same resolution/fps/format,
@@ -381,11 +531,16 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
     // and fall back to a re-encode if we detect timestamp/PTS/DTS problems.
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"\"" << ffmpegPath << "\" -fflags +genpts+igndts -f concat -safe 0 -i \"" << listFile
-        << "\" -c copy -video_track_timescale 90000 -y \"" << outputVideo << "\"\"";
+    cmd << "\"" << ffmpegPath << "\" -fflags +genpts+igndts -f concat -safe 0 -i \"" << listFile
+        << "\" -c copy -video_track_timescale 90000 -y \"" << outputVideo << "\"";
 
-    // Execute FFmpeg and capture output
-    FILE* pipe = _popen(cmd.str().c_str(), "r");
+    // Execute FFmpeg and capture output (redirect stderr to stdout)
+#ifdef _WIN32
+    std::string fullCmd = "cmd /C \"" + cmd.str() + " 2>&1\"";
+#else
+    std::string fullCmd = cmd.str() + " 2>&1";
+#endif
+    FILE* pipe = _popen(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg";
         std::remove(listFile.c_str());
@@ -409,10 +564,8 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
         }
     }
 
-    // Remove concat list file early
-    std::remove(listFile.c_str());
-
     // Check for suspicious warnings that can indicate timestamp/frame issues
+    // NOTE: Don't delete list file yet - fallback re-encode might need it
     bool suspicious = false;
     const char* patterns[] = {
         "Non-monotonic DTS",
@@ -436,12 +589,17 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
     if (exitCode != 0 || suspicious) {
         // Attempt a safe re-encode fallback (slower but normalizes timestamps)
         std::ostringstream reencodeCmd;
-        reencodeCmd << "\"\"" << ffmpegPath << "\" -fflags +genpts -f concat -safe 0 -i \"" << listFile
+        reencodeCmd << "\"" << ffmpegPath << "\" -fflags +genpts -f concat -safe 0 -i \"" << listFile
                     << "\" -c:v libx264 -preset ultrafast -crf 18 -r " << m_outputFps << " -pix_fmt yuv420p"
-                    << " -c:a aac -b:a 192k -video_track_timescale 90000 -y \"" << outputVideo << "\"\"";
+                    << " -c:a aac -b:a 192k -video_track_timescale 90000 -y \"" << outputVideo << "\"";
 
-        // Execute re-encode
-        FILE* pipe2 = _popen(reencodeCmd.str().c_str(), "r");
+        // Execute re-encode (redirect stderr to stdout)
+    #ifdef _WIN32
+        std::string fullReencodeCmd = "cmd /C \"" + reencodeCmd.str() + " 2>&1\"";
+    #else
+        std::string fullReencodeCmd = reencodeCmd.str() + " 2>&1";
+    #endif
+        FILE* pipe2 = _popen(fullReencodeCmd.c_str(), "r");
         std::string reencodeOutput;
         if (!pipe2) {
             m_lastError = "FFmpeg re-encode fallback failed to start";
@@ -466,21 +624,26 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
             if (lastNewline != std::string::npos && lastNewline + 1 < reencodeOutput.size()) {
                 m_lastError += ": " + reencodeOutput.substr(lastNewline + 1);
             }
+            std::remove(listFile.c_str());  // Clean up before returning error
             return false;
         }
 
-        // Re-encode succeeded
+        // Re-encode succeeded - clean up list file
+        std::remove(listFile.c_str());
         return true;
     }
 
-    // Success without needing re-encode
+    // Success without needing re-encode - clean up list file
+    std::remove(listFile.c_str());
     return true;
 }
 
 bool VideoWriter::addAudioTrack(const std::string& inputVideo,
                                  const std::string& audioFile,
                                  const std::string& outputVideo,
-                                 bool trimToShortest) {
+                                 bool trimToShortest,
+                                 double audioStart,
+                                 double audioEnd) {
     m_lastError.clear();
 
     std::string ffmpegPath = getFFmpegPath();
@@ -490,8 +653,15 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
     // -c:v copy = stream copy video (fast, no re-encode)
     // -c:a aac = encode audio as AAC
     // -shortest = trim output to shorter of video/audio (optional)
-    cmd << "\"\"" << ffmpegPath << "\" -i \"" << inputVideo << "\""
-        << " -i \"" << audioFile << "\""
+    double clipStart = std::max(0.0, audioStart);
+    bool clipAudio = (audioEnd > 0.0 && audioEnd > audioStart + 1e-3);
+    double clipDur = clipAudio ? (audioEnd - audioStart) : 0.0;
+
+    cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideo << "\"";
+    if (clipAudio) {
+        cmd << " -ss " << clipStart << " -t " << clipDur;
+    }
+    cmd << " -i \"" << audioFile << "\""
         << " -c:v copy -c:a aac -b:a 192k"
         << " -map 0:v:0 -map 1:a:0";  // Take video from first input, audio from second
 
@@ -499,12 +669,17 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
         cmd << " -shortest";
     }
 
-    cmd << " -y \"" << outputVideo << "\"\"";
+    cmd << " -y \"" << outputVideo << "\"";
 
     std::cout << "Adding audio track...\n";
 
-    // Execute FFmpeg
-    FILE* pipe = _popen(cmd.str().c_str(), "r");
+    // Execute FFmpeg (redirect stderr to stdout)
+#ifdef _WIN32
+    std::string fullCmd = "cmd /C \"" + cmd.str() + " 2>&1\"";
+#else
+    std::string fullCmd = cmd.str() + " 2>&1";
+#endif
+    FILE* pipe = _popen(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg for audio muxing";
         return false;
@@ -518,6 +693,15 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
     }
 
     int exitCode = _pclose(pipe);
+
+    // Persist muxing output for troubleshooting
+    {
+        FILE* logf = fopen("beatsync_ffmpeg_concat.log", "a");
+        if (logf) {
+            fprintf(logf, "\n--- FFmpeg audio mux run ---\ncmd: %s\nexit: %d\noutput:\n%s\n", cmd.str().c_str(), exitCode, ffmpegOutput.c_str());
+            fclose(logf);
+        }
+    }
 
     if (exitCode != 0) {
         m_lastError = "FFmpeg audio muxing failed";
@@ -610,10 +794,11 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         // Simple copy
         std::string ffmpegPath = getFFmpegPath();
         std::ostringstream cmd;
-        cmd << "\"\"" << ffmpegPath << "\" -i \"" << inputVideo << "\""
-            << " -c copy -y \"" << outputVideo << "\"\"";
+        cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideo << "\""
+            << " -c copy -y \"" << outputVideo << "\"";
 
-        FILE* pipe = _popen(cmd.str().c_str(), "r");
+        std::string fullCmd = cmd.str() + " 2>&1";
+        FILE* pipe = _popen(fullCmd.c_str(), "r");
         if (!pipe) {
             m_lastError = "Failed to execute FFmpeg for effects copy";
             return false;
@@ -627,7 +812,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
     // Apply effects with re-encoding
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"\"" << ffmpegPath << "\" -i \"" << inputVideo << "\"";
+    cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideo << "\"";
 
     // Build video filter
     std::string vf;
@@ -656,11 +841,12 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
 
     cmd << " -c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p"
         << " -c:a copy"
-        << " -y \"" << outputVideo << "\"\"";
+        << " -y \"" << outputVideo << "\"";
 
     std::cout << "Applying effects...\n";
 
-    FILE* pipe = _popen(cmd.str().c_str(), "r");
+    std::string fullCmd = cmd.str() + " 2>&1";
+    FILE* pipe = _popen(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg for effects";
         return false;
