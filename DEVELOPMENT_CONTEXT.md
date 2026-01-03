@@ -94,9 +94,104 @@ cmake --build build --config Release
 ✅ Project is ready for production use and distribution
 
 **Known Limitations:**
-- wxWidgets on Windows uses native controls (file pickers, dropdowns) that don't support custom background styling
-- Input controls remain with system default styling (white backgrounds)
-- Future enhancement: Consider custom-drawn controls for full theme control
+- Native file dialogs remain system-styled (expected behavior)
+- wxUniversal is less tested than native wxWidgets ports
+
+---
+
+## Session Log (2026-01-03) — wxUniversal Integration 🎨
+
+### Goal: Static Background + Fully Custom Theme
+**Problem:** Background image scrolled with content; native controls couldn't be fully styled.
+**Solution:** wxUniversal — a wxWidgets port that renders all controls itself, enabling:
+- Static background that stays fixed while UI scrolls over it
+- Complete control over all widget rendering via custom theme
+
+### Phase 1: Build wxWidgets with wxUniversal ✅
+
+**Build Script Created:** `C:\Users\samue\Desktop\build_wxuniv.bat`
+```batch
+@echo off
+call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+cd /d C:\wxWidgets-3.2.4\build\msw
+nmake /f makefile.vc BUILD=release SHARED=1 WXUNIV=1 UNICODE=1 TARGET_CPU=X64
+```
+
+**Output Libraries:** `C:\wxWidgets-3.2.4\lib\vc_x64_dll\`
+- `wxmswuniv32u_core_vc_x64.dll`
+- `wxmswuniv32u_base_vc_x64.dll`
+- `wxmswuniv32u_adv_vc_x64.dll`
+
+### Phase 2: PsychedelicTheme Implementation ✅
+
+**New Files:**
+- `src/gui/PsychedelicTheme.h` — Theme header with color palette
+- `src/gui/PsychedelicTheme.cpp` — Full theme implementation
+
+**Color Palette:**
+| Element | Color | Hex |
+|---------|-------|-----|
+| Primary | Neon Cyan | #00D9FF |
+| Secondary | Neon Purple | #8B00FF |
+| Background | Dark Blue-Black | #0A0A1A |
+| Surface | Dark Gray-Blue | #141428 |
+| Text | Light Blue-White | #C8DCFF |
+| Accent | Hot Pink | #FF0080 |
+
+**Theme Features:**
+- Custom button rendering with gradients
+- Glow effects on hover/focus
+- Custom checkbox and radio button drawing
+- Styled scrollbars and progress bars
+- Transparent control backgrounds
+
+### Phase 3: CMakeLists.txt Updates ✅
+
+**New Option Added:**
+```cmake
+option(USE_WXUNIVERSAL "Use wxUniversal build for custom theming" OFF)
+
+if(WIN32)
+    if(USE_WXUNIVERSAL)
+        set(wxWidgets_CONFIGURATION mswunivu)
+        add_definitions(-D__WXUNIVERSAL__)
+    else()
+        set(wxWidgets_CONFIGURATION mswu)
+    endif()
+endif()
+```
+
+### Phase 4: MainWindow Updates ✅
+
+**Changes to `src/gui_main.cpp`:**
+- Added theme registration: `WX_USE_THEME(psychedelic);`
+- Theme initialization in `OnInit()`: `wxTheme::Set(wxTheme::Create("psychedelic"));`
+
+**Changes to `src/gui/MainWindow.cpp`:**
+- Conditional code with `#ifdef __WXUNIVERSAL__`
+- Simplified background handling for wxUniversal (transparent scrolled panel)
+- Frame-level paint handler for static background
+
+### Build Commands
+
+**Standard Build (Native Controls):**
+```bash
+cmake -B build
+cmake --build build --config Release
+```
+
+**wxUniversal Build (Custom Theme):**
+```bash
+cmake -B build -DUSE_WXUNIVERSAL=ON
+cmake --build build --config Release
+```
+
+### Status
+- ✅ wxWidgets wxUniversal libraries built
+- ✅ PsychedelicTheme files created
+- ✅ CMakeLists.txt updated with USE_WXUNIVERSAL option
+- ✅ MainWindow updated for layered panel approach
+- ⏳ Rebuild and test with USE_WXUNIVERSAL=ON
 
 **Repository Structure:**
 - `main` branch — stable release code with assets
@@ -141,6 +236,14 @@ Goal: Output video should be ~6:01 (matches audio).
 - GUI interface & Preview mode (process only first N beats)  
 - Transition effects (crossfade), random/sequential clip selection  
 - Export/import beat grid; support variable clip durations
+
+- DEFLATE compression for log archives — currently the GUI saves log ZIPs using the fast "store" method with no compression. To implement DEFLATE later:
+  1. Add zlib to the build: in `CMakeLists.txt` add `find_package(ZLIB REQUIRED)` and link `${ZLIB_LIBRARIES}` to the target that builds `src/utils/LogArchiver.cpp` (e.g., `target_link_libraries(beatsync PRIVATE ${ZLIB_LIBRARIES})`).
+  2. Implement DEFLATE in `BeatSync::createZip` (in `src/utils/LogArchiver.cpp`) using zlib (`deflateInit`, `deflate`, `deflateEnd`) to compress entry data and write appropriate ZIP local/central headers (update sizes and CRC accordingly).
+  3. Add a small unit test to verify compressed archive integrity and that the GUI `Save Logs...` honors the `ZipUseDeflate` setting. (There is a hidden Catch2 test stub at `tests/test_deflate_catch2.cpp` tagged `[.deflate]` — replace this placeholder with active assertions when DEFLATE is implemented.)
+  4. Update docs and the Logs dialog note to remove the "not implemented" warning.
+
+  Note: The current default remains the fast store method to avoid adding new runtime deps.
 
 ---
 

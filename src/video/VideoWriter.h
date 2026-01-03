@@ -14,6 +14,31 @@ struct SwsContext;
 namespace BeatSync {
 
 /**
+ * @brief Configuration for video effects
+ */
+struct EffectsConfig {
+    // Transitions
+    bool enableTransitions = false;
+    std::string transitionType = "fade";  // fade, wipeleft, wiperight, dissolve, circlecrop
+    double transitionDuration = 0.3;      // seconds
+
+    // Visual filters
+    bool enableColorGrade = false;
+    std::string colorPreset = "none";     // warm, cool, vintage, vibrant
+
+    bool enableVignette = false;
+    double vignetteStrength = 0.5;        // 0.0 to 1.0
+
+    bool enableBlur = false;
+    double blurStrength = 2.0;            // sigma value
+
+    // Beat effects
+    bool enableBeatFlash = false;
+    bool enableBeatZoom = false;
+    double bpm = 120.0;                   // For beat-synced effects
+};
+
+/**
  * @brief Video segment definition
  */
 struct VideoSegment {
@@ -103,9 +128,52 @@ public:
                        const std::string& outputVideo,
                        bool trimToShortest = true);
 
+    /**
+     * @brief Set output video settings
+     * @param width Output width in pixels
+     * @param height Output height in pixels
+     * @param fps Output frame rate
+     */
+    void setOutputSettings(int width, int height, int fps);
+
+    /**
+     * @brief Set video effects configuration
+     * @param config Effects configuration
+     */
+    void setEffectsConfig(const EffectsConfig& config);
+
+    /**
+     * @brief Apply effects to concatenated video
+     * @param inputVideo Path to concatenated video
+     * @param outputVideo Path to output video with effects
+     * @return true if successful
+     */
+    bool applyEffects(const std::string& inputVideo, const std::string& outputVideo);
+
 private:
     std::string m_lastError;
     std::function<void(double)> m_progressCallback;
+
+    // Output settings (defaults)
+    int m_outputWidth = 1920;
+    int m_outputHeight = 1080;
+    int m_outputFps = 24;
+
+    // Effects configuration
+    EffectsConfig m_effects;
+
+    /**
+     * @brief Build FFmpeg filter chain from effects config
+     * @return Filter chain string for -vf parameter
+     */
+    std::string buildEffectsFilterChain() const;
+
+    /**
+     * @brief Get color grade filter for preset
+     * @param preset Color preset name
+     * @return FFmpeg filter string
+     */
+    std::string getColorGradeFilter(const std::string& preset) const;
 
     /**
      * @brief Copy video segment with re-encoding (slower, more precise)
