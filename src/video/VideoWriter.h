@@ -55,6 +55,9 @@ public:
     VideoWriter();
     ~VideoWriter();
 
+    // Expose resolved FFmpeg path for diagnostics
+    std::string resolveFfmpegPath() const;
+
     /**
      * @brief Cut video at beat timestamps
      * @param inputVideo Path to input video file
@@ -126,7 +129,9 @@ public:
     bool addAudioTrack(const std::string& inputVideo,
                        const std::string& audioFile,
                        const std::string& outputVideo,
-                       bool trimToShortest = true);
+                       bool trimToShortest = true,
+                       double audioStart = 0.0,
+                       double audioEnd = -1.0);
 
     /**
      * @brief Set output video settings
