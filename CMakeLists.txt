@@ -109,11 +109,20 @@ set_target_properties(beatsync TripSitter PROPERTIES
 )
 
 # Copy assets to build directory
-add_custom_command(TARGET TripSitter POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_SOURCE_DIR}/assets
-    ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets
-)
+if(APPLE)
+    # For macOS app bundle, copy to Resources folder
+    add_custom_command(TARGET TripSitter POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/assets
+        $<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/Resources/assets
+    )
+else()
+    add_custom_command(TARGET TripSitter POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/assets
+        ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets
+    )
+endif()
 
 # Copy FFmpeg DLLs to output directory (Windows only)
 if(WIN32)
@@ -131,7 +140,11 @@ if(WIN32)
 endif()
 
 # Install TripSitter executable and assets for packaging
-install(TARGETS TripSitter RUNTIME DESTINATION .)
+if(APPLE)
+    install(TARGETS TripSitter BUNDLE DESTINATION .)
+else()
+    install(TARGETS TripSitter RUNTIME DESTINATION .)
+endif()
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/assets DESTINATION .)
 
 # CPack packaging configuration
@@ -155,8 +168,6 @@ elseif(APPLE)
     set(CPACK_DMG_VOLUME_NAME "TripSitter")
     set(CPACK_DMG_FORMAT "UDZO")
     set(CPACK_BUNDLE_NAME "TripSitter")
-    # Install the .app bundle
-    install(TARGETS TripSitter BUNDLE DESTINATION .)
 else()
     set(CPACK_GENERATOR "ZIP;TGZ")
 endif()

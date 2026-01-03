@@ -20,6 +20,13 @@
 #include <sstream>
 #include "../utils/LogArchiver.h"
 
+// Cross-platform popen/pclose - use standard names everywhere,
+// but on Windows map them to the underscore-prefixed versions
+#ifdef _WIN32
+#define popen _popen
+#define pclose _pclose
+#endif
+
 #ifdef __WXUNIVERSAL__
 #include "PsychedelicTheme.h"
 #endif
@@ -96,8 +103,14 @@ void MainWindow::SetupFonts() {
 }
 
 void MainWindow::LoadBackgroundImage() {
+    wxString assetsDir;
+#ifdef __APPLE__
+    // On macOS, assets are in the app bundle's Resources folder
+    assetsDir = wxStandardPaths::Get().GetResourcesDir() + "/assets/";
+#else
     wxString exePath = wxStandardPaths::Get().GetExecutablePath();
-    wxString assetsDir = wxFileName(exePath).GetPath() + "/assets/";
+    assetsDir = wxFileName(exePath).GetPath() + "/assets/";
+#endif
 
     // Try the upscaled version first, then fall back to background.png
     wxArrayString candidates;
@@ -390,37 +403,45 @@ void MainWindow::CreateControls() {
 
     m_mainPanel->Bind(wxEVT_SIZE, [this, refreshChildRects](wxSizeEvent&){ m_mainPanel->CallAfter(refreshChildRects); });
 
-    // Draw background at fixed position (compensate for scroll offset)
+    // Draw background at fixed position (0,0) - stays fixed while content scrolls
     m_mainPanel->Bind(wxEVT_PAINT, [this](wxPaintEvent& evt) {
-        // Use auto-buffered paint DC to avoid flicker
         wxAutoBufferedPaintDC dc(m_mainPanel);
 
-        // Get scroll position (in scroll units) and pixels per unit
-        int viewX, viewY;
-        m_mainPanel->GetViewStart(&viewX, &viewY);
-        int pixelX, pixelY;
-        m_mainPanel->GetScrollPixelsPerUnit(&pixelX, &pixelY);
-
-        // Compute negated offset to keep bitmap fixed relative to window
-        int offsetX = -viewX * pixelX;
-        int offsetY = -viewY * pixelY;
+        wxSize clientSize = m_mainPanel->GetClientSize();
 
         if (m_backgroundBitmap.IsOk()) {
-            // Tile the bitmap to ensure the visible client area is fully covered
+            // Scale background to cover client area (aspect-fill)
             wxSize bmpSize = m_backgroundBitmap.GetSize();
-            wxSize client = m_mainPanel->GetClientSize();
-            for (int y = offsetY - bmpSize.y; y < client.y + bmpSize.y; y += bmpSize.y) {
-                for (int x = offsetX - bmpSize.x; x < client.x + bmpSize.x; x += bmpSize.x) {
-                    dc.DrawBitmap(m_backgroundBitmap, x, y, false);
-                }
+            double scaleW = (double)clientSize.x / bmpSize.x;
+            double scaleH = (double)clientSize.y / bmpSize.y;
+            double scale = std::max(scaleW, scaleH);
+
+            int scaledW = (int)(bmpSize.x * scale);
+            int scaledH = (int)(bmpSize.y * scale);
+
+            // Center the scaled image
+            int offsetX = (clientSize.x - scaledW) / 2;
+            int offsetY = (clientSize.y - scaledH) / 2;
+
+            // Cache scaled bitmap for performance
+            static wxSize lastClientSize(0, 0);
+            static wxBitmap cachedBitmap;
+
+            if (lastClientSize != clientSize || !cachedBitmap.IsOk()) {
+                wxImage img = m_backgroundBitmap.ConvertToImage();
+                img.Rescale(scaledW, scaledH, wxIMAGE_QUALITY_BILINEAR);
+                cachedBitmap = wxBitmap(img);
+                lastClientSize = clientSize;
             }
+
+            // Draw at (0,0) - fixed to viewport, not scrolled content
+            dc.DrawBitmap(cachedBitmap, offsetX, offsetY, false);
         } else {
-            // Clear to background colour if no bitmap
-            dc.SetBackground(wxBrush(GetBackgroundColour()));
-            dc.Clear();
+            dc.GradientFillLinear(wxRect(0, 0, clientSize.x, clientSize.y),
+                wxColour(10, 10, 26), wxColour(25, 0, 50), wxSOUTH);
         }
 
-        // Prepare DC so child controls are drawn in the correct scrolled coordinates
+        // Now prepare DC for child controls with scroll offset
         m_mainPanel->DoPrepareDC(dc);
     });
 
@@ -952,7 +973,11 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             
             BeatSync::AudioAnalyzer analyzer;
             BeatSync::BeatGrid beatGrid = analyzer.analyze(config.audioPath.ToStdString());
-            
+
+            // Get BPM from beat analysis for effects
+            double detectedBpm = beatGrid.getBPM();
+            if (detectedBpm <= 0) detectedBpm = 120.0;  // Fallback
+
             if (m_cancelRequested) {
                 wxThreadEvent* cancelEvt = new wxThreadEvent(wxEVT_PROCESSING_COMPLETE);
                 cancelEvt->SetInt(0);
@@ -1063,7 +1088,7 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             effects.vignetteStrength = 0.5;
             effects.enableBeatFlash = config.enableBeatFlash;
             effects.enableBeatZoom = config.enableBeatZoom;
-            effects.bpm = config.bpm;
+            effects.bpm = detectedBpm;  // Use detected BPM from audio analysis
             writer.setEffectsConfig(effects);
 
             bool hasEffects = config.enableColorGrade || config.enableVignette ||
@@ -1270,7 +1295,8 @@ void MainWindow::OnProcessingComplete(bool success, const wxString& message) {
     } else {
         // Reuse the full logs dialog for errors
         m_statusText->SetLabel(message);
-        OnViewLogs(wxCommandEvent());
+        wxCommandEvent dummyEvent;
+        OnViewLogs(dummyEvent);
     }
 }
 
@@ -1331,16 +1357,20 @@ void MainWindow::OnViewLogs(wxCommandEvent& WXUNUSED(event)) {
     if (envPath && envPath[0] != '\0') {
         full << "FFmpeg Path (env): " << envPath << "\n";
     } else {
-        // Try 'where ffmpeg' on Windows
-        FILE* pipe = _popen("where ffmpeg 2>nul", "r");
+        // Try 'which ffmpeg' on Unix / 'where ffmpeg' on Windows
+#ifdef _WIN32
+        FILE* pipe = popen("where ffmpeg 2>nul", "r");
+#else
+        FILE* pipe = popen("which ffmpeg 2>/dev/null", "r");
+#endif
         if (pipe) {
             char buf[512];
             if (fgets(buf, sizeof(buf), pipe) != nullptr) {
-                full << "FFmpeg Path (where): " << buf;
+                full << "FFmpeg Path (system): " << buf;
             } else {
                 full << "FFmpeg Path: not found in PATH\n";
             }
-            _pclose(pipe);
+            pclose(pipe);
         } else {
             full << "FFmpeg Path: (where check failed)\n";
         }

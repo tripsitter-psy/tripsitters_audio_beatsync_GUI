@@ -8,6 +8,14 @@
 #include <chrono>
 #include <ctime>
 #include <cstring>
+
+// Cross-platform popen/pclose - use standard names everywhere,
+// but on Windows map them to the underscore-prefixed versions
+#ifndef _WIN32
+#define _popen popen
+#define _pclose pclose
+#endif
+
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
@@ -765,12 +773,17 @@ std::string VideoWriter::buildEffectsFilterChain() const {
         filters.push_back(blur.str());
     }
 
-    // Beat zoom pulse effect
+    // Beat zoom pulse effect - use scale+crop for video (zoompan is for images)
     if (m_effects.enableBeatZoom && m_effects.bpm > 0) {
+        double freq = m_effects.bpm / 30.0;  // Convert BPM to frequency for sin wave
         std::ostringstream zoom;
-        // Subtle zoom pulse synced to BPM
-        zoom << "zoompan=z='1.0+0.03*sin(t*PI*" << (m_effects.bpm / 30.0) << ")'"
-             << ":d=1:s=" << m_outputWidth << "x" << m_outputHeight;
+        // Scale up slightly with sine wave, then crop back to original size
+        // This creates a subtle zoom pulse synced to BPM
+        // Note: eval=frame is required for time-based expressions
+        zoom << "scale=w='iw*(1.0+0.03*abs(sin(t*PI*" << freq << ")))':"
+             << "h='ih*(1.0+0.03*abs(sin(t*PI*" << freq << ")))':eval=frame,"
+             << "crop=w=" << m_outputWidth << ":h=" << m_outputHeight
+             << ":x='(iw-" << m_outputWidth << ")/2':y='(ih-" << m_outputHeight << ")/2'";
         filters.push_back(zoom.str());
     }
 
@@ -844,8 +857,13 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         << " -y \"" << outputVideo << "\"";
 
     std::cout << "Applying effects...\n";
+    std::cout << "Effects filter: " << vf << "\n";
 
     std::string fullCmd = cmd.str() + " 2>&1";
+
+    // Log the effects command
+    appendFfmpegLog("beatsync_ffmpeg_concat.log", "FFmpeg effects run", cmd.str(), -1, "", "");
+
     FILE* pipe = _popen(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg for effects";
@@ -860,8 +878,11 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
 
     int exitCode = _pclose(pipe);
 
+    // Log the result
+    appendFfmpegLog("beatsync_ffmpeg_concat.log", "FFmpeg effects result", cmd.str(), exitCode, ffmpegOutput, "");
+
     if (exitCode != 0) {
-        m_lastError = "FFmpeg effects processing failed";
+        m_lastError = "FFmpeg effects processing failed: " + ffmpegOutput;
         // Check if output file was created anyway
         FILE* test = fopen(outputVideo.c_str(), "rb");
         if (test) {
