@@ -1,0 +1,62 @@
+name: macOS Build & Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      CMAKE_BUILD_TYPE: Release
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Homebrew packages
+        run: |
+          brew update
+          brew install cmake ffmpeg wxwidgets
+
+      - name: Setup build directory
+        run: |
+          FFMPEG_PREFIX=$(brew --prefix ffmpeg)
+          echo "FFMPEG_PREFIX=$FFMPEG_PREFIX" >> $GITHUB_ENV
+          mkdir -p build
+
+      - name: Configure CMake (universal build)
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }} \
+            -DBUILD_TESTS=ON \
+            -DFFMPEG_ROOT="$FFMPEG_PREFIX" \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build
+        run: cmake --build build --config ${CMAKE_BUILD_TYPE}
+
+      - name: Run tests
+        run: ctest --test-dir build -C ${CMAKE_BUILD_TYPE} --output-on-failure
+
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-test-logs
+          path: build/Testing/Temporary
+
+      - name: Package application
+        run: |
+          cd build
+          cpack -G DragNDrop -C ${CMAKE_BUILD_TYPE}
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: TripSitter-macOS
+          path: |
+            build/*.dmg
+            build/bin/*/TripSitter.app
+            build/bin/*/beatsync

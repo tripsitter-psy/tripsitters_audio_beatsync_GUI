@@ -10,9 +10,19 @@
 #include <wx/stdpaths.h>
 #include <wx/filename.h>
 #include <wx/dir.h>
+#include <wx/dcbuffer.h>
+#include <wx/clipbrd.h>
+#include <wx/textdlg.h>
 #include <filesystem>
 #include <chrono>
 #include <algorithm>
+#include <fstream>
+#include <sstream>
+#include "../utils/LogArchiver.h"
+
+#ifdef __WXUNIVERSAL__
+#include "PsychedelicTheme.h"
+#endif
 
 // Custom event definitions
 wxDEFINE_EVENT(wxEVT_PROCESSING_PROGRESS, wxThreadEvent);
@@ -26,7 +36,7 @@ wxEND_EVENT_TABLE()
 
 MainWindow::MainWindow()
     : wxFrame(nullptr, wxID_ANY, "Trip Sitter - Audio Beat Sync GUI",
-              wxDefaultPosition, wxSize(1344, 768),
+              wxDefaultPosition, wxSize(1344, 950),
               wxDEFAULT_FRAME_STYLE & ~(wxRESIZE_BORDER | wxMAXIMIZE_BOX))
 {
     m_settingsManager = std::make_unique<SettingsManager>();
@@ -39,6 +49,15 @@ MainWindow::MainWindow()
     LoadSettings();
     
     Centre();
+
+    // Add menu bar with Help -> View Logs & Diagnostics
+    const int ID_VIEW_LOGS = wxID_HIGHEST + 1;
+    wxMenuBar* menuBar = new wxMenuBar();
+    wxMenu* helpMenu = new wxMenu();
+    helpMenu->Append(ID_VIEW_LOGS, "View Logs & Diagnostics...");
+    menuBar->Append(helpMenu, "&Help");
+    SetMenuBar(menuBar);
+    Bind(wxEVT_MENU, &MainWindow::OnViewLogs, this, ID_VIEW_LOGS);
     
     // Bind custom events
     Bind(wxEVT_PROCESSING_PROGRESS, [this](wxThreadEvent& evt) {
@@ -74,22 +93,32 @@ void MainWindow::LoadBackgroundImage() {
     if (wxFileExists(bgPath)) {
         wxImage img(bgPath, wxBITMAP_TYPE_PNG);
         if (img.IsOk()) {
-            // Use native image size (1344x768) - matches window size
+            // Keep original aspect ratio - just use image as-is
             m_backgroundBitmap = wxBitmap(img);
         }
     }
 
-    // Fallback: Create gradient background
+    // Fallback: Create gradient background matching virtual size
     if (!m_backgroundBitmap.IsOk()) {
-        wxBitmap bmp(1344, 768);
+        wxBitmap bmp(1344, 1400);
         wxMemoryDC dc(bmp);
-        dc.GradientFillLinear(wxRect(0, 0, 1344, 768),
+        dc.GradientFillLinear(wxRect(0, 0, 1344, 1400),
             wxColour(10, 10, 26), wxColour(25, 0, 50), wxSOUTH);
         m_backgroundBitmap = bmp;
     }
 }
 
 void MainWindow::ApplyPsychedelicStyling() {
+#ifdef __WXUNIVERSAL__
+    // When using wxUniversal, the PsychedelicTheme handles all styling
+    // Just set the basic background color
+    SetBackgroundColour(TripSitter::PsychedelicColors::Background());
+    if (m_mainPanel) {
+        m_mainPanel->SetBackgroundColour(TripSitter::PsychedelicColors::Background());
+    }
+    return;
+#endif
+
     // Set window background to black
     SetBackgroundColour(wxColour(10, 10, 26));
 
@@ -214,20 +243,94 @@ void MainWindow::ApplyPsychedelicStyling() {
 }
 
 void MainWindow::CreateControls() {
-    m_mainPanel = new wxPanel(this);
+    m_mainPanel = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxHSCROLL | wxVSCROLL | wxCLIP_CHILDREN);
+    m_mainPanel->SetScrollRate(10, 10);
+    m_mainPanel->SetVirtualSize(1344, 1400);  // Taller virtual size for scrolling
 
-    // Bind paint event to draw custom background on panel
-    m_mainPanel->Bind(wxEVT_PAINT, [this](wxPaintEvent& evt) {
-        wxPaintDC dc(m_mainPanel);
+#ifdef __WXUNIVERSAL__
+    // wxUniversal: Theme handles rendering, simpler background approach
+    // The background is drawn by the frame, controls are transparent
+    m_mainPanel->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+
+    // Draw fixed background on the frame itself
+    Bind(wxEVT_PAINT, [this](wxPaintEvent& evt) {
+        wxPaintDC dc(this);
         if (m_backgroundBitmap.IsOk()) {
             dc.DrawBitmap(m_backgroundBitmap, 0, 0, false);
+        } else {
+            dc.SetBackground(wxBrush(TripSitter::PsychedelicColors::Background()));
+            dc.Clear();
         }
+    });
+#else
+    // Native widgets: Complex paint handling for static background
+    m_mainPanel->SetBackgroundStyle(wxBG_STYLE_PAINT);
+
+    // Aggressive refresh: refresh child rectangles on scroll/resize to minimize trailing artifacts
+    auto refreshChildRects = [this]() {
+        wxWindowList& children = m_mainPanel->GetChildren();
+        for (wxWindowList::iterator it = children.begin(); it != children.end(); ++it) {
+            wxWindow* child = *it;
+            if (!child->IsShown()) continue;
+            wxRect r = child->GetRect();
+            // Refresh the area occupied by this child to force a redraw
+            m_mainPanel->RefreshRect(r, false);
+        }
+        // Fallback to refresh whole client area (non-blocking)
+        m_mainPanel->Refresh(false);
+    };
+
+    m_mainPanel->Bind(wxEVT_MOUSEWHEEL, [this, refreshChildRects](wxMouseEvent& ev){
+        ev.Skip();
+        // Use CallAfter to coalesce rapid events
+        m_mainPanel->CallAfter(refreshChildRects);
+    });
+
+    // Scroll events (thumb track/release) — refresh child rects
+    m_mainPanel->Bind(wxEVT_SCROLLWIN_THUMBTRACK, [this, refreshChildRects](wxScrollWinEvent&){ m_mainPanel->CallAfter(refreshChildRects); });
+    m_mainPanel->Bind(wxEVT_SCROLLWIN_THUMBRELEASE, [this, refreshChildRects](wxScrollWinEvent&){ m_mainPanel->CallAfter(refreshChildRects); });
+
+    m_mainPanel->Bind(wxEVT_SIZE, [this, refreshChildRects](wxSizeEvent&){ m_mainPanel->CallAfter(refreshChildRects); });
+
+    // Draw background at fixed position (compensate for scroll offset)
+    m_mainPanel->Bind(wxEVT_PAINT, [this](wxPaintEvent& evt) {
+        // Use auto-buffered paint DC to avoid flicker
+        wxAutoBufferedPaintDC dc(m_mainPanel);
+
+        // Get scroll position (in scroll units) and pixels per unit
+        int viewX, viewY;
+        m_mainPanel->GetViewStart(&viewX, &viewY);
+        int pixelX, pixelY;
+        m_mainPanel->GetScrollPixelsPerUnit(&pixelX, &pixelY);
+
+        // Compute negated offset to keep bitmap fixed relative to window
+        int offsetX = -viewX * pixelX;
+        int offsetY = -viewY * pixelY;
+
+        if (m_backgroundBitmap.IsOk()) {
+            // Tile the bitmap to ensure the visible client area is fully covered
+            wxSize bmpSize = m_backgroundBitmap.GetSize();
+            wxSize client = m_mainPanel->GetClientSize();
+            for (int y = offsetY - bmpSize.y; y < client.y + bmpSize.y; y += bmpSize.y) {
+                for (int x = offsetX - bmpSize.x; x < client.x + bmpSize.x; x += bmpSize.x) {
+                    dc.DrawBitmap(m_backgroundBitmap, x, y, false);
+                }
+            }
+        } else {
+            // Clear to background colour if no bitmap
+            dc.SetBackground(wxBrush(GetBackgroundColour()));
+            dc.Clear();
+        }
+
+        // Prepare DC so child controls are drawn in the correct scrolled coordinates
+        m_mainPanel->DoPrepareDC(dc);
     });
 
     // Prevent default erase to avoid flicker
     m_mainPanel->Bind(wxEVT_ERASE_BACKGROUND, [](wxEraseEvent& evt) {
         // Do nothing - prevents flicker
     });
+#endif
     
     // Input Files Section
     m_audioFilePicker = new wxFilePickerCtrl(m_mainPanel, wxID_ANY, "",
@@ -275,12 +378,30 @@ void MainWindow::CreateControls() {
     m_fpsChoice->SetSelection(0);
     
     // Preview Mode
-    m_previewModeCheck = new wxCheckBox(m_mainPanel, wxID_ANY, 
+    m_previewModeCheck = new wxCheckBox(m_mainPanel, wxID_ANY,
         "Preview Mode (Process First N Beats Only)");
     m_previewBeatsCtrl = new wxSpinCtrl(m_mainPanel, wxID_ANY, "10",
         wxDefaultPosition, wxSize(80, -1), wxSP_ARROW_KEYS, 1, 1000, 10);
     m_previewBeatsCtrl->Enable(false);
-    
+
+    // Effects Controls
+    m_colorGradeCheck = new wxCheckBox(m_mainPanel, wxID_ANY, "Color Grade");
+    m_colorPresetChoice = new wxChoice(m_mainPanel, wxID_ANY);
+    m_colorPresetChoice->Append("Warm");
+    m_colorPresetChoice->Append("Cool");
+    m_colorPresetChoice->Append("Vintage");
+    m_colorPresetChoice->Append("Vibrant");
+    m_colorPresetChoice->SetSelection(0);
+    m_colorPresetChoice->Enable(false);
+
+    m_vignetteCheck = new wxCheckBox(m_mainPanel, wxID_ANY, "Vignette");
+    m_beatFlashCheck = new wxCheckBox(m_mainPanel, wxID_ANY, "Beat Flash");
+    m_beatZoomCheck = new wxCheckBox(m_mainPanel, wxID_ANY, "Beat Zoom Pulse");
+
+    m_colorGradeCheck->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent& e) {
+        m_colorPresetChoice->Enable(e.IsChecked());
+    });
+
     // Beat Visualizer
     m_beatVisualizer = new BeatVisualizer(m_mainPanel, wxID_ANY, 
         wxDefaultPosition, wxSize(890, 120));
@@ -339,7 +460,7 @@ void MainWindow::CreateLayout() {
     mainSizer->Add(subtitle, 0, wxALIGN_CENTER_HORIZONTAL | wxBOTTOM, 10);
     
     // Input Files Section
-    wxStaticText* inputSectionLabel = new wxStaticText(m_mainPanel, wxID_ANY, "══ INPUT FILES ══");
+    wxStaticText* inputSectionLabel = new wxStaticText(m_mainPanel, wxID_ANY, "INPUT FILES");
     inputSectionLabel->SetFont(m_labelFont.Bold());
     inputSectionLabel->SetForegroundColour(wxColour(0, 217, 255)); // Cyan
     mainSizer->Add(inputSectionLabel, 0, wxLEFT | wxTOP, 15);
@@ -347,33 +468,33 @@ void MainWindow::CreateLayout() {
 
     wxBoxSizer* inputBox = new wxBoxSizer(wxVERTICAL);
     wxGridBagSizer* inputGrid = new wxGridBagSizer(8, 10);
-    
+
     wxStaticText* audioLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Audio File:");
     audioLabel->SetForegroundColour(*wxWHITE);
     inputGrid->Add(audioLabel, wxGBPosition(0, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
     inputGrid->Add(m_audioFilePicker, wxGBPosition(0, 1), wxDefaultSpan, wxEXPAND);
-    
+
     wxStaticText* sourceLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Video Source:");
     sourceLabel->SetForegroundColour(*wxWHITE);
     inputGrid->Add(sourceLabel, wxGBPosition(1, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
-    
+
     wxBoxSizer* radioSizer = new wxBoxSizer(wxHORIZONTAL);
     m_singleVideoRadio->SetForegroundColour(*wxWHITE);
     m_multiClipRadio->SetForegroundColour(*wxWHITE);
     radioSizer->Add(m_singleVideoRadio, 0, wxALL, 5);
     radioSizer->Add(m_multiClipRadio, 0, wxALL, 5);
     inputGrid->Add(radioSizer, wxGBPosition(1, 1));
-    
+
     inputGrid->Add(m_singleVideoPicker, wxGBPosition(2, 1), wxDefaultSpan, wxEXPAND);
     inputGrid->Add(m_videoFolderPicker, wxGBPosition(3, 1), wxDefaultSpan, wxEXPAND);
-    
+
     inputGrid->AddGrowableCol(1);
     inputBox->Add(inputGrid, 1, wxEXPAND | wxALL, 10);
     mainSizer->Add(inputBox, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
     mainSizer->AddSpacer(10);
 
     // Sync Settings Section
-    wxStaticText* settingsSectionLabel = new wxStaticText(m_mainPanel, wxID_ANY, "══ SYNC SETTINGS ══");
+    wxStaticText* settingsSectionLabel = new wxStaticText(m_mainPanel, wxID_ANY, "SYNC SETTINGS");
     settingsSectionLabel->SetFont(m_labelFont.Bold());
     settingsSectionLabel->SetForegroundColour(wxColour(139, 0, 255)); // Purple
     mainSizer->Add(settingsSectionLabel, 0, wxLEFT | wxTOP, 15);
@@ -381,47 +502,79 @@ void MainWindow::CreateLayout() {
 
     wxBoxSizer* settingsBox = new wxBoxSizer(wxVERTICAL);
     wxGridBagSizer* settingsGrid = new wxGridBagSizer(8, 10);
-    
+
     wxStaticText* beatLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Beat Sync Rate:");
     beatLabel->SetForegroundColour(*wxWHITE);
     settingsGrid->Add(beatLabel, wxGBPosition(0, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
     settingsGrid->Add(m_beatRateChoice, wxGBPosition(0, 1), wxDefaultSpan, wxEXPAND);
-    
+
     wxStaticText* resLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Output Resolution:");
     resLabel->SetForegroundColour(*wxWHITE);
     settingsGrid->Add(resLabel, wxGBPosition(1, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
     settingsGrid->Add(m_resolutionChoice, wxGBPosition(1, 1), wxDefaultSpan, wxEXPAND);
-    
+
     wxStaticText* fpsLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Frame Rate:");
     fpsLabel->SetForegroundColour(*wxWHITE);
     settingsGrid->Add(fpsLabel, wxGBPosition(2, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
     settingsGrid->Add(m_fpsChoice, wxGBPosition(2, 1), wxDefaultSpan, wxEXPAND);
-    
+
     wxBoxSizer* previewSizer = new wxBoxSizer(wxHORIZONTAL);
     m_previewModeCheck->SetForegroundColour(*wxWHITE);
     previewSizer->Add(m_previewModeCheck, 0, wxALIGN_CENTER_VERTICAL);
     previewSizer->AddSpacer(10);
     previewSizer->Add(m_previewBeatsCtrl, 0);
     settingsGrid->Add(previewSizer, wxGBPosition(3, 0), wxGBSpan(1, 2));
-    
+
     settingsGrid->AddGrowableCol(1);
     settingsBox->Add(settingsGrid, 1, wxEXPAND | wxALL, 10);
     mainSizer->Add(settingsBox, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
     mainSizer->AddSpacer(10);
-    
-    // Beat Visualizer
-    wxStaticText* vizLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Beat Visualization:");
-    vizLabel->SetForegroundColour(wxColour(255, 136, 0));
-    mainSizer->Add(vizLabel, 0, wxLEFT, 15);
-    mainSizer->Add(m_beatVisualizer, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
+
+    // Effects Section
+    wxStaticText* effectsSectionLabel = new wxStaticText(m_mainPanel, wxID_ANY, "EFFECTS");
+    effectsSectionLabel->SetFont(m_labelFont.Bold());
+    effectsSectionLabel->SetForegroundColour(wxColour(255, 0, 128)); // Pink
+    mainSizer->Add(effectsSectionLabel, 0, wxLEFT | wxTOP, 15);
+    mainSizer->AddSpacer(5);
+
+    wxStaticBox* effectsStaticBox = new wxStaticBox(m_mainPanel, wxID_ANY, "");
+    effectsStaticBox->SetForegroundColour(wxColour(255, 0, 128));
+    wxStaticBoxSizer* effectsBox = new wxStaticBoxSizer(effectsStaticBox, wxVERTICAL);
+
+    wxBoxSizer* effectsRow1 = new wxBoxSizer(wxHORIZONTAL);
+    m_colorGradeCheck->SetForegroundColour(*wxWHITE);
+    effectsRow1->Add(m_colorGradeCheck, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5);
+    effectsRow1->Add(m_colorPresetChoice, 0, wxRIGHT, 20);
+    m_vignetteCheck->SetForegroundColour(*wxWHITE);
+    effectsRow1->Add(m_vignetteCheck, 0, wxALIGN_CENTER_VERTICAL);
+    effectsBox->Add(effectsRow1, 0, wxALL, 5);
+
+    wxBoxSizer* effectsRow2 = new wxBoxSizer(wxHORIZONTAL);
+    m_beatFlashCheck->SetForegroundColour(*wxWHITE);
+    effectsRow2->Add(m_beatFlashCheck, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 20);
+    m_beatZoomCheck->SetForegroundColour(*wxWHITE);
+    effectsRow2->Add(m_beatZoomCheck, 0, wxALIGN_CENTER_VERTICAL);
+    effectsBox->Add(effectsRow2, 0, wxALL, 5);
+
+    mainSizer->Add(effectsBox, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
     mainSizer->AddSpacer(10);
-    
-    // Video Preview
-    wxStaticText* prevLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Video Preview:");
+
+    // Beat Visualizer Section
+    wxStaticText* vizLabel = new wxStaticText(m_mainPanel, wxID_ANY, "BEAT VISUALIZATION");
+    vizLabel->SetFont(m_labelFont.Bold());
+    vizLabel->SetForegroundColour(wxColour(255, 136, 0));
+    mainSizer->Add(vizLabel, 0, wxLEFT | wxTOP, 15);
+    mainSizer->AddSpacer(5);
+    mainSizer->Add(m_beatVisualizer, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
+    mainSizer->AddSpacer(20);
+
+    // Video Preview Section
+    wxStaticText* prevLabel = new wxStaticText(m_mainPanel, wxID_ANY, "VIDEO PREVIEW");
+    prevLabel->SetFont(m_labelFont.Bold());
     prevLabel->SetForegroundColour(wxColour(255, 136, 0));
     mainSizer->Add(prevLabel, 0, wxLEFT, 15);
 
-    // Add preview button and timestamp input above the preview area
+    // Preview controls
     wxBoxSizer* previewHeader = new wxBoxSizer(wxHORIZONTAL);
     previewHeader->Add(m_previewButton, 0, wxLEFT, 15);
 
@@ -439,7 +592,7 @@ void MainWindow::CreateLayout() {
     mainSizer->AddSpacer(10);
 
     // Output Section
-    wxStaticText* outputSectionLabel = new wxStaticText(m_mainPanel, wxID_ANY, "══ OUTPUT ══");
+    wxStaticText* outputSectionLabel = new wxStaticText(m_mainPanel, wxID_ANY, "OUTPUT");
     outputSectionLabel->SetFont(m_labelFont.Bold());
     outputSectionLabel->SetForegroundColour(wxColour(0, 217, 255)); // Cyan
     mainSizer->Add(outputSectionLabel, 0, wxLEFT | wxTOP, 15);
@@ -452,7 +605,7 @@ void MainWindow::CreateLayout() {
     outputBox->Add(m_outputFilePicker, 1, wxEXPAND | wxALL, 5);
     mainSizer->Add(outputBox, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
     mainSizer->AddSpacer(15);
-    
+
     // Action Buttons
     wxBoxSizer* buttonSizer = new wxBoxSizer(wxHORIZONTAL);
     buttonSizer->Add(m_startButton, 0, wxALL, 5);
@@ -461,7 +614,7 @@ void MainWindow::CreateLayout() {
     mainSizer->AddSpacer(15);
 
     // Progress Section
-    wxStaticText* progressSectionLabel = new wxStaticText(m_mainPanel, wxID_ANY, "══ PROGRESS ══");
+    wxStaticText* progressSectionLabel = new wxStaticText(m_mainPanel, wxID_ANY, "PROGRESS");
     progressSectionLabel->SetFont(m_labelFont.Bold());
     progressSectionLabel->SetForegroundColour(wxColour(139, 0, 255)); // Purple
     mainSizer->Add(progressSectionLabel, 0, wxLEFT | wxTOP, 15);
@@ -475,7 +628,7 @@ void MainWindow::CreateLayout() {
     mainSizer->AddSpacer(15);
     
     m_mainPanel->SetSizer(mainSizer);
-    
+
     wxBoxSizer* frameSizer = new wxBoxSizer(wxVERTICAL);
     frameSizer->Add(m_mainPanel, 1, wxEXPAND);
     SetSizer(frameSizer);
@@ -581,7 +734,22 @@ void MainWindow::OnStartProcessing(wxCommandEvent& event) {
     config.fps = wxAtoi(m_fpsChoice->GetStringSelection().BeforeFirst(' '));
     config.previewMode = m_previewModeCheck->GetValue();
     config.previewBeats = m_previewBeatsCtrl->GetValue();
-    
+
+    // Get selection range from beat visualizer
+    auto [selStart, selEnd] = m_beatVisualizer->GetSelectionRange();
+    config.selectionStart = selStart;
+    config.selectionEnd = selEnd;
+
+    // Effects settings
+    config.enableColorGrade = m_colorGradeCheck->GetValue();
+    if (config.enableColorGrade) {
+        wxString preset = m_colorPresetChoice->GetStringSelection().Lower();
+        config.colorPreset = preset;
+    }
+    config.enableVignette = m_vignetteCheck->GetValue();
+    config.enableBeatFlash = m_beatFlashCheck->GetValue();
+    config.enableBeatZoom = m_beatZoomCheck->GetValue();
+
     UpdateUIState(true);
     StartProcessing(config);
 }
@@ -663,9 +831,13 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             int beatMultiplier = 1 << config.beatRate; // 0->1, 1->2, 2->4, 3->8
             std::vector<double> filteredBeats;
             for (size_t i = 0; i < beatGrid.getBeats().size(); i += beatMultiplier) {
-                filteredBeats.push_back(beatGrid.getBeats()[i]);
+                double beatTime = beatGrid.getBeats()[i];
+                // Filter by selection range
+                if (beatTime >= config.selectionStart && beatTime <= config.selectionEnd) {
+                    filteredBeats.push_back(beatTime);
+                }
             }
-            
+
             // Preview mode
             if (config.previewMode && filteredBeats.size() > config.previewBeats) {
                 filteredBeats.resize(config.previewBeats);
@@ -710,6 +882,22 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             
             // Step 4: Process segments
             BeatSync::VideoWriter writer;
+            writer.setOutputSettings(width, height, config.fps);
+
+            // Configure effects
+            BeatSync::EffectsConfig effects;
+            effects.enableColorGrade = config.enableColorGrade;
+            effects.colorPreset = config.colorPreset.ToStdString();
+            effects.enableVignette = config.enableVignette;
+            effects.vignetteStrength = 0.5;
+            effects.enableBeatFlash = config.enableBeatFlash;
+            effects.enableBeatZoom = config.enableBeatZoom;
+            effects.bpm = config.bpm;
+            writer.setEffectsConfig(effects);
+
+            bool hasEffects = config.enableColorGrade || config.enableVignette ||
+                              config.enableBeatFlash || config.enableBeatZoom;
+
             std::vector<std::string> segmentPaths;
             
             for (size_t i = 0; i < filteredBeats.size(); i++) {
@@ -725,15 +913,30 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
                     return;
                 }
                 
-                double segStartTime = filteredBeats[i];
-                double duration = (i + 1 < filteredBeats.size()) ? 
-                    (filteredBeats[i + 1] - segStartTime) : 
-                    (beatGrid.getAudioDuration() - segStartTime);
-                
+                // Calculate segment duration based on beat timing
+                double beatTime = filteredBeats[i];
+                double duration = (i + 1 < filteredBeats.size()) ?
+                    (filteredBeats[i + 1] - beatTime) :
+                    (beatGrid.getAudioDuration() - beatTime);
+
                 std::string videoFile = videoFiles[i % videoFiles.size()];
                 std::string segmentPath = "temp_segment_" + std::to_string(i) + ".mp4";
-                
-                writer.copySegmentFast(videoFile, segStartTime, duration, segmentPath);
+
+                // Extract from the BEGINNING of each video clip (0.0), not the beat timestamp
+                // The beat timing determines duration, but each clip starts from 0
+                if (!writer.copySegmentFast(videoFile, 0.0, duration, segmentPath)) {
+                    // Fallback: try with small offset to avoid keyframe issues
+                    if (!writer.copySegmentFast(videoFile, 0.1, duration, segmentPath)) {
+                        // Cleanup temp files and report error to UI
+                        for (const auto& s : segmentPaths) std::remove(s.c_str());
+                        wxThreadEvent* errorEvt = new wxThreadEvent(wxEVT_PROCESSING_COMPLETE);
+                        errorEvt->SetInt(0);
+                        errorEvt->SetString(wxString::Format("Error extracting segment: %s", wxString(writer.getLastError())));
+                        wxQueueEvent(this, errorEvt);
+                        return;
+                    }
+                }
+
                 segmentPaths.push_back(segmentPath);
                 
                 int progress = 10 + (int)(80.0 * (i + 1) / filteredBeats.size());
@@ -754,22 +957,59 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             evt->SetString("Concatenating segments...");
             wxQueueEvent(this, evt);
             
-            writer.concatenateVideos(segmentPaths, "temp_video.mp4");
-            
+            if (!writer.concatenateVideos(segmentPaths, "temp_video.mp4")) {
+                for (const auto& s : segmentPaths) std::remove(s.c_str());
+                wxThreadEvent* errorEvt = new wxThreadEvent(wxEVT_PROCESSING_COMPLETE);
+                errorEvt->SetInt(0);
+                errorEvt->SetString(wxString::Format("Concatenation failed: %s (see beatsync_ffmpeg_concat.log)", wxString(writer.getLastError())));
+                wxQueueEvent(this, errorEvt);
+                return;
+            }
+
+            // Step 5.5: Apply effects (if any enabled)
+            std::string videoForAudio = "temp_video.mp4";
+            if (hasEffects) {
+                evt = new wxThreadEvent(wxEVT_PROCESSING_PROGRESS);
+                evt->SetInt(92);
+                evt->SetString("Applying effects...");
+                wxQueueEvent(this, evt);
+
+                if (!writer.applyEffects("temp_video.mp4", "temp_video_fx.mp4")) {
+                    for (const auto& s : segmentPaths) std::remove(s.c_str());
+                    std::remove("temp_video.mp4");
+                    wxThreadEvent* errorEvt = new wxThreadEvent(wxEVT_PROCESSING_COMPLETE);
+                    errorEvt->SetInt(0);
+                    errorEvt->SetString(wxString::Format("Effects processing failed: %s", wxString(writer.getLastError())));
+                    wxQueueEvent(this, errorEvt);
+                    return;
+                }
+                videoForAudio = "temp_video_fx.mp4";
+            }
+
             // Step 6: Mux with audio
             evt = new wxThreadEvent(wxEVT_PROCESSING_PROGRESS);
             evt->SetInt(95);
             evt->SetString("Muxing audio...");
             wxQueueEvent(this, evt);
-            
-            writer.addAudioTrack("temp_video.mp4", config.audioPath.ToStdString(), 
-                config.outputPath.ToStdString(), false);
-            
+
+            if (!writer.addAudioTrack(videoForAudio, config.audioPath.ToStdString(),
+                config.outputPath.ToStdString(), false)) {
+                for (const auto& s : segmentPaths) std::remove(s.c_str());
+                std::remove("temp_video.mp4");
+                if (hasEffects) std::remove("temp_video_fx.mp4");
+                wxThreadEvent* errorEvt = new wxThreadEvent(wxEVT_PROCESSING_COMPLETE);
+                errorEvt->SetInt(0);
+                errorEvt->SetString(wxString::Format("Adding audio failed: %s", wxString(writer.getLastError())));
+                wxQueueEvent(this, errorEvt);
+                return;
+            }
+
             // Cleanup
             for (const auto& seg : segmentPaths) {
                 std::remove(seg.c_str());
             }
             std::remove("temp_video.mp4");
+            if (hasEffects) std::remove("temp_video_fx.mp4");
             
             // Success
             wxThreadEvent* successEvt = new wxThreadEvent(wxEVT_PROCESSING_COMPLETE);
@@ -804,8 +1044,9 @@ void MainWindow::OnProcessingComplete(bool success, const wxString& message) {
         m_statusText->SetLabel(message);
         wxMessageBox(message, "Success", wxOK | wxICON_INFORMATION, this);
     } else {
+        // Reuse the full logs dialog for errors
         m_statusText->SetLabel(message);
-        wxMessageBox(message, "Error", wxOK | wxICON_ERROR, this);
+        OnViewLogs(wxCommandEvent());
     }
 }
 
@@ -834,6 +1075,137 @@ void MainWindow::LoadSettings() {
     }
     
     OnVideoSourceChanged(wxCommandEvent());
+
+    // Add a Help hint with Logs access tooltip
+    if (GetMenuBar()) {
+        wxMenuItem* helpItem = GetMenuBar()->FindItem(ID_VIEW_LOGS);
+        if (helpItem) helpItem->SetHelp("View FFmpeg logs and diagnostics collected during processing");
+    }
+
+}
+
+void MainWindow::OnViewLogs(wxCommandEvent& WXUNUSED(event)) {
+    const std::string logPath = "beatsync_ffmpeg_concat.log";
+
+    std::ostringstream full;
+    if (wxFileExists(logPath)) {
+        std::ifstream fin(logPath);
+        std::string line;
+        while (std::getline(fin, line)) {
+            full << line << "\n";
+        }
+    } else {
+        full << "No logs found at: " << logPath << "\n";
+    }
+
+    // Add simple diagnostics
+    full << "\n--- Diagnostics ---\n";
+
+    // Check BEATSYNC_FFMPEG_PATH env var
+    const char* envPath = std::getenv("BEATSYNC_FFMPEG_PATH");
+    if (envPath && envPath[0] != '\0') {
+        full << "FFmpeg Path (env): " << envPath << "\n";
+    } else {
+        // Try 'where ffmpeg' on Windows
+        FILE* pipe = _popen("where ffmpeg 2>nul", "r");
+        if (pipe) {
+            char buf[512];
+            if (fgets(buf, sizeof(buf), pipe) != nullptr) {
+                full << "FFmpeg Path (where): " << buf;
+            } else {
+                full << "FFmpeg Path: not found in PATH\n";
+            }
+            _pclose(pipe);
+        } else {
+            full << "FFmpeg Path: (where check failed)\n";
+        }
+    }
+
+    full << "wxWidgets Version: " << wxVERSION_STRING << "\n";
+
+    // Show dialog with full log and actions
+    wxDialog dlg(this, wxID_ANY, "Logs & Diagnostics", wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER);
+    wxBoxSizer* top = new wxBoxSizer(wxVERTICAL);
+    std::string fullStr = full.str();
+    wxTextCtrl* logTex = new wxTextCtrl(&dlg, wxID_ANY, wxString(fullStr), wxDefaultPosition, wxSize(800, 360), wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP);
+    top->Add(logTex, 1, wxALL | wxEXPAND, 8);
+
+    // Compression preference checkbox (persisted setting)
+    bool preferDeflate = m_settingsManager ? m_settingsManager->GetBool("ZipUseDeflate", false) : false;
+    wxCheckBox* deflateChk = new wxCheckBox(&dlg, wxID_ANY, "Use DEFLATE compression (requires zlib)");
+    deflateChk->SetValue(preferDeflate);
+    deflateChk->SetToolTip("If enabled, saved logs will be compressed with DEFLATE. (See note below - not implemented yet.)");
+    top->Add(deflateChk, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, 8);
+
+    // Developer note explaining how to enable/implement DEFLATE later
+    wxStaticText* deflateNote = new wxStaticText(&dlg, wxID_ANY,
+        "Note: DEFLATE is not implemented. To enable it later, add zlib to the build (e.g. add `find_package(ZLIB REQUIRED)` to CMake and link the library), implement DEFLATE compression in `BeatSync::createZip` (\"src/utils/LogArchiver.cpp\"), and re-enable this option via the 'ZipUseDeflate' setting.");
+    deflateNote->SetForegroundColour(wxColour(200, 200, 200));
+    deflateNote->SetFont(wxFont(8, wxFONTFAMILY_SWISS, wxFONTSTYLE_ITALIC, wxFONTWEIGHT_NORMAL));
+    top->Add(deflateNote, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+    wxBoxSizer* btns = new wxBoxSizer(wxHORIZONTAL);
+    wxButton* openBtn = new wxButton(&dlg, wxID_ANY, "Open Log");
+    wxButton* copyBtn = new wxButton(&dlg, wxID_ANY, "Copy Log");
+    wxButton* saveBtn = new wxButton(&dlg, wxID_ANY, "Save Logs...");
+    wxButton* closeBtn = new wxButton(&dlg, wxID_CANCEL, "Close");
+    btns->Add(openBtn, 0, wxALL, 4);
+    btns->Add(copyBtn, 0, wxALL, 4);
+    btns->Add(saveBtn, 0, wxALL, 4);
+    btns->AddStretchSpacer(1);
+    btns->Add(closeBtn, 0, wxALL, 4);
+    top->Add(btns, 0, wxEXPAND | wxALL, 4);
+
+    // Persist checkbox when toggled
+    if (m_settingsManager) {
+        deflateChk->Bind(wxEVT_CHECKBOX, [this, deflateChk](wxCommandEvent&) {
+            m_settingsManager->SetBool("ZipUseDeflate", deflateChk->GetValue());
+        });
+    }
+
+    dlg.SetSizerAndFit(top);
+
+    openBtn->Bind(wxEVT_BUTTON, [this, logPath](wxCommandEvent&){ if (wxFileExists(logPath)) wxLaunchDefaultApplication(logPath); else wxMessageBox("Log not found", "Error", wxOK | wxICON_ERROR, this); });
+    copyBtn->Bind(wxEVT_BUTTON, [this, fullStr, &dlg](wxCommandEvent&){ if (wxTheClipboard->Open()) { wxTheClipboard->SetData(new wxTextDataObject(wxString(fullStr))); wxTheClipboard->Close(); wxMessageBox("Log copied to clipboard", "Copied", wxOK | wxICON_INFORMATION, &dlg); } else { wxMessageBox("Could not open clipboard", "Error", wxOK | wxICON_ERROR, &dlg); } });
+
+    saveBtn->Bind(wxEVT_BUTTON, [this, &dlg](wxCommandEvent&){
+        // Ask where to save the zip
+        wxFileDialog save(&dlg, "Save logs as", "", "beatsync-logs.zip", "ZIP archives (*.zip)|*.zip", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+        if (save.ShowModal() == wxID_CANCEL) return;
+        wxString dest = save.GetPath();
+
+        // Gather candidate logs
+        std::vector<std::string> candidates = {"beatsync_ffmpeg_concat.log", "repro_copy.log", "repro_reencode.log", "beatsync.log"};
+        std::vector<std::string> logs;
+        for (auto& f : candidates) {
+            if (wxFileExists(f)) logs.push_back(std::string(f));
+        }
+
+        if (logs.empty()) {
+            wxMessageBox("No log files found to save.", "Save Logs", wxOK | wxICON_INFORMATION, &dlg);
+            return;
+        }
+
+        // Check user's compression preference
+        bool preferDeflate = m_settingsManager ? m_settingsManager->GetBool("ZipUseDeflate", false) : false;
+        if (preferDeflate) {
+            // Inform user DEFLATE not implemented yet, proceed with store method
+            wxMessageBox("DEFLATE compression is not implemented yet. Logs will be saved using the fast store method.", "Save Logs", wxOK | wxICON_INFORMATION, &dlg);
+        }
+
+        // Use pure C++ zip creation (no external dependencies, store method)
+        std::string destStr = std::string(dest.mb_str());
+        std::string err;
+        std::vector<std::string> logFiles;
+        for (auto &s : logs) logFiles.push_back(s);
+        if (!BeatSync::createZip(logFiles, destStr, err)) {
+            wxMessageBox(wxString::Format("Failed to create zip: %s", wxString(err)), "Error", wxOK | wxICON_ERROR, &dlg);
+            return;
+        }
+        wxMessageBox("Logs saved to: " + dest, "Save Logs", wxOK | wxICON_INFORMATION, &dlg);
+    });
+
+    dlg.ShowModal();
 }
 
 void MainWindow::SaveSettings() {

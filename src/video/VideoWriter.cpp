@@ -28,18 +28,25 @@ std::string VideoWriter::getFFmpegPath() const {
         return envPath;
     }
 
-    // 2. Try to find ffmpeg in PATH by testing if "ffmpeg" command works
-    // On Windows, we can try "where ffmpeg" to find it
+    // 2. Try to find ffmpeg in PATH
+#ifdef _WIN32
     FILE* pipe = _popen("where ffmpeg 2>nul", "r");
+#else
+    FILE* pipe = popen("which ffmpeg 2>/dev/null", "r");
+#endif
     if (pipe) {
         char buffer[512];
         std::string result;
         while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
             result += buffer;
         }
+#ifdef _WIN32
         _pclose(pipe);
+#else
+        pclose(pipe);
+#endif
 
-        // Get first line (first match from where command)
+        // Get first line (first match)
         size_t newline = result.find('\n');
         if (newline != std::string::npos) {
             result = result.substr(0, newline);
@@ -51,8 +58,14 @@ std::string VideoWriter::getFFmpegPath() const {
         }
     }
 
-    // 3. Fall back to hardcoded path
+    // 3. Fall back to platform-specific hardcoded path
+#ifdef _WIN32
     return "C:\\ffmpeg-dev\\ffmpeg-master-latest-win64-gpl-shared\\bin\\ffmpeg.exe";
+#elif defined(__APPLE__)
+    return "/opt/homebrew/bin/ffmpeg";
+#else
+    return "/usr/bin/ffmpeg";
+#endif
 }
 
 bool VideoWriter::cutAtBeats(const std::string& inputVideo,
@@ -207,6 +220,12 @@ void VideoWriter::setProgressCallback(std::function<void(double)> callback) {
     m_progressCallback = callback;
 }
 
+void VideoWriter::setOutputSettings(int width, int height, int fps) {
+    m_outputWidth = width;
+    m_outputHeight = height;
+    m_outputFps = fps;
+}
+
 bool VideoWriter::copySegmentFast(const std::string& inputVideo,
                                    double startTime,
                                    double duration,
@@ -221,7 +240,9 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
     cmd << "\"\"" << ffmpegPath << "\" -i \"" << inputVideo << "\""
         << " -ss " << startTime
         << " -t " << duration
-        << " -vf \"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24\""
+        << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
+        << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
+        << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\""
         << " -c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p"
         << " -c:a aac -b:a 192k -ar 44100"
         << " -video_track_timescale 90000"
@@ -295,7 +316,9 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
     cmd << "\"\"" << ffmpegPath << "\" -i \"" << inputVideo << "\""
         << " -ss " << startTime
         << " -t " << duration
-        << " -vf \"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24\""
+        << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
+        << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
+        << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\""
         << " -c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p"
         << " -c:a aac -b:a 192k -ar 44100"
         << " -video_track_timescale 90000"
@@ -354,16 +377,14 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 
     // Use FFmpeg command-line to concatenate pre-normalized segments
     // Since all segments are now normalized to same resolution/fps/format,
-    // we can use stream copy for fast concatenation
-    //
-    // FIX: Use stream copy since segments are pre-normalized, add -fflags +genpts
-    // to regenerate clean timestamps
+    // we prefer stream copy for fast concatenation but capture FFmpeg output
+    // and fall back to a re-encode if we detect timestamp/PTS/DTS problems.
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
     cmd << "\"\"" << ffmpegPath << "\" -fflags +genpts+igndts -f concat -safe 0 -i \"" << listFile
         << "\" -c copy -video_track_timescale 90000 -y \"" << outputVideo << "\"\"";
 
-    // Execute FFmpeg
+    // Execute FFmpeg and capture output
     FILE* pipe = _popen(cmd.str().c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg";
@@ -371,8 +392,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
         return false;
     }
 
-    // Read output (for debugging if needed)
-    char buffer[256];
+    char buffer[512];
     std::string ffmpegOutput;
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
         ffmpegOutput += buffer;
@@ -380,19 +400,80 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 
     int exitCode = _pclose(pipe);
 
-    // Remove concat list file
-    std::remove(listFile.c_str());
-
-    if (exitCode != 0) {
-        m_lastError = "FFmpeg concatenation failed";
-        // Include last few lines of output for debugging
-        size_t lastNewline = ffmpegOutput.rfind('\n', ffmpegOutput.size() - 2);
-        if (lastNewline != std::string::npos) {
-            m_lastError += ": " + ffmpegOutput.substr(lastNewline + 1);
+    // Persist FFmpeg output for debugging
+    {
+        FILE* logf = fopen("beatsync_ffmpeg_concat.log", "a");
+        if (logf) {
+            fprintf(logf, "\n--- FFmpeg concat run ---\ncmd: %s\nexit: %d\noutput:\n%s\n", cmd.str().c_str(), exitCode, ffmpegOutput.c_str());
+            fclose(logf);
         }
-        return false;
     }
 
+    // Remove concat list file early
+    std::remove(listFile.c_str());
+
+    // Check for suspicious warnings that can indicate timestamp/frame issues
+    bool suspicious = false;
+    const char* patterns[] = {
+        "Non-monotonic DTS",
+        "Non monotonic DTS",
+        "Invalid pts",
+        "Non-monotonic PTS",
+        "Non monotonic PTS",
+        "Dropping frame",
+        "duplicate",
+        "Output file is empty",
+        "Error while decoding",
+        "invalid pts"
+    };
+    for (const char* p : patterns) {
+        if (ffmpegOutput.find(p) != std::string::npos) {
+            suspicious = true;
+            break;
+        }
+    }
+
+    if (exitCode != 0 || suspicious) {
+        // Attempt a safe re-encode fallback (slower but normalizes timestamps)
+        std::ostringstream reencodeCmd;
+        reencodeCmd << "\"\"" << ffmpegPath << "\" -fflags +genpts -f concat -safe 0 -i \"" << listFile
+                    << "\" -c:v libx264 -preset ultrafast -crf 18 -r " << m_outputFps << " -pix_fmt yuv420p"
+                    << " -c:a aac -b:a 192k -video_track_timescale 90000 -y \"" << outputVideo << "\"\"";
+
+        // Execute re-encode
+        FILE* pipe2 = _popen(reencodeCmd.str().c_str(), "r");
+        std::string reencodeOutput;
+        if (!pipe2) {
+            m_lastError = "FFmpeg re-encode fallback failed to start";
+            return false;
+        }
+        while (fgets(buffer, sizeof(buffer), pipe2) != nullptr) {
+            reencodeOutput += buffer;
+        }
+        int rc2 = _pclose(pipe2);
+
+        // Log re-encode output
+        FILE* logf2 = fopen("beatsync_ffmpeg_concat.log", "a");
+        if (logf2) {
+            fprintf(logf2, "\n--- FFmpeg re-encode run ---\ncmd: %s\nexit: %d\noutput:\n%s\n", reencodeCmd.str().c_str(), rc2, reencodeOutput.c_str());
+            fclose(logf2);
+        }
+
+        if (rc2 != 0) {
+            m_lastError = "FFmpeg concatenation and re-encode both failed";
+            // Attach the last line of the re-encode output for clearer debugging
+            size_t lastNewline = reencodeOutput.rfind('\n');
+            if (lastNewline != std::string::npos && lastNewline + 1 < reencodeOutput.size()) {
+                m_lastError += ": " + reencodeOutput.substr(lastNewline + 1);
+            }
+            return false;
+        }
+
+        // Re-encode succeeded
+        return true;
+    }
+
+    // Success without needing re-encode
     return true;
 }
 
@@ -456,6 +537,155 @@ void VideoWriter::reportProgress(double progress) {
     if (m_progressCallback) {
         m_progressCallback(progress);
     }
+}
+
+void VideoWriter::setEffectsConfig(const EffectsConfig& config) {
+    m_effects = config;
+}
+
+std::string VideoWriter::getColorGradeFilter(const std::string& preset) const {
+    if (preset == "warm") {
+        return "colorbalance=rs=0.1:gs=0.05:bs=-0.05";
+    } else if (preset == "cool") {
+        return "colorbalance=rs=-0.05:gs=0.0:bs=0.1";
+    } else if (preset == "vintage") {
+        return "colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131";
+    } else if (preset == "vibrant") {
+        return "eq=saturation=1.4:contrast=1.1";
+    }
+    return "";
+}
+
+std::string VideoWriter::buildEffectsFilterChain() const {
+    std::vector<std::string> filters;
+
+    // Color grading
+    if (m_effects.enableColorGrade && m_effects.colorPreset != "none") {
+        std::string colorFilter = getColorGradeFilter(m_effects.colorPreset);
+        if (!colorFilter.empty()) {
+            filters.push_back(colorFilter);
+        }
+    }
+
+    // Vignette
+    if (m_effects.enableVignette) {
+        std::ostringstream vig;
+        vig << "vignette=PI/" << (4.0 / m_effects.vignetteStrength);
+        filters.push_back(vig.str());
+    }
+
+    // Blur
+    if (m_effects.enableBlur) {
+        std::ostringstream blur;
+        blur << "gblur=sigma=" << m_effects.blurStrength;
+        filters.push_back(blur.str());
+    }
+
+    // Beat zoom pulse effect
+    if (m_effects.enableBeatZoom && m_effects.bpm > 0) {
+        std::ostringstream zoom;
+        // Subtle zoom pulse synced to BPM
+        zoom << "zoompan=z='1.0+0.03*sin(t*PI*" << (m_effects.bpm / 30.0) << ")'"
+             << ":d=1:s=" << m_outputWidth << "x" << m_outputHeight;
+        filters.push_back(zoom.str());
+    }
+
+    // Join filters with commas
+    if (filters.empty()) {
+        return "";
+    }
+
+    std::string result = filters[0];
+    for (size_t i = 1; i < filters.size(); ++i) {
+        result += "," + filters[i];
+    }
+    return result;
+}
+
+bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string& outputVideo) {
+    std::string filterChain = buildEffectsFilterChain();
+
+    // If no effects enabled, just copy
+    if (filterChain.empty() && !m_effects.enableBeatFlash) {
+        // Simple copy
+        std::string ffmpegPath = getFFmpegPath();
+        std::ostringstream cmd;
+        cmd << "\"\"" << ffmpegPath << "\" -i \"" << inputVideo << "\""
+            << " -c copy -y \"" << outputVideo << "\"\"";
+
+        FILE* pipe = _popen(cmd.str().c_str(), "r");
+        if (!pipe) {
+            m_lastError = "Failed to execute FFmpeg for effects copy";
+            return false;
+        }
+        char buffer[256];
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {}
+        int exitCode = _pclose(pipe);
+        return exitCode == 0;
+    }
+
+    // Apply effects with re-encoding
+    std::string ffmpegPath = getFFmpegPath();
+    std::ostringstream cmd;
+    cmd << "\"\"" << ffmpegPath << "\" -i \"" << inputVideo << "\"";
+
+    // Build video filter
+    std::string vf;
+    if (!filterChain.empty()) {
+        vf = filterChain;
+    }
+
+    // Beat flash effect (white flash on beat intervals)
+    if (m_effects.enableBeatFlash && m_effects.bpm > 0) {
+        double beatInterval = 60.0 / m_effects.bpm;
+        std::ostringstream flash;
+        // Create brief white flash every beat
+        flash << "split[main][flash];"
+              << "[flash]drawbox=c=white@0.3:t=fill,fade=t=out:st=0:d=0.08[fl];"
+              << "[main][fl]overlay=enable='lt(mod(t," << beatInterval << "),0.08)'";
+        if (!vf.empty()) {
+            vf = vf + "," + flash.str();
+        } else {
+            vf = flash.str();
+        }
+    }
+
+    if (!vf.empty()) {
+        cmd << " -vf \"" << vf << "\"";
+    }
+
+    cmd << " -c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p"
+        << " -c:a copy"
+        << " -y \"" << outputVideo << "\"\"";
+
+    std::cout << "Applying effects...\n";
+
+    FILE* pipe = _popen(cmd.str().c_str(), "r");
+    if (!pipe) {
+        m_lastError = "Failed to execute FFmpeg for effects";
+        return false;
+    }
+
+    char buffer[256];
+    std::string ffmpegOutput;
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        ffmpegOutput += buffer;
+    }
+
+    int exitCode = _pclose(pipe);
+
+    if (exitCode != 0) {
+        m_lastError = "FFmpeg effects processing failed";
+        // Check if output file was created anyway
+        FILE* test = fopen(outputVideo.c_str(), "rb");
+        if (test) {
+            fclose(test);
+            return true;
+        }
+        return false;
+    }
+
+    return true;
 }
 
 } // namespace BeatSync
