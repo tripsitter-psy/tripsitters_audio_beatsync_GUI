@@ -31,9 +31,9 @@ fi
 # Check for required tools
 echo "Checking for required tools..."
 for tool in cmake ninja; do
-    if ! command -v $tool &> /dev/null; then
+    if ! command -v "$tool" &> /dev/null; then
         echo -e "${YELLOW}Installing $tool via Homebrew...${NC}"
-        brew install $tool
+        brew install "$tool"
     else
         echo -e "${GREEN}✓ $tool found${NC}"
     fi
@@ -70,10 +70,10 @@ echo ""
 # Configure
 echo -e "${GREEN}Configuring build...${NC}"
 cmake -B build -G Ninja \
-    -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
-    -DCMAKE_OSX_ARCHITECTURES=${ARCH} \
-    -DFFMPEG_ROOT=${FFMPEG_PREFIX} \
-    -DwxWidgets_ROOT_DIR=${WXWIDGETS_PREFIX}
+    -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+    -DCMAKE_OSX_ARCHITECTURES="${ARCH}" \
+    -DFFMPEG_ROOT="${FFMPEG_PREFIX}" \
+    -DwxWidgets_ROOT_DIR="${WXWIDGETS_PREFIX}"
 
 # Build
 echo -e "${GREEN}Building...${NC}"

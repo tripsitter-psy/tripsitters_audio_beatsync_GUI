@@ -172,9 +172,9 @@ If assets are missing, CMake should have copied them from the `assets/` director
 cp -r assets/* build/bin/Release/TripSitter.app/Contents/Resources/assets/
 ```
 
-## Font Installation
+## Font Installation (Optional)
 
-The GUI uses the **Corpta** font family. Install it system-wide:
+The GUI currently uses system default monospace fonts (wxFONTFAMILY_MODERN). If you want to use a custom font like **Corpta** for enhanced aesthetics:
 
 1. Download or locate the Corpta font files (.ttf or .otf)
 2. Install via Font Book:
@@ -190,10 +190,12 @@ The GUI uses the **Corpta** font family. Install it system-wide:
    
    Or check in Font Book that Corpta appears in the font list.
 
-If the font doesn't render in the GUI:
+4. To use the custom font in the application, you'll need to modify the font definitions in `src/GUI/MainWindow.cpp` to reference the specific font name instead of wxFONTFAMILY_MODERN.
+
+If a custom font doesn't render in the GUI:
 - Restart the TripSitter application
 - Verify the font is enabled in Font Book
-- Check that the font name matches what's used in the code (check `src/GUI/PsychedelicTheme.cpp`)
+- Check that the font name in the code matches the exact font name shown in Font Book
 
 ## Packaging as DMG
 
