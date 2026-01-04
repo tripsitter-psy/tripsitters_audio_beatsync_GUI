@@ -6,20 +6,36 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Platform-specific FFmpeg setup
 if(WIN32)
-    set(FFMPEG_ROOT "C:/ffmpeg-dev/ffmpeg-master-latest-win64-gpl-shared")
+    if(NOT DEFINED FFMPEG_ROOT)
+        set(FFMPEG_ROOT "C:/ffmpeg-dev/ffmpeg-master-latest-win64-gpl-shared")
+    endif()
     include_directories(${FFMPEG_ROOT}/include)
     link_directories(${FFMPEG_ROOT}/lib)
 elseif(APPLE)
-    # Use pkg-config to find FFmpeg on macOS (installed via Homebrew)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
-        libavformat
-        libavcodec
-        libavutil
-        libswresample
-        libswscale
-        libavfilter
-    )
+    # On macOS, support both explicit FFMPEG_ROOT and pkg-config (Homebrew)
+    if(DEFINED FFMPEG_ROOT)
+        # Use explicit FFMPEG_ROOT if provided (e.g., from vcpkg or brew --prefix)
+        include_directories(${FFMPEG_ROOT}/include)
+        link_directories(${FFMPEG_ROOT}/lib)
+        # For vcpkg, libraries might be in different locations
+        find_library(AVFORMAT_LIB avformat HINTS ${FFMPEG_ROOT}/lib)
+        find_library(AVCODEC_LIB avcodec HINTS ${FFMPEG_ROOT}/lib)
+        find_library(AVUTIL_LIB avutil HINTS ${FFMPEG_ROOT}/lib)
+        find_library(SWRESAMPLE_LIB swresample HINTS ${FFMPEG_ROOT}/lib)
+        find_library(SWSCALE_LIB swscale HINTS ${FFMPEG_ROOT}/lib)
+        find_library(AVFILTER_LIB avfilter HINTS ${FFMPEG_ROOT}/lib)
+    else()
+        # Use pkg-config to find FFmpeg (installed via Homebrew)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
+            libavformat
+            libavcodec
+            libavutil
+            libswresample
+            libswscale
+            libavfilter
+        )
+    endif()
 endif()
 
 # wxWidgets setup
@@ -48,19 +64,27 @@ set(CORE_SOURCES
 )
 
 set(GUI_SOURCES
-    src/gui/MainWindow.cpp
-    src/gui/BeatVisualizer.cpp
-    src/gui/VideoPreview.cpp
-    src/gui/ProcessingThread.cpp
-    src/gui/SettingsManager.cpp
-    src/gui/PsychedelicTheme.cpp
+    src/GUI/MainWindow.cpp
+    src/GUI/BeatVisualizer.cpp
+    src/GUI/VideoPreview.cpp
+    src/GUI/ProcessingThread.cpp
+    src/GUI/SettingsManager.cpp
+    src/GUI/PsychedelicTheme.cpp
     src/utils/LogArchiver.cpp
 )
 
 # CLI executable (existing)
 add_executable(beatsync src/main.cpp ${CORE_SOURCES})
 if(APPLE)
-    target_link_libraries(beatsync PkgConfig::FFMPEG)
+    if(DEFINED FFMPEG_ROOT)
+        # When using explicit FFMPEG_ROOT, link libraries directly
+        target_link_libraries(beatsync 
+            ${AVFORMAT_LIB} ${AVCODEC_LIB} ${AVUTIL_LIB} 
+            ${SWRESAMPLE_LIB} ${SWSCALE_LIB} ${AVFILTER_LIB})
+    else()
+        # When using pkg-config, use the imported target
+        target_link_libraries(beatsync PkgConfig::FFMPEG)
+    endif()
 else()
     target_link_libraries(beatsync avformat avcodec avutil swresample swscale avfilter)
 endif()
@@ -71,19 +95,29 @@ if(WIN32)
     # or no icon is present in the assets directory.
     if(EXISTS "${CMAKE_SOURCE_DIR}/assets/icon.rc")
         set(GUI_ICON_RC "${CMAKE_SOURCE_DIR}/assets/icon.rc")
-        add_executable(TripSitter WIN32 src/gui_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${GUI_ICON_RC})
+        add_executable(TripSitter WIN32 src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${GUI_ICON_RC})
     else()
-        add_executable(TripSitter WIN32 src/gui_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
+        add_executable(TripSitter WIN32 src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
     endif()
 else()
-    add_executable(TripSitter src/gui_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
+    add_executable(TripSitter src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
 endif()
 
 if(APPLE)
-    target_link_libraries(TripSitter
-        ${wxWidgets_LIBRARIES}
-        PkgConfig::FFMPEG
-    )
+    if(DEFINED FFMPEG_ROOT)
+        # When using explicit FFMPEG_ROOT, link libraries directly
+        target_link_libraries(TripSitter
+            ${wxWidgets_LIBRARIES}
+            ${AVFORMAT_LIB} ${AVCODEC_LIB} ${AVUTIL_LIB} 
+            ${SWRESAMPLE_LIB} ${SWSCALE_LIB} ${AVFILTER_LIB}
+        )
+    else()
+        # When using pkg-config, use the imported target
+        target_link_libraries(TripSitter
+            ${wxWidgets_LIBRARIES}
+            PkgConfig::FFMPEG
+        )
+    endif()
 else()
     target_link_libraries(TripSitter
         ${wxWidgets_LIBRARIES}
