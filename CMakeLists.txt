@@ -48,12 +48,12 @@ set(CORE_SOURCES
 )
 
 set(GUI_SOURCES
-    src/gui/MainWindow.cpp
-    src/gui/BeatVisualizer.cpp
-    src/gui/VideoPreview.cpp
-    src/gui/ProcessingThread.cpp
-    src/gui/SettingsManager.cpp
-    src/gui/PsychedelicTheme.cpp
+    src/GUI/MainWindow.cpp
+    src/GUI/BeatVisualizer.cpp
+    src/GUI/VideoPreview.cpp
+    src/GUI/ProcessingThread.cpp
+    src/GUI/SettingsManager.cpp
+    src/GUI/PsychedelicTheme.cpp
     src/utils/LogArchiver.cpp
 )
 
@@ -71,12 +71,12 @@ if(WIN32)
     # or no icon is present in the assets directory.
     if(EXISTS "${CMAKE_SOURCE_DIR}/assets/icon.rc")
         set(GUI_ICON_RC "${CMAKE_SOURCE_DIR}/assets/icon.rc")
-        add_executable(TripSitter WIN32 src/gui_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${GUI_ICON_RC})
+        add_executable(TripSitter WIN32 src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${GUI_ICON_RC})
     else()
-        add_executable(TripSitter WIN32 src/gui_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
+        add_executable(TripSitter WIN32 src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
     endif()
 else()
-    add_executable(TripSitter src/gui_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
+    add_executable(TripSitter src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
 endif()
 
 if(APPLE)
