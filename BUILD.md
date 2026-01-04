@@ -1,5 +1,14 @@
 # Build Instructions
 
+## Platform-Specific Guides
+
+This project supports multiple platforms. For detailed platform-specific instructions:
+
+- **[macOS Build Guide](BUILD_MACOS.md)** - Comprehensive macOS build instructions (Homebrew & vcpkg)
+- **Windows** - See below for Windows build instructions
+
+---
+
 ## Prerequisites
 
 ### Windows
