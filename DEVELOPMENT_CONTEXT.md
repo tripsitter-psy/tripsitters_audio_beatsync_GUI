@@ -304,12 +304,67 @@ Run TripSitter GUI, drag waveform handles to select a subrange, export, and conf
 
 ---
 
-## Apple Silicon / macOS Tasks (pending) 🍎
-- Refresh CMake toolchain/deps for macOS arm64 (Homebrew FFmpeg or vcpkg `ffmpeg:arm64-osx`); ensure `BEATSYNC_FFMPEG_PATH` detection works on macOS.
-- Validate builds with `cmake -B build -DCMAKE_OSX_ARCHITECTURES=arm64` (and universal if needed).
-- Recreate installers: `.app` bundle + `dmg` via CPack (Bundle/DragNDrop); update `assets/Info.plist.in` for signing/notarization if required.
-- Add a GitHub Actions macOS workflow to produce arm64 artifacts (zip + dmg) with caching for Homebrew/vcpkg.
-- Manual QA on Apple Silicon: run TripSitter GUI, verify FFmpeg resolution, and export a trimmed selection to confirm audio/video alignment.
+## Apple Silicon / macOS Build ✅ (Completed 2026-01-04) 🍎
+
+### Dependencies (Homebrew — simplest)
+```bash
+brew install ffmpeg cmake ninja wxwidgets pkg-config
+```
+
+**Alternative (vcpkg):**
+```bash
+./vcpkg install ffmpeg:arm64-osx wxwidgets:arm64-osx
+# Then add -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake to configure
+```
+
+### Configure (arm64, Release)
+```bash
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_OSX_ARCHITECTURES=arm64 \
+      -DFFMPEG_ROOT=$(brew --prefix ffmpeg) \
+      -DwxWidgets_ROOT_DIR=$(brew --prefix wxwidgets)
+```
+
+### Build
+```bash
+cmake --build build --config Release
+```
+
+### Run
+```bash
+# GUI
+./build/bin/Release/TripSitter.app/Contents/MacOS/TripSitter
+
+# CLI
+./build/bin/Release/beatsync --help
+```
+
+### Package (DMG)
+```bash
+cmake --build build --config Release
+pushd build && cpack -C Release && popd
+# Creates DragNDrop DMG (configured in CMakeLists.txt)
+```
+
+### Troubleshooting
+- **FFmpeg not found** → pass `-DFFMPEG_ROOT=$(brew --prefix ffmpeg)` explicitly
+- **wxWidgets not found** → pass `-DwxWidgets_ROOT_DIR=$(brew --prefix wxwidgets)`
+- **Font issues** → Install Corpta system-wide; check with `fc-list | grep -i corpta` or Font Book
+
+### Cross-Platform Fixes Applied
+- `CMakeLists.txt`: pkg-config FFmpeg detection on macOS, platform-specific linking
+- `CMakeLists.txt`: macOS app bundle configuration with Resources folder for assets
+- `VideoWriter.cpp`: Cross-platform `popen`/`pclose` macros (`_popen`/`_pclose` on Windows)
+- `VideoWriter.cpp`: Use `which ffmpeg` on Unix, `where ffmpeg` on Windows
+- `MainWindow.cpp`: Same cross-platform popen/pclose handling
+- `MainWindow.cpp`: Use `wxStandardPaths::GetResourcesDir()` on macOS for assets
+- `MainWindow.cpp`: Fixed background to stay static while content scrolls
+- `GUI_main.cpp`: Fixed include path case sensitivity (`GUI/` not `gui/`)
+
+### Beat Zoom Pulse Effect Fix
+- Changed from `zoompan` filter (designed for still images) to `scale` + `crop`
+- Added `eval=frame` to scale filter to enable time-based expressions (`t` variable)
+- Effect now properly syncs zoom pulse to detected BPM from audio analysis
 
 ---
 
