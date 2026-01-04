@@ -39,6 +39,26 @@ BeatSyncEditor/
 
 ## Building
 
+For detailed build instructions:
+- **[macOS Build Guide](BUILD_MACOS.md)** - Comprehensive macOS instructions (includes automated script)
+- **[Windows Build Guide](BUILD.md)** - Full Windows build instructions
+
+### Quick Start - macOS
+
+```bash
+# Automated build (recommended)
+./build_macos.sh
+
+# Or manual steps:
+brew install ffmpeg cmake ninja wxwidgets
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DFFMPEG_ROOT=$(brew --prefix ffmpeg) \
+  -DwxWidgets_ROOT_DIR=$(brew --prefix wxwidgets)
+cmake --build build --config Release
+```
+
+### Quick Start - Windows
+
 ### 1. Install Dependencies
 
 Using vcpkg (recommended on Windows):

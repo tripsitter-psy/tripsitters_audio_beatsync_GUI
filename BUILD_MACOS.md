@@ -10,6 +10,35 @@ This guide provides comprehensive instructions for building TripSitter BeatSync 
 
 ## Quick Start (Homebrew - Recommended for macOS)
 
+### Automated Build Script (Easiest)
+
+For the simplest build experience, use the provided build script:
+
+```bash
+# Navigate to project directory
+cd /path/to/tripsitters_audio_beatsync_GUI
+
+# Make the script executable (first time only)
+chmod +x build_macos.sh
+
+# Run the build script (automatically installs dependencies via Homebrew)
+./build_macos.sh
+
+# Or specify build type (Debug, Release, RelWithDebInfo)
+./build_macos.sh Release
+```
+
+The script will:
+- Detect your Mac's architecture (arm64 or x86_64)
+- Install missing dependencies via Homebrew
+- Configure the build with correct paths
+- Build the project
+- Display instructions for running and packaging
+
+### Manual Build (Step-by-Step)
+
+If you prefer manual control over the build process:
+
 ### Step 1: Install Dependencies via Homebrew
 
 ```bash
