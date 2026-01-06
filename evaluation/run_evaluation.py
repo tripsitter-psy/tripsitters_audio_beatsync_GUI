@@ -155,12 +155,40 @@ def run_query(q):
     # determine run command based on mode
     start = time.time()
     try:
+        # Run beatsync and capture stdout/stderr to tmp for triage
+        beatsync_exe = str(ROOT / "build" / "bin" / "Release" / "beatsync.exe")
         if q.get('mode', 'sync') == 'multiclip':
             clips_dir = tmp / 'clips'
-            run_cmd([str(ROOT / "build" / "bin" / "Release" / "beatsync.exe"), "multiclip", str(clips_dir), str(audio), "-o", str(out)], check=True)
+            cmd = [beatsync_exe, "multiclip", str(clips_dir), str(audio), "-o", str(out)]
         else:
             video = tmp / f"{q['id']}.mp4"
-            run_cmd([str(ROOT / "build" / "bin" / "Release" / "beatsync.exe"), "sync", str(video), str(audio), "-o", str(out)], check=True)
+            cmd = [beatsync_exe, "sync", str(video), str(audio), "-o", str(out)]
+
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            (tmp / "beatsync.stdout.txt").write_text(r.stdout, encoding='utf-8')
+        except Exception:
+            pass
+        try:
+            (tmp / "beatsync.stderr.txt").write_text(r.stderr, encoding='utf-8')
+        except Exception:
+            pass
+
+        if r.returncode != 0:
+            raise RuntimeError(f"beatsync failed: {r.stderr[:200]}")
+
+        # Copy ffmpeg concat logs from system temp if present to aid debugging
+        import tempfile
+        import shutil
+        sys_temp = Path(tempfile.gettempdir())
+        for name in ("beatsync_ffmpeg_concat.log", "tripsitter_debug.log"):
+            src = sys_temp / name
+            if src.exists():
+                try:
+                    shutil.copy(str(src), str(tmp / src.name))
+                except Exception:
+                    pass
+
     except Exception as e:
         expect_failure = q.get('expect_failure', False)
         return {"id": q['id'], "error": str(e), "passed": expect_failure}
