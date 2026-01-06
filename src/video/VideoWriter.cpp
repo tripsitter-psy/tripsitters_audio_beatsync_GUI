@@ -1,4 +1,5 @@
 #include "VideoWriter.h"
+#include "TransitionLibrary.h"
 #include <iostream>
 #include <sstream>
 #include <iomanip>
@@ -12,8 +13,102 @@
 
 // Cross-platform popen/pclose
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <vector>
 #define popen_compat _popen
 #define pclose_compat _pclose
+
+// Run a command hidden (no console window) and capture output.
+// Returns exit code; output is appended to 'output'.
+static int runHiddenCommand(const std::string& cmdLine, std::string& output) {
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    sa.lpSecurityDescriptor = NULL;
+
+    HANDLE hReadPipe, hWritePipe;
+    if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) {
+        return -1;
+    }
+    SetHandleInformation(hReadPipe, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOA si = {0};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
+    si.wShowWindow = SW_HIDE;
+    si.hStdOutput = hWritePipe;
+    si.hStdError = hWritePipe;
+
+    PROCESS_INFORMATION pi = {0};
+
+    // Parse out the executable path from the command line
+    // Command format is: "path\to\exe.exe" args... OR path\to\exe.exe args...
+    std::string exePath;
+    std::string args;
+    
+    if (!cmdLine.empty() && cmdLine[0] == '"') {
+        // Quoted executable path
+        size_t endQuote = cmdLine.find('"', 1);
+        if (endQuote != std::string::npos) {
+            exePath = cmdLine.substr(1, endQuote - 1);
+            args = cmdLine.substr(endQuote + 1);
+        }
+    } else {
+        // Unquoted - find first space
+        size_t space = cmdLine.find(' ');
+        if (space != std::string::npos) {
+            exePath = cmdLine.substr(0, space);
+            args = cmdLine.substr(space);
+        } else {
+            exePath = cmdLine;
+        }
+    }
+    
+    // Build command line: "exe" args (CreateProcess expects exe in quotes if it has spaces)
+    std::string fullCmdLine = "\"" + exePath + "\"" + args;
+    
+    // CreateProcess needs a mutable buffer
+    std::vector<char> cmdBuf(fullCmdLine.begin(), fullCmdLine.end());
+    cmdBuf.push_back('\0');
+
+    // Use lpApplicationName to specify the executable directly
+    BOOL ok = CreateProcessA(
+        exePath.c_str(),  // Application name - handles paths with spaces correctly
+        cmdBuf.data(),    // Command line
+        NULL, NULL, TRUE,
+        CREATE_NO_WINDOW,
+        NULL, NULL,
+        &si, &pi
+    );
+
+    CloseHandle(hWritePipe);
+
+    if (!ok) {
+        CloseHandle(hReadPipe);
+        return -1;
+    }
+
+    // Read output
+    char buf[512];
+    DWORD bytesRead;
+    while (ReadFile(hReadPipe, buf, sizeof(buf) - 1, &bytesRead, NULL) && bytesRead > 0) {
+        buf[bytesRead] = '\0';
+        output += buf;
+    }
+    CloseHandle(hReadPipe);
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exitCode = 0;
+    GetExitCodeProcess(pi.hProcess, &exitCode);
+
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    return static_cast<int>(exitCode);
+}
 #else
 #define popen_compat popen
 #define pclose_compat pclose
@@ -105,23 +200,34 @@ std::string VideoWriter::getFFmpegPath() const {
         return envPath;
     }
 
-    // 2. Try to find ffmpeg in PATH
+    // 2. Try to find ffmpeg in PATH (hidden to avoid console flash)
 #ifdef _WIN32
-    FILE* pipe = popen_compat("where ffmpeg 2>nul", "r");
+    std::string result;
+    int rc = runHiddenCommand("where ffmpeg", result);
+    if (rc == 0 && !result.empty()) {
+        // Get first line (first match)
+        size_t newline = result.find('\n');
+        if (newline != std::string::npos) {
+            result = result.substr(0, newline);
+        }
+        // Trim trailing whitespace
+        while (!result.empty() && (result.back() == '\r' || result.back() == ' ')) {
+            result.pop_back();
+        }
+        // If we found something, use it
+        if (!result.empty() && result.find("ffmpeg") != std::string::npos) {
+            return result;
+        }
+    }
 #else
     FILE* pipe = popen("which ffmpeg 2>/dev/null", "r");
-#endif
     if (pipe) {
         char buffer[512];
         std::string result;
         while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
             result += buffer;
         }
-#ifdef _WIN32
-        pclose_compat(pipe);
-#else
         pclose(pipe);
-#endif
 
         // Get first line (first match)
         size_t newline = result.find('\n');
@@ -134,6 +240,7 @@ std::string VideoWriter::getFFmpegPath() const {
             return result;
         }
     }
+#endif
 
     // 3. Fall back to platform-specific hardcoded path
 #ifdef _WIN32
@@ -332,28 +439,25 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
     static int debugCount = 0;
     bool shouldDebug = (debugCount < 2);
 
-    // Execute FFmpeg (redirect stderr to stdout to capture all output)
+    // Execute FFmpeg hidden (no console flash on Windows)
+    std::string ffmpegOutput;
+    int exitCode;
 #ifdef _WIN32
-    // Wrap with cmd /C to avoid PowerShell/cmd parsing quirks when filters contain parentheses/commas.
-    std::string fullCmd = "cmd /C \"" + cmd.str() + " 2>&1\"";
+    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
 #else
     std::string fullCmd = cmd.str() + " 2>&1";
-#endif
     FILE* pipe = popen_compat(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg";
         appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentFast::popen_compat_failed", fullCmd, -1, "", "start=" + std::to_string(startTime) + ", dur=" + std::to_string(duration));
         return false;
     }
-
-    // Read output
     char buffer[256];
-    std::string ffmpegOutput;
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
         ffmpegOutput += buffer;
     }
-
-    int exitCode = pclose_compat(pipe);
+    exitCode = pclose_compat(pipe);
+#endif
 
     // Check file size regardless of exit code for better diagnostics
     long fileSize = -1;
@@ -429,27 +533,30 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
         << " -avoid_negative_ts make_zero"
         << " -y \"" << outputVideo << "\"";
 
-    // Execute FFmpeg (redirect stderr to stdout to capture all output)
+    // Execute FFmpeg hidden (no console flash on Windows)
+    std::string ffmpegOutput;
+    int exitCode;
 #ifdef _WIN32
-    std::string fullCmd = "cmd /C \"" + cmd.str() + " 2>&1\"";
+    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
+    if (exitCode == -1) {
+        m_lastError = "Failed to execute FFmpeg for precise copy";
+        appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentPrecise::runHiddenCommand_failed", cmd.str(), -1, "", "start=" + std::to_string(startTime) + ", dur=" + std::to_string(duration));
+        return false;
+    }
 #else
     std::string fullCmd = cmd.str() + " 2>&1";
-#endif
     FILE* pipe = popen_compat(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg for precise copy";
         appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentPrecise::popen_compat_failed", fullCmd, -1, "", "start=" + std::to_string(startTime) + ", dur=" + std::to_string(duration));
         return false;
     }
-
-    // Read output
     char buffer[256];
-    std::string ffmpegOutput;
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
         ffmpegOutput += buffer;
     }
-
-    int exitCode = pclose_compat(pipe);
+    exitCode = pclose_compat(pipe);
+#endif
 
     long fileSize = -1;
     {
@@ -554,30 +661,118 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
     // we prefer stream copy for fast concatenation but capture FFmpeg output
     // and fall back to a re-encode if we detect timestamp/PTS/DTS problems.
     std::string ffmpegPath = getFFmpegPath();
+
+    // If transitions are enabled and there are exactly two input videos, attempt
+    // a pairwise gltransition (ffmpeg-gl-transition) between them. For now we
+    // support the common 2-file case; for >2 files fall back to concat list.
+    if (m_effects.enableTransitions && inputVideos.size() == 2) {
+        // Resolve transitions directory (same heuristic used elsewhere)
+        std::string transitionsDir;
+#ifdef _WIN32
+        char exePath[MAX_PATH] = {0};
+        if (GetModuleFileNameA(NULL, exePath, MAX_PATH)) {
+            std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
+            transitionsDir = (exeDir / "assets" / "transitions").string();
+        }
+#endif
+        if (transitionsDir.empty()) {
+            // Fallback: current working directory + assets/transitions
+            transitionsDir = (std::filesystem::current_path() / "assets" / "transitions").string();
+        }
+
+        TransitionLibrary library;
+        if (!library.loadFromDirectory(transitionsDir)) {
+            // Log and fall back to standard concat
+            FILE* logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
+            if (logf) {
+                fprintf(logf, "Transitions enabled but failed to load library: %s\n", library.getLastError().c_str());
+                fclose(logf);
+            }
+        } else {
+            const TransitionShader* t = library.findByName(m_effects.transitionType);
+            if (!t) {
+                // Try default 'fade' as fallback
+                t = library.findByName("fade");
+            }
+
+            if (t) {
+                std::string transitionFilter = library.buildGlTransitionFilter(t->name, m_effects.transitionDuration);
+                if (!transitionFilter.empty()) {
+                    std::ostringstream cmd;
+                    // Use filter_complex to apply gltransition between two inputs
+                    cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideos[0] << "\" -i \"" << inputVideos[1] << "\" "
+                        << "-filter_complex \"[0:v][1:v]" << transitionFilter << "[v]\" "
+                        << "-map \"[v]\" -map 0:a? -map 1:a? -c:v libx264 -preset fast -crf 18 -c:a aac -b:a 192k -y \"" << outputVideo << "\"";
+
+                    // Execute the command
+                    std::string ffmpegOutput;
+                    int exitCode;
+#ifdef _WIN32
+                    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
+#else
+                    std::string fullCmd = cmd.str() + " 2>&1";
+                    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
+                    if (!pipe) {
+                        m_lastError = "Failed to execute FFmpeg for transition";
+                        std::remove(listFile.c_str());
+                        return false;
+                    }
+                    char buffer[512];
+                    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+                        ffmpegOutput += buffer;
+                    }
+                    exitCode = pclose_compat(pipe);
+#endif
+
+                    // Persist log
+                    FILE* logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
+                    if (logf) {
+                        fprintf(logf, "\n--- FFmpeg transition run ---\ncmd: %s\nexit: %d\noutput:\n%s\n", cmd.str().c_str(), exitCode, ffmpegOutput.c_str());
+                        fclose(logf);
+                    }
+
+                    std::remove(listFile.c_str());
+
+                    if (exitCode != 0) {
+                        m_lastError = "FFmpeg transition concat failed: " + ffmpegOutput.substr(0, 200);
+                        return false;
+                    }
+
+                    return true;
+                }
+            }
+        }
+        // If we get here, transition attempt failed - fall back to normal concat
+    }
+
     std::ostringstream cmd;
     cmd << "\"" << ffmpegPath << "\" -fflags +genpts+igndts -f concat -safe 0 -i \"" << listFile
         << "\" -c copy -video_track_timescale 90000 -y \"" << outputVideo << "\"";
 
-    // Execute FFmpeg and capture output (redirect stderr to stdout)
+    // Execute FFmpeg hidden (no console flash on Windows)
+    std::string ffmpegOutput;
+    int exitCode;
 #ifdef _WIN32
-    std::string fullCmd = "cmd /C \"" + cmd.str() + " 2>&1\"";
+    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
+    if (exitCode == -1) {
+        m_lastError = "Failed to execute FFmpeg";
+        std::remove(listFile.c_str());
+        return false;
+    }
 #else
     std::string fullCmd = cmd.str() + " 2>&1";
-#endif
     FILE* pipe = popen_compat(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg";
         std::remove(listFile.c_str());
         return false;
     }
-
     char buffer[512];
-    std::string ffmpegOutput;
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
         ffmpegOutput += buffer;
     }
-
-    int exitCode = pclose_compat(pipe);
+    exitCode = pclose_compat(pipe);
+#endif
 
     // Persist FFmpeg output for debugging
     {
@@ -617,22 +812,24 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
                     << "\" -c:v libx264 -preset ultrafast -crf 18 -r " << m_outputFps << " -pix_fmt yuv420p"
                     << " -c:a aac -b:a 192k -video_track_timescale 90000 -y \"" << outputVideo << "\"";
 
-        // Execute re-encode (redirect stderr to stdout)
+        // Execute re-encode hidden (no console flash on Windows)
+        std::string reencodeOutput;
+        int rc2;
     #ifdef _WIN32
-        std::string fullReencodeCmd = "cmd /C \"" + reencodeCmd.str() + " 2>&1\"";
+        rc2 = runHiddenCommand(reencodeCmd.str(), reencodeOutput);
     #else
         std::string fullReencodeCmd = reencodeCmd.str() + " 2>&1";
-    #endif
         FILE* pipe2 = popen_compat(fullReencodeCmd.c_str(), "r");
-        std::string reencodeOutput;
         if (!pipe2) {
             m_lastError = "FFmpeg re-encode fallback failed to start";
             return false;
         }
+        char buffer[512];
         while (fgets(buffer, sizeof(buffer), pipe2) != nullptr) {
             reencodeOutput += buffer;
         }
-        int rc2 = pclose_compat(pipe2);
+        rc2 = pclose_compat(pipe2);
+    #endif
 
         // Log re-encode output
         FILE* logf2 = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
@@ -697,26 +894,24 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
 
     std::cout << "Adding audio track...\n";
 
-    // Execute FFmpeg (redirect stderr to stdout)
+    // Execute FFmpeg
+    std::string ffmpegOutput;
+    int exitCode;
 #ifdef _WIN32
-    std::string fullCmd = "cmd /C \"" + cmd.str() + " 2>&1\"";
+    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
 #else
     std::string fullCmd = cmd.str() + " 2>&1";
-#endif
     FILE* pipe = popen_compat(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg for audio muxing";
         return false;
     }
-
-    // Read output
     char buffer[256];
-    std::string ffmpegOutput;
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
         ffmpegOutput += buffer;
     }
-
-    int exitCode = pclose_compat(pipe);
+    exitCode = pclose_compat(pipe);
+#endif
 
     // Persist muxing output for troubleshooting
     {
@@ -789,14 +984,8 @@ std::string VideoWriter::buildEffectsFilterChain() const {
         filters.push_back(blur.str());
     }
 
-    // Beat zoom pulse effect
-    if (m_effects.enableBeatZoom && m_effects.bpm > 0) {
-        std::ostringstream zoom;
-        // Subtle zoom pulse synced to BPM
-        zoom << "zoompan=z='1.0+0.03*sin(t*PI*" << (m_effects.bpm / 30.0) << ")'"
-             << ":d=1:s=" << m_outputWidth << "x" << m_outputHeight;
-        filters.push_back(zoom.str());
-    }
+    // Beat zoom pulse effect is now handled in applyEffects() for proper beat filtering
+    // This section is intentionally left empty - zoom uses filtered beats in applyEffects
 
     // Join filters with commas
     if (filters.empty()) {
@@ -813,6 +1002,89 @@ std::string VideoWriter::buildEffectsFilterChain() const {
 bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string& outputVideo) {
     std::string filterChain = buildEffectsFilterChain();
 
+    // Filter beat times by divisor (using original beat index) and region
+    std::vector<double> filteredBeats;
+    bool hasOriginalIndices = (m_effects.originalBeatIndices.size() == m_effects.beatTimesInOutput.size());
+    
+    // Debug: Pre-filtering log
+    FILE* preLog = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
+    if (preLog) {
+        fprintf(preLog, "\n--- Divisor Filter Debug ---\n");
+        fprintf(preLog, "hasOriginalIndices=%d, beatTimesInOutput.size=%zu, originalBeatIndices.size=%zu\n",
+                hasOriginalIndices ? 1 : 0, m_effects.beatTimesInOutput.size(), m_effects.originalBeatIndices.size());
+        fprintf(preLog, "effectBeatDivisor=%d\n", m_effects.effectBeatDivisor);
+    }
+    
+    int skippedByDivisor = 0, skippedByRegion = 0, included = 0;
+    
+    for (size_t i = 0; i < m_effects.beatTimesInOutput.size(); ++i) {
+        // Apply beat divisor using ORIGINAL beat index (not filtered array index)
+        // This ensures "every 2nd beat" actually means every 2nd musical beat
+        if (m_effects.effectBeatDivisor > 1) {
+            size_t origIdx = hasOriginalIndices ? m_effects.originalBeatIndices[i] : i;
+            if ((origIdx % m_effects.effectBeatDivisor) != 0) {
+                skippedByDivisor++;
+                if (preLog && i < 10) {
+                    fprintf(preLog, "  Beat %zu: origIdx=%zu, %zu%%%d=%zu -> SKIP\n", 
+                            i, origIdx, origIdx, m_effects.effectBeatDivisor, origIdx % m_effects.effectBeatDivisor);
+                }
+                continue;
+            } else if (preLog && i < 20) {
+                fprintf(preLog, "  Beat %zu: origIdx=%zu, %zu%%%d=%zu -> PASS divisor\n", 
+                        i, origIdx, origIdx, m_effects.effectBeatDivisor, origIdx % m_effects.effectBeatDivisor);
+            }
+        }
+        double bt = m_effects.beatTimesInOutput[i];
+        // Apply effect region filter
+        if (m_effects.effectStartTime > 0 && bt < m_effects.effectStartTime) {
+            skippedByRegion++;
+            continue;
+        }
+        if (m_effects.effectEndTime > 0 && bt > m_effects.effectEndTime) {
+            skippedByRegion++;
+            continue;
+        }
+        included++;
+        filteredBeats.push_back(bt);
+    }
+    
+    if (preLog) {
+        fprintf(preLog, "Result: skippedByDivisor=%d, skippedByRegion=%d, included=%d\n", 
+                skippedByDivisor, skippedByRegion, included);
+        fclose(preLog);
+    }
+
+    // Debug: Log beat times being used for effects
+    {
+        FILE* debugLog = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
+        if (debugLog) {
+            fprintf(debugLog, "\n--- Effects Debug ---\n");
+            fprintf(debugLog, "Original beats: %zu, After filter: %zu (divisor=%d, region=%.2f-%.2f, hasOrigIdx=%d)\n", 
+                    m_effects.beatTimesInOutput.size(), filteredBeats.size(),
+                    m_effects.effectBeatDivisor, m_effects.effectStartTime, m_effects.effectEndTime,
+                    hasOriginalIndices ? 1 : 0);
+            
+            // Log original indices for first 20 beats
+            fprintf(debugLog, "Original indices (first 20): ");
+            for (size_t i = 0; i < m_effects.originalBeatIndices.size() && i < 20; ++i) {
+                fprintf(debugLog, "%zu ", m_effects.originalBeatIndices[i]);
+            }
+            fprintf(debugLog, "\n");
+            
+            fprintf(debugLog, "Filtered beat times:\n");
+            for (size_t i = 0; i < filteredBeats.size() && i < 20; ++i) {
+                fprintf(debugLog, "  Beat %zu: %.3f sec\n", i, filteredBeats[i]);
+            }
+            if (filteredBeats.size() > 20) {
+                fprintf(debugLog, "  ... and %zu more\n", filteredBeats.size() - 20);
+            }
+            fprintf(debugLog, "BPM: %.2f, enableBeatFlash: %d (intensity=%.2f), enableBeatZoom: %d (intensity=%.2f)\n", 
+                    m_effects.bpm, m_effects.enableBeatFlash, m_effects.flashIntensity,
+                    m_effects.enableBeatZoom, m_effects.zoomIntensity);
+            fclose(debugLog);
+        }
+    }
+
     // If no effects enabled, just copy
     if (filterChain.empty() && !m_effects.enableBeatFlash) {
         // Simple copy
@@ -821,6 +1093,11 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideo << "\""
             << " -c copy -y \"" << outputVideo << "\"";
 
+        std::string ffmpegOutput;
+        int exitCode;
+#ifdef _WIN32
+        exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
+#else
         std::string fullCmd = cmd.str() + " 2>&1";
         FILE* pipe = popen_compat(fullCmd.c_str(), "r");
         if (!pipe) {
@@ -828,8 +1105,11 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
             return false;
         }
         char buffer[256];
-        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {}
-        int exitCode = pclose_compat(pipe);
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            ffmpegOutput += buffer;
+        }
+        exitCode = pclose_compat(pipe);
+#endif
         return exitCode == 0;
     }
 
@@ -844,23 +1124,86 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         vf = filterChain;
     }
 
-    // Beat flash effect (white flash on beat intervals)
-    if (m_effects.enableBeatFlash && m_effects.bpm > 0) {
-        double beatInterval = 60.0 / m_effects.bpm;
-        std::ostringstream flash;
-        // Create brief white flash every beat
-        flash << "split[main][flash];"
-              << "[flash]drawbox=c=white@0.3:t=fill,fade=t=out:st=0:d=0.08[fl];"
-              << "[main][fl]overlay=enable='lt(mod(t," << beatInterval << "),0.08)'";
-        if (!vf.empty()) {
-            vf = vf + "," + flash.str();
-        } else {
-            vf = flash.str();
+    // Beat zoom pulse effect - use actual beat times for accurate sync
+    if (m_effects.enableBeatZoom && !filteredBeats.empty()) {
+        std::ostringstream zoom;
+        double pulseDuration = 0.15;  // How long the zoom pulse lasts (decay time)
+        double zoomAmount = std::max(0.01, std::min(0.15, m_effects.zoomIntensity));  // Clamp 1%-15%
+        
+        // Build expression: 1 + zoomAmount * max(0, 1 - abs(t-beat)/pulseDuration) for each beat
+        // This creates a sharp pulse at each beat that decays linearly
+        std::ostringstream scaleExpr;
+        scaleExpr << "1";
+        for (size_t i = 0; i < filteredBeats.size(); ++i) {
+            double bt = filteredBeats[i];
+            // Add: + zoomAmount * max(0, 1 - abs(t - beatTime)/pulseDuration)
+            scaleExpr << "+" << zoomAmount << "*max(0,1-abs(t-" << bt << ")/" << pulseDuration << ")";
+        }
+        // Use scale filter with expression - scale up then crop back to original size
+        zoom << "scale=w=iw*(" << scaleExpr.str() << "):h=ih*(" << scaleExpr.str() << "),"
+             << "crop=" << m_outputWidth << ":" << m_outputHeight << ":exact=1";
+        
+        std::string zoomStr = zoom.str();
+        if (!zoomStr.empty()) {
+            if (!vf.empty()) {
+                vf = vf + "," + zoomStr;
+            } else {
+                vf = zoomStr;
+            }
         }
     }
 
+    // Beat flash effect (white flash on beat intervals)
+    // Only apply if we have actual beat times - no BPM fallback (looks out of sync)
+    if (m_effects.enableBeatFlash && !filteredBeats.empty()) {
+        std::ostringstream flash;
+        double flashDuration = 0.08;  // Flash duration in seconds
+        double intensity = std::max(0.1, std::min(1.0, m_effects.flashIntensity));  // Clamp 0.1-1.0
+        
+        // Build enable expression using between() for each beat
+        // Format: between(t,beat1,beat1+dur)+between(t,beat2,beat2+dur)+...
+        std::ostringstream enableExpr;
+        for (size_t i = 0; i < filteredBeats.size(); ++i) {
+            double t = filteredBeats[i];
+            if (i > 0) enableExpr << "+";
+            enableExpr << "between(t," << t << "," << (t + flashDuration) << ")";
+        }
+        
+        flash << "split[main][flash];"
+              << "[flash]drawbox=c=white@" << intensity << ":t=fill,fade=t=out:st=0:d=" << flashDuration << "[fl];"
+              << "[main][fl]overlay=enable='" << enableExpr.str() << "'";
+        
+        std::string flashStr = flash.str();
+        if (!flashStr.empty()) {
+            if (!vf.empty()) {
+                vf = vf + "," + flashStr;
+            } else {
+                vf = flashStr;
+            }
+        }
+    }
+
+    // Use filter_script file if the filter is too long for command line (Windows limit ~8191 chars)
+    std::string filterScriptPath;
+    bool useFilterScript = vf.length() > 6000;  // Leave margin for rest of command
+    
     if (!vf.empty()) {
-        cmd << " -vf \"" << vf << "\"";
+        if (useFilterScript) {
+            // Write filter to a temporary file
+            filterScriptPath = getTempDir() + "beatsync_filter.txt";
+            FILE* scriptFile = fopen(filterScriptPath.c_str(), "w");
+            if (scriptFile) {
+                fprintf(scriptFile, "%s", vf.c_str());
+                fclose(scriptFile);
+                cmd << " -filter_script:v \"" << filterScriptPath << "\"";
+            } else {
+                // Fallback to command line if file write fails
+                cmd << " -vf \"" << vf << "\"";
+                useFilterScript = false;
+            }
+        } else {
+            cmd << " -vf \"" << vf << "\"";
+        }
     }
 
     cmd << " -c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p"
@@ -869,23 +1212,46 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
 
     std::cout << "Applying effects...\n";
 
+    std::string ffmpegOutput;
+    int exitCode;
+#ifdef _WIN32
+    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
+#else
     std::string fullCmd = cmd.str() + " 2>&1";
     FILE* pipe = popen_compat(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg for effects";
         return false;
     }
-
     char buffer[256];
-    std::string ffmpegOutput;
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
         ffmpegOutput += buffer;
     }
+    exitCode = pclose_compat(pipe);
+#endif
 
-    int exitCode = pclose_compat(pipe);
+    // Clean up filter script file
+    if (useFilterScript && !filterScriptPath.empty()) {
+        std::remove(filterScriptPath.c_str());
+    }
+
+    // Log the effects command output
+    {
+        FILE* logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
+        if (logf) {
+            fprintf(logf, "\n--- FFmpeg effects run ---\n");
+            fprintf(logf, "Using filter_script: %s\n", useFilterScript ? "yes" : "no");
+            fprintf(logf, "Filter length: %zu chars\n", vf.length());
+            fprintf(logf, "cmd: %s\nexit: %d\noutput:\n%s\n", cmd.str().c_str(), exitCode, ffmpegOutput.c_str());
+            if (useFilterScript) {
+                fprintf(logf, "Filter content (first 500 chars): %.500s...\n", vf.c_str());
+            }
+            fclose(logf);
+        }
+    }
 
     if (exitCode != 0) {
-        m_lastError = "FFmpeg effects processing failed";
+        m_lastError = "FFmpeg effects processing failed: " + ffmpegOutput.substr(0, 200);
         // Check if output file was created anyway
         FILE* test = fopen(outputVideo.c_str(), "rb");
         if (test) {
