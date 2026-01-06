@@ -5,8 +5,10 @@
     {
       "name": "ffmpeg",
       "default-features": false,
-      "features": ["avcodec", "avformat", "avutil", "swresample"]
-    }
+      "features": ["avcodec", "avformat", "avutil", "swresample", "swscale"]
+    },
+    "onnxruntime",
+    "essentia"
   ],
   "builtin-baseline": "2024-12-09"
 }
