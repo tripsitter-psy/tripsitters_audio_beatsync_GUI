@@ -10,6 +10,7 @@ public:
         const wxSize& size = wxDefaultSize);
 
     void LoadAudio(const wxString& audioPath);
+    void GenerateWaveform(const wxString& audioPath);
     void Clear();
 
     // Selection range (in seconds)
@@ -31,6 +32,7 @@ private:
 
     std::vector<double> m_beatTimes;
     std::vector<float> m_waveform;
+    std::vector<float> m_waveformData;
     double m_audioDuration = 0.0;
 
     // Selection state

@@ -65,6 +65,7 @@ private:
     // Visuals
     wxPanel* m_backgroundPanel;
     wxBitmap m_backgroundBitmap;
+    wxBitmap m_headerBitmap;
     wxFont m_titleFont;
     wxFont m_labelFont;
     
@@ -94,6 +95,10 @@ private:
 
     // Logs & diagnostics
     void OnViewLogs(wxCommandEvent& event);
+
+#ifdef __WXUNIVERSAL__
+    void SetAllChildrenTransparent(wxWindow* parent);
+#endif
 
     wxDECLARE_EVENT_TABLE();
 };

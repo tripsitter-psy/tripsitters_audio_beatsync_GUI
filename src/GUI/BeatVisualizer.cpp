@@ -1,6 +1,8 @@
 #include "BeatVisualizer.h"
 #include <wx/dcbuffer.h>
 #include "../audio/AudioAnalyzer.h"
+#include <algorithm>
+#include <cmath>
 
 wxBEGIN_EVENT_TABLE(BeatVisualizer, wxPanel)
     EVT_PAINT(BeatVisualizer::OnPaint)
@@ -14,7 +16,43 @@ BeatVisualizer::BeatVisualizer(wxWindow* parent, wxWindowID id,
     const wxPoint& pos, const wxSize& size)
     : wxPanel(parent, id, pos, size)
 {
-    SetBackgroundColour(*wxBLACK);
+    // Semi-transparent dark background
+    SetBackgroundColour(wxColour(10, 10, 26, 200));
+    SetBackgroundStyle(wxBG_STYLE_PAINT);
+}
+
+void BeatVisualizer::GenerateWaveform(const wxString& audioPath) {
+    m_waveformData.clear();
+
+    // Use AudioAnalyzer to get audio samples
+    try {
+        BeatSync::AudioAnalyzer analyzer;
+        auto audioData = analyzer.loadAudioFile(audioPath.ToStdString());
+
+        if (audioData.samples.empty()) {
+            return;
+        }
+
+        // Target ~2000 samples for visualization
+        const int targetSamples = 2000;
+        size_t totalSamples = audioData.samples.size();
+        size_t samplesPerChunk = std::max(size_t(1), totalSamples / targetSamples);
+
+        m_waveformData.reserve(targetSamples);
+
+        for (size_t i = 0; i < totalSamples; i += samplesPerChunk) {
+            // Find peak amplitude in this chunk
+            float peak = 0.0f;
+            size_t end = std::min(i + samplesPerChunk, totalSamples);
+            for (size_t j = i; j < end; ++j) {
+                peak = std::max(peak, std::abs(audioData.samples[j]));
+            }
+            m_waveformData.push_back(peak);
+        }
+    } catch (const std::exception&) {
+        // Failed to load waveform - visualization will be empty
+        m_waveformData.clear();
+    }
 }
 
 void BeatVisualizer::LoadAudio(const wxString& audioPath) {
@@ -27,6 +65,9 @@ void BeatVisualizer::LoadAudio(const wxString& audioPath) {
         for (double t : beats) m_beatTimes.push_back(t);
         m_audioDuration = grid.getAudioDuration();
 
+        // Generate waveform data
+        GenerateWaveform(audioPath);
+
         // Reset selection to full track
         m_selectionStart = 0.0;
         m_selectionEnd = m_audioDuration;
@@ -34,6 +75,7 @@ void BeatVisualizer::LoadAudio(const wxString& audioPath) {
         Refresh();
     } catch (...) {
         m_beatTimes.clear();
+        m_waveformData.clear();
         m_audioDuration = 0.0;
         m_selectionStart = 0.0;
         m_selectionEnd = -1.0;
@@ -43,6 +85,7 @@ void BeatVisualizer::LoadAudio(const wxString& audioPath) {
 
 void BeatVisualizer::Clear() {
     m_beatTimes.clear();
+    m_waveformData.clear();
     m_audioDuration = 0.0;
     m_selectionStart = 0.0;
     m_selectionEnd = -1.0;
@@ -147,89 +190,122 @@ void BeatVisualizer::OnPaint(wxPaintEvent& event) {
     wxAutoBufferedPaintDC dc(this);
     wxSize sz = GetClientSize();
 
-    dc.SetBackground(*wxBLACK_BRUSH);
+    // Make background transparent so parent background shows through
+    dc.SetBackground(wxBrush(wxColour(0, 0, 0, 0)));
     dc.Clear();
 
-    if (m_beatTimes.empty() || m_audioDuration <= 0.0) {
+    if (m_audioDuration <= 0.0) {
         dc.SetTextForeground(wxColour(120, 120, 120));
         dc.DrawLabel("Load audio to see beat visualization", wxRect(0,0,sz.x,sz.y), wxALIGN_CENTER);
         return;
     }
 
-    int barY = sz.y / 2;
-    int barH = 6;
+    int centerY = sz.y / 2;
     int trackWidth = sz.x - 2 * MARGIN;
+    int waveformHeight = sz.y - 80;  // Leave room for handles and labels
 
-    // Draw timeline background
-    wxRect barRect(MARGIN, barY - barH/2, trackWidth, barH);
-    dc.SetBrush(wxBrush(wxColour(50,50,50)));
-    dc.SetPen(*wxTRANSPARENT_PEN);
-    dc.DrawRectangle(barRect);
-
-    // Draw selection region (shaded)
+    // Draw selection region (shaded background)
     double selEnd = (m_selectionEnd < 0) ? m_audioDuration : m_selectionEnd;
     int selStartX = TimeToPixel(m_selectionStart);
     int selEndX = TimeToPixel(selEnd);
 
     if (selEndX > selStartX) {
-        dc.SetBrush(wxBrush(wxColour(0, 217, 255, 40)));  // Semi-transparent cyan
+        dc.SetBrush(wxBrush(wxColour(0, 50, 80)));
         dc.SetPen(*wxTRANSPARENT_PEN);
-        dc.DrawRectangle(selStartX, barY - 20, selEndX - selStartX, 40);
+        dc.DrawRectangle(selStartX, 20, selEndX - selStartX, sz.y - 40);
     }
 
-    // Draw beats as small markers
-    dc.SetPen(wxPen(wxColour(0,217,255), 2));
-    for (double t : m_beatTimes) {
+    // Draw waveform
+    if (!m_waveformData.empty() && trackWidth > 0) {
+        int numSamples = static_cast<int>(m_waveformData.size());
+
+        for (int x = 0; x < trackWidth; ++x) {
+            // Map pixel to waveform sample
+            int sampleIdx = (x * numSamples) / trackWidth;
+            sampleIdx = std::min(sampleIdx, numSamples - 1);
+
+            float amplitude = m_waveformData[sampleIdx];
+            int barHeight = static_cast<int>(amplitude * waveformHeight / 2);
+
+            // Determine if this position is within selection
+            double timeAtX = (static_cast<double>(x) / trackWidth) * m_audioDuration;
+            bool inSelection = (timeAtX >= m_selectionStart && timeAtX <= selEnd);
+
+            // Color based on selection
+            if (inSelection) {
+                // Gradient from cyan to purple
+                int r = static_cast<int>(0 + (139 - 0) * amplitude);
+                int g = static_cast<int>(217 - 217 * amplitude);
+                int b = 255;
+                dc.SetPen(wxPen(wxColour(r, g, b)));
+            } else {
+                dc.SetPen(wxPen(wxColour(40, 60, 80)));
+            }
+
+            int drawX = MARGIN + x;
+            dc.DrawLine(drawX, centerY - barHeight, drawX, centerY + barHeight);
+        }
+    }
+
+    // Draw beat markers - only show every 2nd or 4th beat to reduce clutter
+    int beatSkip = (m_beatTimes.size() > 200) ? 4 : ((m_beatTimes.size() > 100) ? 2 : 1);
+
+    for (size_t i = 0; i < m_beatTimes.size(); i += beatSkip) {
+        double t = m_beatTimes[i];
         double pos = t / m_audioDuration;
-        if (pos < 0.0) pos = 0.0;
-        if (pos > 1.0) pos = 1.0;
+        if (pos < 0.0 || pos > 1.0) continue;
         int x = MARGIN + static_cast<int>(pos * trackWidth);
 
         // Dim beats outside selection
         if (t < m_selectionStart || t > selEnd) {
-            dc.SetPen(wxPen(wxColour(0, 80, 100), 1));
+            dc.SetPen(wxPen(wxColour(80, 80, 100), 1));
+            dc.SetBrush(wxBrush(wxColour(80, 80, 100, 128)));
         } else {
-            dc.SetPen(wxPen(wxColour(0, 217, 255), 2));
+            dc.SetPen(wxPen(wxColour(255, 255, 100), 3));  // Yellow for visibility
+            dc.SetBrush(wxBrush(wxColour(255, 255, 100, 180)));
         }
-        dc.DrawLine(x, barY - 10, x, barY + 10);
+
+        // Draw as a filled rectangle for better visibility
+        dc.DrawRectangle(x - 1, centerY - 35, 3, 70);
     }
 
     // Draw left handle (green)
     dc.SetPen(wxPen(wxColour(0, 255, 100), 2));
     dc.SetBrush(wxBrush(wxColour(0, 255, 100)));
-    dc.DrawLine(selStartX, barY - 25, selStartX, barY + 25);
+    dc.DrawLine(selStartX, 15, selStartX, sz.y - 15);
     wxPoint leftTriangle[3] = {
-        {selStartX, barY - 25},
-        {selStartX + 8, barY - 20},
-        {selStartX + 8, barY - 30}
+        {selStartX, 10},
+        {selStartX + 10, 20},
+        {selStartX - 10, 20}
     };
     dc.DrawPolygon(3, leftTriangle);
 
     // Draw right handle (red/orange)
     dc.SetPen(wxPen(wxColour(255, 100, 0), 2));
     dc.SetBrush(wxBrush(wxColour(255, 100, 0)));
-    dc.DrawLine(selEndX, barY - 25, selEndX, barY + 25);
+    dc.DrawLine(selEndX, 15, selEndX, sz.y - 15);
     wxPoint rightTriangle[3] = {
-        {selEndX, barY - 25},
-        {selEndX - 8, barY - 20},
-        {selEndX - 8, barY - 30}
+        {selEndX, 10},
+        {selEndX + 10, 20},
+        {selEndX - 10, 20}
     };
     dc.DrawPolygon(3, rightTriangle);
 
-    // Draw time labels at handles
+    // Draw time labels
     dc.SetTextForeground(wxColour(0, 255, 100));
     wxString startStr = wxString::Format("%.1fs", m_selectionStart);
-    dc.DrawText(startStr, selStartX + 2, barY + 28);
+    dc.DrawText(startStr, selStartX + 5, sz.y - 18);
 
     dc.SetTextForeground(wxColour(255, 100, 0));
     wxString endStr = wxString::Format("%.1fs", selEnd);
     int tw, th;
     dc.GetTextExtent(endStr, &tw, &th);
-    dc.DrawText(endStr, selEndX - tw - 2, barY + 28);
+    dc.DrawText(endStr, selEndX - tw - 5, sz.y - 18);
 
-    // Draw duration label
-    dc.SetTextForeground(wxColour(120, 120, 120));
-    wxString durStr = wxString::Format("Duration: %.1fs", selEnd - m_selectionStart);
+    // Draw duration label at top
+    dc.SetTextForeground(wxColour(200, 200, 200));
+    wxString durStr = wxString::Format("Selection: %.1fs (%.1fs - %.1fs)",
+                                        selEnd - m_selectionStart, m_selectionStart, selEnd);
     dc.GetTextExtent(durStr, &tw, &th);
-    dc.DrawText(durStr, (sz.x - tw) / 2, sz.y - th - 5);
+    dc.DrawText(durStr, (sz.x - tw) / 2, 2);
 }

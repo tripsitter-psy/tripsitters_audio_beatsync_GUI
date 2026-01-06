@@ -1,7 +1,10 @@
 Assets directory
 
 Place GUI assets here:
-- background.png — background image used by the GUI (PNG)
+- asset - this one.png — current primary MTV Trip Sitter background (PNG)
+- asset for top hedder alpha_2.png — header banner (alpha background) shown at the top of the GUI (PNG)
+- button asset alpha.png — start sync button artwork with transparent background (PNG)
+- background.png — legacy background image fallback (PNG)
 - icon.ico — Windows application icon (ICO)
 - icon.rc — resource script referencing the icon (used by CMake when present)
 

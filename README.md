@@ -39,6 +39,14 @@ BeatSyncEditor/
 
 ## Building
 
+### Packaging (ZIP/NSIS)
+From the project root after a Release build:
+
+```bash
+cpack -C Release
+```
+Artifacts will be under `build/` per CPack config (ZIP and NSIS with current branding).
+
 ### 1. Install Dependencies
 
 Using vcpkg (recommended on Windows):

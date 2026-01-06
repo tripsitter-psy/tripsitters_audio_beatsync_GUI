@@ -5,7 +5,7 @@ SettingsManager::SettingsManager() {
     wxString configPath = wxStandardPaths::Get().GetUserDataDir();
     wxFileName::Mkdir(configPath, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL);
     
-    m_config = std::make_unique<wxFileConfig>("TripSitter", "TripSitter",
+    m_config = std::make_unique<wxFileConfig>("MTV Trip Sitter", "MTV Trip Sitter",
         configPath + "/settings.ini");
 }
 
