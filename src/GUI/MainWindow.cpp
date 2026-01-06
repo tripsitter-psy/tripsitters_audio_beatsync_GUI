@@ -5,6 +5,7 @@
 #include "../audio/AudioAnalyzer.h"
 #include "../video/VideoWriter.h"
 #include "../video/VideoProcessor.h"
+#include "../video/TransitionLibrary.h"
 #include <wx/statbox.h>
 #include <wx/statbmp.h>
 #include <wx/bitmap.h>
@@ -733,6 +734,34 @@ void MainWindow::CreateControls() {
     m_colorPresetChoice->SetSelection(0);
     m_colorPresetChoice->Enable(false);
 
+    // Transitions UI
+    m_enableTransitionsCheck = new wxCheckBox(m_mainPanel, wxID_ANY, "Enable Transitions");
+    m_transitionChoice = new wxChoice(m_mainPanel, wxID_ANY);
+    m_transitionChoice->Append("fade"); // default until library is loaded
+    m_transitionChoice->SetSelection(0);
+
+    // Duration (seconds) - use SpinCtrlDouble if available
+#ifdef wxHAS_SPINCTRLDOUBLE
+    m_transitionDurationCtrl = new wxSpinCtrlDouble(m_mainPanel, wxID_ANY, "0.3", wxDefaultPosition, wxSize(100,-1));
+    m_transitionDurationCtrl->SetRange(0.05, 5.0);
+    m_transitionDurationCtrl->SetIncrement(0.05);
+    m_transitionDurationCtrl->SetValue(0.3);
+#else
+    // Fallback: simple spin as integer milliseconds/100 (0.1s steps)
+    m_transitionDurationCtrl = new wxSpinCtrlDouble(m_mainPanel, wxID_ANY, "0.3", wxDefaultPosition, wxSize(100,-1));
+    m_transitionDurationCtrl->SetRange(0.05, 5.0);
+    m_transitionDurationCtrl->SetIncrement(0.05);
+    m_transitionDurationCtrl->SetValue(0.3);
+#endif
+
+    m_transitionPreviewButton = new wxButton(m_mainPanel, wxID_ANY, "Preview Transition", wxDefaultPosition, wxSize(160, 36));
+
+    // Initially disabled until user enables transitions
+    m_enableTransitionsCheck->SetValue(false);
+    m_transitionChoice->Enable(false);
+    m_transitionDurationCtrl->Enable(false);
+    m_transitionPreviewButton->Enable(false);
+
     m_vignetteCheck = new wxCheckBox(m_mainPanel, wxID_ANY, "Vignette");
     m_beatFlashCheck = new wxCheckBox(m_mainPanel, wxID_ANY, "Beat Flash");
     m_flashIntensitySlider = new wxSlider(m_mainPanel, wxID_ANY, 30, 10, 100,
@@ -771,6 +800,18 @@ void MainWindow::CreateControls() {
     });
     m_beatZoomCheck->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent& e) {
         m_zoomIntensitySlider->Enable(e.IsChecked());
+    });
+
+    // Transitions bindings
+    m_enableTransitionsCheck->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent& e){
+        bool v = e.IsChecked();
+        m_transitionChoice->Enable(v);
+        m_transitionDurationCtrl->Enable(v);
+        m_transitionPreviewButton->Enable(v);
+    });
+    m_transitionPreviewButton->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e){
+        // Bound to actual handler implementation
+        OnPreviewTransition(e);
     });
 
     // Beat Visualizer
@@ -984,6 +1025,21 @@ void MainWindow::CreateLayout() {
     effectsRow2->Add(m_effectBeatDivisorChoice, 0, wxALIGN_CENTER_VERTICAL);
     effectsBox->Add(effectsRow2, 0, wxALL, 5);
 
+    // Transitions row
+    wxBoxSizer* effectsRow3 = new wxBoxSizer(wxHORIZONTAL);
+    m_enableTransitionsCheck->SetForegroundColour(*wxWHITE);
+    effectsRow3->Add(m_enableTransitionsCheck, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+    wxStaticText* transLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Transition:");
+    transLabel->SetForegroundColour(*wxWHITE);
+    effectsRow3->Add(transLabel, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+    effectsRow3->Add(m_transitionChoice, 0, wxRIGHT, 12);
+    wxStaticText* durLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Duration (s):");
+    durLabel->SetForegroundColour(*wxWHITE);
+    effectsRow3->Add(durLabel, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+    effectsRow3->Add(m_transitionDurationCtrl, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 12);
+    effectsRow3->Add(m_transitionPreviewButton, 0, wxALIGN_CENTER_VERTICAL);
+    effectsBox->Add(effectsRow3, 0, wxALL, 5);
+
     mainSizer->Add(effectsBox, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
     mainSizer->AddSpacer(10);
 
@@ -1129,6 +1185,53 @@ void MainWindow::OnPreviewFrame(wxCommandEvent& event) {
 }
 
 
+void MainWindow::OnPreviewTransition(wxCommandEvent& event) {
+    if (!m_enableTransitionsCheck->GetValue()) {
+        wxMessageBox("Enable Transitions first", "Transitions Disabled", wxOK | wxICON_INFORMATION, this);
+        return;
+    }
+
+    wxString exePath = wxStandardPaths::Get().GetExecutablePath();
+    wxString transitionsDir = wxFileName(exePath).GetPath() + "/assets/transitions";
+
+    BeatSync::TransitionLibrary lib;
+    std::string filter;
+    wxString sel = m_transitionChoice->GetStringSelection();
+    if (lib.loadFromDirectory(transitionsDir.ToStdString())) {
+        std::string built = lib.buildGlTransitionFilter(std::string(sel.mb_str()), m_transitionDurationCtrl->GetValue());
+        if (!built.empty()) {
+            filter = std::string("[0:v][1:v]") + built + std::string("[tv]");
+        }
+    }
+
+    if (filter.empty()) {
+        double dur = m_transitionDurationCtrl->GetValue();
+        std::ostringstream oss;
+        oss << "[0:v][1:v]xfade=transition=fade:duration=" << std::fixed << std::setprecision(3) << dur << ":offset=0[tv]";
+        filter = oss.str();
+    }
+
+    std::string ffmpegPath = BeatSync::VideoWriter().resolveFfmpegPath();
+    std::filesystem::path tmp = std::filesystem::temp_directory_path() / "beatsync_transition_preview.mp4";
+    std::string outPath = tmp.string();
+
+    std::ostringstream cmd;
+    cmd << "\"" << ffmpegPath << "\" -y -f lavfi -i color=c=black:s=640x360:d=1 -f lavfi -i color=c=white:s=640x360:d=1 "
+        << "-filter_complex \"" << filter << "\" -map \"[tv]\" -c:v libx264 -t 1 \"" << outPath << "\"";
+
+    std::string ffout;
+    {
+        wxBusyCursor busy;
+        int rc = runHiddenCommandGUI(cmd.str(), ffout);
+        if (rc != 0) {
+            wxMessageBox(wxString::Format("FFmpeg preview failed (rc=%d). Output:\n%.400s", rc, wxString(ffout)), "Preview Failed", wxOK | wxICON_ERROR, this);
+            return;
+        }
+    }
+
+    m_videoPreview->LoadFrame(wxString(outPath), 0.05);
+}
+
 
 void MainWindow::OnStartProcessing(wxCommandEvent& event) {
     // Validate inputs
@@ -1208,6 +1311,11 @@ void MainWindow::OnStartProcessing(wxCommandEvent& event) {
         config.effectStartTime = 0.0;
         config.effectEndTime = -1.0;  // Full track
     }
+
+    // Transitions config
+    config.enableTransitions = m_enableTransitionsCheck->GetValue();
+    config.transitionType = m_transitionChoice->GetStringSelection();
+    config.transitionDuration = m_transitionDurationCtrl->GetValue();
 
     UpdateUIState(true);
     StartProcessing(config);
@@ -1437,6 +1545,11 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             effects.enableBeatZoom = config.enableBeatZoom;
             effects.zoomIntensity = config.zoomIntensity;
             effects.effectBeatDivisor = config.effectBeatDivisor;
+
+            // Transitions
+            effects.enableTransitions = config.enableTransitions;
+            effects.transitionType = config.transitionType.ToStdString();
+            effects.transitionDuration = config.transitionDuration;
             
             // Convert effect region from original audio timeline to output timeline
             // (subtract selection start since output starts at 0)
@@ -1736,6 +1849,30 @@ void MainWindow::LoadSettings() {
         if (divisor == 1) sel = 0; else if (divisor == 2) sel = 1; else if (divisor == 4) sel = 2; else if (divisor == 8) sel = 3;
         m_effectBeatDivisorChoice->SetSelection(sel);
         if (m_beatVisualizer) m_beatVisualizer->SetEffectBeatDivisor(divisor);
+
+        // Transitions: load available transitions from assets
+        wxString exePath = wxStandardPaths::Get().GetExecutablePath();
+        wxString transitionsDir = wxFileName(exePath).GetPath() + "/assets/transitions";
+        BeatSync::TransitionLibrary lib;
+        if (lib.loadFromDirectory(transitionsDir.ToStdString())) {
+            m_transitionChoice->Clear();
+            for (auto const &t : lib.getTransitions()) {
+                m_transitionChoice->Append(t.name);
+            }
+        }
+        m_enableTransitionsCheck->SetValue(m_settingsManager->GetBool("EnableTransitions", false));
+        wxString savedTrans = m_settingsManager->GetString("TransitionType", "fade");
+        int idx = m_transitionChoice->FindString(savedTrans, false);
+        if (idx != wxNOT_FOUND) m_transitionChoice->SetSelection(idx);
+        else if (m_transitionChoice->GetCount() > 0) m_transitionChoice->SetSelection(0);
+
+        double dur = 0.3;
+        wxString durStr = m_settingsManager->GetString("TransitionDuration", "0.3");
+        dur = wxAtof(durStr);
+        m_transitionDurationCtrl->SetValue(dur);
+        m_transitionChoice->Enable(m_enableTransitionsCheck->GetValue());
+        m_transitionDurationCtrl->Enable(m_enableTransitionsCheck->GetValue());
+        m_transitionPreviewButton->Enable(m_enableTransitionsCheck->GetValue());
     }
 
     // Add a Help hint with Logs access tooltip
@@ -1914,6 +2051,11 @@ void MainWindow::SaveSettings() {
     int divIdx = m_effectBeatDivisorChoice->GetSelection();
     int divisor = (divIdx == 0) ? 1 : (1 << divIdx);
     m_settingsManager->SetInt("EffectBeatDivisor", divisor);
+
+    // Persist transitions
+    m_settingsManager->SetBool("EnableTransitions", m_enableTransitionsCheck->GetValue());
+    m_settingsManager->SetString("TransitionType", m_transitionChoice->GetStringSelection());
+    m_settingsManager->SetString("TransitionDuration", wxString::Format("%.2f", m_transitionDurationCtrl->GetValue()));
 }
 
 #ifdef __WXUNIVERSAL__
