@@ -78,24 +78,7 @@ static int runHiddenCommandGUI(const std::string& cmdLine, std::string& output) 
     std::string fullCmdLine = "\"" + exePath + "\"" + args;
     std::vector<char> cmdBuf(fullCmdLine.begin(), fullCmdLine.end());
     cmdBuf.push_back('\0');
-}
-#else
-// POSIX implementation for other platforms (macOS / Linux)
-static int runHiddenCommandGUI(const std::string& cmdLine, std::string& output) {
-    FILE* pipe = popen(cmdLine.c_str(), "r");
-    if (!pipe) return -1;
-    char buffer[512];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        output += buffer;
-    }
-    int rc = pclose(pipe);
-#if defined(WIFEXITED) && defined(WEXITSTATUS)
-    if (WIFEXITED(rc)) return WEXITSTATUS(rc);
-#endif
-    return rc;
-}
-#endif
-    
+
     BOOL ok = CreateProcessA(exePath.c_str(), cmdBuf.data(), NULL, NULL, TRUE,
                               CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
     CloseHandle(hWritePipe);
@@ -118,6 +101,23 @@ static int runHiddenCommandGUI(const std::string& cmdLine, std::string& output) 
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     return static_cast<int>(exitCode);
+}
+#else
+// POSIX implementation for other platforms (macOS / Linux)
+static int runHiddenCommandGUI(const std::string& cmdLine, std::string& output) {
+    FILE* pipe = popen(cmdLine.c_str(), "r");
+    if (!pipe) return -1;
+    char buffer[512];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+    int rc = pclose(pipe);
+#if defined(WIFEXITED) && defined(WEXITSTATUS)
+    if (WIFEXITED(rc)) return WEXITSTATUS(rc);
+#endif
+    return rc;
+}
+#endif
 }
 #else
 #define popen_compat popen
