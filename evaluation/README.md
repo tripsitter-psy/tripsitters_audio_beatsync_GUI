@@ -56,6 +56,18 @@ Examples:
 # Activate
 source .venv/bin/activate
 ```
+
+Sanity check script
+
+- Windows (PowerShell):
+  - `.\evaluation\sanity_check.ps1 -Id corrupt_audio -AudioDuration 5 -VideoDuration 5 -GeneratorArgs "--corrupt-audio-header --corrupt-bytes 256" -ExpectFailure`
+- macOS / Linux:
+  - `./evaluation/sanity_check.sh corrupt_audio 5 5 "--corrupt-audio-header --corrupt-bytes 256"` (set `EXPECT_FAILURE=1` env var for expected-failure cases)
+
+Notes:
+- The scripts require `ffmpeg`/`ffprobe` on PATH and `python` to run the generator. They will print generator output, `ffprobe` errors, `beatsync` stdout/stderr (if available), and a PASS/FAIL verdict.
+- Use `-ExpectFailure` for corruption cases where a failure is expected (PowerShell) or `EXPECT_FAILURE=1` for the shell script.
+
 Runner semantics:
 - Use `"expect_failure": true` in `queries.json` to indicate that a query is expected to fail or produce an unplayable output for corrupted inputs. The runner marks such queries as passed when the pipeline fails as expected (process error, no output, or non-playable output).
 - For normal tests, the runner uses `alignment_threshold` (default 1.0s) to decide pass/fail based on audio/video alignment.
