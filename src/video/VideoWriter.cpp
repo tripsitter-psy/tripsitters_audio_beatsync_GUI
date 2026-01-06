@@ -662,10 +662,10 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
     // and fall back to a re-encode if we detect timestamp/PTS/DTS problems.
     std::string ffmpegPath = getFFmpegPath();
 
-    // If transitions are enabled and there are exactly two input videos, attempt
-    // a pairwise gltransition (ffmpeg-gl-transition) between them. For now we
-    // support the common 2-file case; for >2 files fall back to concat list.
-    if (m_effects.enableTransitions && inputVideos.size() == 2) {
+    // If transitions are enabled and there are two or more input videos,
+    // attempt to build a chained gltransition filter_complex to transition
+    // between adjacent clips. This handles N>=2 transparently.
+    if (m_effects.enableTransitions && inputVideos.size() >= 2) {
         // Resolve transitions directory (same heuristic used elsewhere)
         std::string transitionsDir;
 #ifdef _WIN32
@@ -696,48 +696,75 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
             }
 
             if (t) {
-                std::string transitionFilter = library.buildGlTransitionFilter(t->name, m_effects.transitionDuration);
-                if (!transitionFilter.empty()) {
-                    std::ostringstream cmd;
-                    // Use filter_complex to apply gltransition between two inputs
-                    cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideos[0] << "\" -i \"" << inputVideos[1] << "\" "
-                        << "-filter_complex \"[0:v][1:v]" << transitionFilter << "[v]\" "
-                        << "-map \"[v]\" -map 0:a? -map 1:a? -c:v libx264 -preset fast -crf 18 -c:a aac -b:a 192k -y \"" << outputVideo << "\"";
+                // Build a chained filter_complex for N inputs
+                std::string filterComplex = buildGlTransitionFilterComplex(inputVideos.size(), t->name, m_effects.transitionDuration);
 
-                    // Execute the command
-                    std::string ffmpegOutput;
-                    int exitCode;
+                // Build ffmpeg command with all inputs
+                std::ostringstream cmd;
+                for (const auto &v : inputVideos) {
+                    cmd << " -i \"" << v << "\"";
+                }
+
+                // Add filter_complex and maps. For audio, attempt a concat across all audio streams
+                std::ostringstream fcEsc;
+                fcEsc << filterComplex;
+
+                // Attempt audio concat of all input audio streams
+                if (inputVideos.size() >= 1) {
+                    // append audio concat part: [0:a][1:a]...[N-1:a]concat=n=N:v=0:a=1[aout]
+                    fcEsc << ";";
+                    for (size_t i = 0; i < inputVideos.size(); ++i) {
+                        fcEsc << "[" << i << ":a]";
+                    }
+                    fcEsc << "concat=n=" << inputVideos.size() << ":v=0:a=1[aout]";
+                }
+
+                // Final map: video final label is [t{N-1}], audio is [aout]
+                std::string finalVideoLabel = "[t" + std::to_string(inputVideos.size()-1) + "]";
+
+                cmd << " -filter_complex \"" << fcEsc.str() << "\" -map \"" << finalVideoLabel << "\"";
+                // Map audio if we built [aout], otherwise fall back to first input audio
+                if (inputVideos.size() >= 1) {
+                    cmd << " -map \"[aout]\"";
+                } else {
+                    cmd << " -map 0:a?";
+                }
+
+                cmd << " -c:v libx264 -preset fast -crf 18 -c:a aac -b:a 192k -y \"" << outputVideo << "\"";
+
+                // Execute the command
+                std::string ffmpegOutput;
+                int exitCode;
 #ifdef _WIN32
-                    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
+                exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
 #else
-                    std::string fullCmd = cmd.str() + " 2>&1";
-                    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
-                    if (!pipe) {
-                        m_lastError = "Failed to execute FFmpeg for transition";
-                        std::remove(listFile.c_str());
-                        return false;
-                    }
-                    char buffer[512];
-                    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-                        ffmpegOutput += buffer;
-                    }
-                    exitCode = pclose_compat(pipe);
+                std::string fullCmd = cmd.str() + " 2>&1";
+                FILE* pipe = popen_compat(fullCmd.c_str(), "r");
+                if (!pipe) {
+                    m_lastError = "Failed to execute FFmpeg for transition";
+                    std::remove(listFile.c_str());
+                    return false;
+                }
+                char buffer[512];
+                while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+                    ffmpegOutput += buffer;
+                }
+                exitCode = pclose_compat(pipe);
 #endif
 
-                    // Persist log
-                    FILE* logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
-                    if (logf) {
-                        fprintf(logf, "\n--- FFmpeg transition run ---\ncmd: %s\nexit: %d\noutput:\n%s\n", cmd.str().c_str(), exitCode, ffmpegOutput.c_str());
-                        fclose(logf);
-                    }
+                // Persist log
+                FILE* logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
+                if (logf) {
+                    fprintf(logf, "\n--- FFmpeg transition run (chained) ---\ncmd: %s\nexit: %d\noutput:\n%s\n", cmd.str().c_str(), exitCode, ffmpegOutput.c_str());
+                    fclose(logf);
+                }
 
-                    std::remove(listFile.c_str());
+                std::remove(listFile.c_str());
 
-                    if (exitCode != 0) {
-                        m_lastError = "FFmpeg transition concat failed: " + ffmpegOutput.substr(0, 200);
-                        return false;
-                    }
-
+                if (exitCode != 0) {
+                    m_lastError = "FFmpeg transition chain failed: " + ffmpegOutput.substr(0, 200);
+                    // Fall back to standard concat below
+                } else {
                     return true;
                 }
             }
@@ -997,6 +1024,50 @@ std::string VideoWriter::buildEffectsFilterChain() const {
         result += "," + filters[i];
     }
     return result;
+}
+
+std::string VideoWriter::buildGlTransitionFilterComplex(size_t numInputs, const std::string& transitionName, double duration) const {
+    if (numInputs < 2) return "";
+
+    // Use TransitionLibrary to resolve transition shader and build per-edge filter
+    TransitionLibrary lib;
+    std::string transitionsDir;
+#ifdef _WIN32
+    char exePath[MAX_PATH] = {0};
+    if (GetModuleFileNameA(NULL, exePath, MAX_PATH)) {
+        std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
+        transitionsDir = (exeDir / "assets" / "transitions").string();
+    }
+#endif
+    if (transitionsDir.empty()) {
+        transitionsDir = (std::filesystem::current_path() / "assets" / "transitions").string();
+    }
+
+    if (!lib.loadFromDirectory(transitionsDir)) {
+        return "";
+    }
+
+    const TransitionShader* t = lib.findByName(transitionName);
+    if (!t) {
+        t = lib.findByName("fade");
+        if (!t) return "";
+    }
+
+    std::string transitionFilter = lib.buildGlTransitionFilter(t->name, duration);
+    if (transitionFilter.empty()) return "";
+
+    std::ostringstream fc;
+
+    // Build chained transitions: [0:v][1:v] -> [t1]; [t1][2:v] -> [t2]; ...
+    for (size_t i = 0; i < numInputs - 1; ++i) {
+        std::string inA = (i == 0) ? (std::string("[0:v]")) : (std::string("[t") + std::to_string(i) + "]");
+        std::string inB = std::string("[") + std::to_string(i+1) + ":v]";
+        std::string out = std::string("[t") + std::to_string(i+1) + "]";
+        fc << inA << inB << transitionFilter << out;
+        if (i + 1 < numInputs - 1) fc << ";";
+    }
+
+    return fc.str();
 }
 
 bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string& outputVideo) {
