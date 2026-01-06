@@ -33,6 +33,29 @@ New corruption variants:
 - `--append-junk` — appends random bytes to the end of the file (default `--junk-bytes`), simulating trailing garbage or clipped network streams.
 - `--strip-mp4-moov` — attempts to locate the MP4 `moov` atom and zero out a region around it, breaking the container header (useful to simulate broken MOV/MP4 containers).
 
+Virtual environment setup (project-local .venv) 🔧
+
+- Use the provided helper to create a project-local `.venv` and install Python deps:
+  - Windows (PowerShell): `scripts/setup_venv.ps1`
+  - macOS/Linux: `scripts/setup_venv.sh`
+
+- The venv uses `scripts/requirements.txt` (see `scripts/requirements.txt` in the repo). Note: `ffmpeg`/`ffprobe` are still required system binaries and must be installed separately (Homebrew, apt, Chocolatey, Scoop, or manually).
+
+Examples:
+
+```powershell
+# Create .venv and install deps on Windows (PowerShell)
+.\\scripts\\setup_venv.ps1
+# Activate
+.\\.venv\\Scripts\\Activate.ps1
+```
+
+```bash
+# Create .venv and install deps on macOS/Linux
+./scripts/setup_venv.sh
+# Activate
+source .venv/bin/activate
+```
 Runner semantics:
 - Use `"expect_failure": true` in `queries.json` to indicate that a query is expected to fail or produce an unplayable output for corrupted inputs. The runner marks such queries as passed when the pipeline fails as expected (process error, no output, or non-playable output).
 - For normal tests, the runner uses `alignment_threshold` (default 1.0s) to decide pass/fail based on audio/video alignment.
