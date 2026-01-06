@@ -1,5 +1,6 @@
 #include "VideoWriter.h"
 #include "TransitionLibrary.h"
+#include "../tracing/Tracing.h"
 #include <iostream>
 #include <sstream>
 #include <iomanip>
@@ -414,6 +415,12 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
                                    double startTime,
                                    double duration,
                                    const std::string& outputVideo) {
+    Tracing::Span span("copySegmentFast");
+    span.addAttribute("input", inputVideo);
+    span.addAttribute("output", outputVideo);
+    span.addAttribute("start", std::to_string(startTime));
+    span.addAttribute("duration", std::to_string(duration));
+
     std::cout << "Extracting segment: " << inputVideo << " @ " << startTime << "s for " << duration << "s -> " << outputVideo << "\n";
 
     // Use FFmpeg command-line for reliable segment extraction
@@ -515,6 +522,12 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
                                      double startTime,
                                      double duration,
                                      const std::string& outputVideo) {
+    Tracing::Span span("copySegmentPrecise");
+    span.addAttribute("input", inputVideo);
+    span.addAttribute("output", outputVideo);
+    span.addAttribute("start", std::to_string(startTime));
+    span.addAttribute("duration", std::to_string(duration));
+
     // Use FFmpeg with re-encoding for frame-accurate extraction
     // This is slower but more precise than stream copy
     //
@@ -588,6 +601,9 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
 
 bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
                                    const std::string& outputVideo) {
+    Tracing::Span span("concatenateVideos");
+    span.addAttribute("output", outputVideo);
+
     if (inputVideos.empty()) {
         m_lastError = "No input videos to concatenate";
         return false;
@@ -696,8 +712,15 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
             }
 
             if (t) {
-                // Build a chained filter_complex for N inputs
-                std::string filterComplex = buildGlTransitionFilterComplex(inputVideos.size(), t->name, m_effects.transitionDuration);
+                // Build a chained filter_complex for N inputs using TransitionLibrary helper
+                std::string filterComplex;
+                TransitionLibrary loaded;
+                if (loaded.loadFromDirectory(transitionsDir)) {
+                    filterComplex = loaded.buildChainedGlTransitionFilter(inputVideos.size(), t->name, m_effects.transitionDuration);
+                } else {
+                    // fallback to previous method
+                    filterComplex = buildGlTransitionFilterComplex(inputVideos.size(), t->name, m_effects.transitionDuration);
+                }
 
                 // Build ffmpeg command with all inputs
                 std::ostringstream cmd;
@@ -892,6 +915,14 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
                                  bool trimToShortest,
                                  double audioStart,
                                  double audioEnd) {
+    Tracing::Span span("addAudioTrack");
+    span.addAttribute("video", inputVideo);
+    span.addAttribute("audio", audioFile);
+    span.addAttribute("output", outputVideo);
+    span.addAttribute("trimToShortest", trimToShortest ? "true" : "false");
+    span.addAttribute("audioStart", std::to_string(audioStart));
+    span.addAttribute("audioEnd", std::to_string(audioEnd));
+
     m_lastError.clear();
 
     std::string ffmpegPath = getFFmpegPath();
@@ -1070,7 +1101,66 @@ std::string VideoWriter::buildGlTransitionFilterComplex(size_t numInputs, const 
     return fc.str();
 }
 
+std::string VideoWriter::buildChainedAudioFilterFromFlags(const std::vector<bool>& hasAudio, double transitionDuration) const {
+    size_t n = hasAudio.size();
+    if (n == 0) return "";
+    std::ostringstream fc;
+
+    // Prepare per-input audio streams labeled [a0],[a1],...
+    for (size_t i = 0; i < n; ++i) {
+        if (hasAudio[i]) {
+            fc << "[" << i << ":a]aresample=44100,apad[a" << i << "]";
+        } else {
+            // anullsrc supplies stereo 44.1kHz silence for long duration
+            fc << "anullsrc=channel_layout=stereo:sample_rate=44100:d=3600[a" << i << "]";
+        }
+        if (i + 1 < n) fc << ";";
+    }
+
+    // Chain acrossfade: [a0][a1]acrossfade=d=duration[a1f]; [a1f][a2]acrossfade=d=duration[a2f]; ... final label [aout]
+    if (n == 1) {
+        // Pass-through - alias [a0] to [aout]
+        fc << ";[a0]anull[aout]";
+        return fc.str();
+    }
+
+    // Build first acrossfade
+    for (size_t i = 0; i < n - 1; ++i) {
+        std::string left = (i == 0) ? (std::string("[a0]")) : (std::string("[af") + std::to_string(i) + "]");
+        std::string right = std::string("[a") + std::to_string(i+1) + "]";
+        std::string out = std::string("[af") + std::to_string(i+1) + "]";
+        fc << ";" << left << right << "acrossfade=d=" << std::fixed << std::setprecision(3) << transitionDuration << ":curve1=tri:curve2=tri" << out;
+    }
+
+    // Final output label is [af{n-1}]
+    // Append a final alias to [aout]
+    fc << ";[af" << (n - 1) << "]anull[aout]";
+
+    return fc.str();
+}
+
+std::string VideoWriter::buildChainedAudioFilter(const std::vector<std::string>& inputVideos, double transitionDuration) const {
+    // Probe files for audio presence
+    std::vector<bool> flags;
+    for (auto const &v : inputVideos) {
+        BeatSync::VideoProcessor vp;
+        if (vp.open(v)) {
+            flags.push_back(vp.hasAudio());
+            vp.close();
+        } else {
+            // If we cannot open, assume no audio
+            flags.push_back(false);
+        }
+    }
+
+    return buildChainedAudioFilterFromFlags(flags, transitionDuration);
+}
+
 bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string& outputVideo) {
+    Tracing::Span span("applyEffects");
+    span.addAttribute("input", inputVideo);
+    span.addAttribute("output", outputVideo);
+
     std::string filterChain = buildEffectsFilterChain();
 
     // Filter beat times by divisor (using original beat index) and region

@@ -6,6 +6,7 @@
 #include "../video/VideoWriter.h"
 #include "../video/VideoProcessor.h"
 #include "../video/TransitionLibrary.h"
+#include "../tracing/Tracing.h"
 #include <wx/statbox.h>
 #include <wx/statbmp.h>
 #include <wx/bitmap.h>
@@ -1401,6 +1402,8 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
     m_cancelRequested = false;
 
     m_processingThread = std::make_unique<std::thread>([this, config]() {
+        Tracing::Span procSpan("StartProcessing");
+        procSpan.addAttribute("output", config.outputPath.ToStdString());
         auto startTime = std::chrono::steady_clock::now();
 
         // Use system temp directory for all temp files (fixes installed .app bundle issue)
@@ -1589,6 +1592,9 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             std::vector<size_t> beatIndicesInOutput; // Track original beat indices for effect divisor
             double cumulativeTime = 0.0;
 
+            Tracing::Span extractSpan("extract_segments");
+            extractSpan.addAttribute("num_beats", std::to_string(filteredBeats.size()));
+
             for (size_t i = 0; i < filteredBeats.size(); i++) {
                 if (m_cancelRequested) {
                     // Cleanup temp files
@@ -1663,6 +1669,8 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             std::string tempVideo = tempDir + "temp_video.mp4";
             std::string tempVideoFx = tempDir + "temp_video_fx.mp4";
 
+            Tracing::Span concatSpan("concatenate_segments");
+            concatSpan.addAttribute("segments", std::to_string(segmentPaths.size()));
             if (!writer.concatenateVideos(segmentPaths, tempVideo)) {
                 for (const auto& s : segmentPaths) std::remove(s.c_str());
                 wxThreadEvent* errorEvt = new wxThreadEvent(wxEVT_PROCESSING_COMPLETE);
@@ -1679,6 +1687,9 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
                 evt->SetInt(92);
                 evt->SetString("Applying effects...");
                 wxQueueEvent(this, evt);
+
+                Tracing::Span effectsSpan("apply_effects");
+                effectsSpan.addAttribute("beats_in_output", std::to_string(beatTimesInOutput.size()));
 
                 // Now set the calculated beat times and original indices, then apply effects config
                 effects.beatTimesInOutput = beatTimesInOutput;
@@ -1703,6 +1714,9 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             evt->SetString("Muxing audio...");
             wxQueueEvent(this, evt);
 
+            Tracing::Span muxSpan("mux_audio");
+            muxSpan.addAttribute("audio", config.audioPath.ToStdString());
+            muxSpan.addAttribute("output", config.outputPath.ToStdString());
             if (!writer.addAudioTrack(videoForAudio, config.audioPath.ToStdString(),
                 config.outputPath.ToStdString(), true,
                 config.selectionStart, config.selectionEnd)) {

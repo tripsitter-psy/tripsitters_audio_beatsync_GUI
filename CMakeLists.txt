@@ -46,6 +46,7 @@ set(CORE_SOURCES
     src/audio/BeatGrid.cpp
     src/video/VideoProcessor.cpp
     src/video/VideoWriter.cpp
+    src/tracing/Tracing.cpp
 )
 
 # Optional feature sources (always compiled as stubs; actual libs wired via flags)
