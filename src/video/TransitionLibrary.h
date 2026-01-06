@@ -27,6 +27,10 @@ public:
     // Lookup a transition by name. Returns nullptr if not found.
     const TransitionShader* findByName(const std::string& name) const;
 
+    // Build an FFmpeg gltransition filter snippet for a named transition
+    // Example output: "gltransition=source='path/to/fade.glsl':duration=0.3"
+    std::string buildGlTransitionFilter(const std::string& name, double duration) const;
+
     const std::string& getLastError() const { return m_lastError; }
 
 private:

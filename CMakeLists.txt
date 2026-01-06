@@ -58,6 +58,12 @@ list(APPEND OPTIONAL_SOURCES
     src/audio/StemSeparator.cpp
 )
 
+# TransitionLibrary is lightweight and compiled even when the feature is off
+# so the runtime can discover and use shipped shaders when present.
+list(APPEND OPTIONAL_SOURCES
+    src/video/TransitionLibrary.cpp
+)
+
 # ONNX Runtime support for native AI inference (no Python needed)
 # Enabled by default - this is the recommended way to use AI beat detection
 option(USE_ONNX "Enable ONNX Runtime for native AI inference" ON)
