@@ -27,6 +27,13 @@ jobs:
           brew update
           brew install ffmpeg
 
+      - name: Verify ffmpeg
+        run: |
+          echo "Checking ffmpeg and ffprobe availability"
+          if ! command -v ffmpeg >/dev/null 2>&1; then echo "::error::ffmpeg not found on PATH"; exit 1; fi
+          ffmpeg -version
+          if ! command -v ffprobe >/dev/null 2>&1; then echo "::warning::ffprobe not found on PATH"; else ffprobe -version; fi
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -65,3 +72,28 @@ jobs:
           path: |
             evaluation/results.json
             traces.jsonl
+
+  download-and-extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download evaluation results
+        run: |
+          # go to repo root
+          Set-Location -Path 'C:\Users\samue\Desktop\BeatSyncEditor'
+
+          # re-download the artifact into a fresh directory
+          gh run download 20761887816 -R tripsitter-psy/tripsitters_audio_beatsync_GUI --name evaluation-results-ubuntu-latest -D .\artifacts\download_20761887816
+
+          # find the downloaded zip
+          $zip = Get-ChildItem .\artifacts\download_20761887816\*.zip | Select-Object -First 1
+
+          # create a unique extraction folder
+          $dest = Join-Path -Path (Get-Location) -ChildPath ("artifacts\eval_extracted_{0:yyyyMMddHHmmss}" -f (Get-Date))
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+
+          # extract the zip safely into the fresh folder
+          Expand-Archive -Path $zip.FullName -DestinationPath $dest -Force
+
+          # locate and print results.json (pretty)
+          $results = Get-ChildItem $dest -Recurse -Filter results.json | Select-Object -First 1
+          Get-Content $results.FullName -Raw | ConvertFrom-Json | ConvertTo-Json -Depth 6
