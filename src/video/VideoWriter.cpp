@@ -10,6 +10,7 @@
 #include <chrono>
 #include <ctime>
 #include <cstring>
+#include <algorithm>
 #include <filesystem>
 
 // Cross-platform popen/pclose
@@ -629,18 +630,25 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 
     int missingCount = 0;
     for (const auto& video : inputVideos) {
-        fprintf(f, "file '%s'\n", video.c_str());
-        std::cout << "  - " << video;
+        std::filesystem::path p(video);
+        p = std::filesystem::absolute(p);
+        std::string videoPath = p.string();
+#ifdef _WIN32
+        // Use forward slashes in concat file to avoid escaping issues
+        std::replace(videoPath.begin(), videoPath.end(), '\\', '/');
+#endif
+        fprintf(f, "file '%s'\n", videoPath.c_str());
+        std::cout << "  - " << videoPath;
 
         // Check if file exists
-        FILE* check = fopen(video.c_str(), "rb");
+        FILE* check = fopen(videoPath.c_str(), "rb");
         if (!check) {
             std::cout << " [MISSING!]\n";
             missingCount++;
 
             debugLog = fopen((getTempDir() + "tripsitter_debug.log").c_str(), "a");
             if (debugLog) {
-                fprintf(debugLog, "  - %s [MISSING!]\n", video.c_str());
+                fprintf(debugLog, "  - %s [MISSING!]\n", videoPath.c_str());
                 fclose(debugLog);
             }
         } else {
@@ -652,7 +660,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 
             debugLog = fopen((getTempDir() + "tripsitter_debug.log").c_str(), "a");
             if (debugLog) {
-                fprintf(debugLog, "  - %s [OK, %ld bytes]\n", video.c_str(), size);
+                fprintf(debugLog, "  - %s [OK, %ld bytes]\n", videoPath.c_str(), size);
                 fclose(debugLog);
             }
         }
