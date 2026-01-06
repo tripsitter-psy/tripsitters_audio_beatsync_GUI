@@ -20,6 +20,18 @@ The test set includes:
 - `codec_mp3` (MP3 input handling)
 - `truncate_audio`, `truncate_video` (corrupt/truncated file handling)
 
+Corruption tests and flags:
+- `corrupt_audio_header` — flips the first N bytes of the audio file (default N=1024 via `--corrupt-bytes`) to simulate header/frame corruption; queries with this flag will usually set `"expect_failure": true`.
+- `zero_audio_prefix` — overwrites the first N bytes with zeros to simulate missing header; typically paired with `"expect_failure": true`.
+- `corrupt_video_header` — flips the first N bytes of the video file to corrupt its header/stream.
+- `mismatch_video_ext` — renames the video file to a wrong extension (e.g., `.m4a`) to simulate extension/content mismatch.
+
+Generator flags (supported by `generate_synthetic.py`): `--corrupt-audio-header`, `--corrupt-video-header`, `--zero-audio-prefix`, `--mismatch-video-ext`, `--corrupt-bytes`.
+
+Runner semantics:
+- Use `"expect_failure": true` in `queries.json` to indicate that a query is expected to fail or produce an unplayable output for corrupted inputs. The runner marks such queries as passed when the pipeline fails as expected (process error, no output, or non-playable output).
+- For normal tests, the runner uses `alignment_threshold` (default 1.0s) to decide pass/fail based on audio/video alignment.
+
 Output report: `evaluation/results.json` and collected traces in `traces.jsonl`.
 
 CI: There is a workflow that runs this evaluation on Ubuntu runners (installs ffmpeg via apt). To add macOS jobs, update `.github/workflows/evaluation.yml` with an `runs-on: macos-latest` job and ensure ffmpeg is available via Homebrew.
