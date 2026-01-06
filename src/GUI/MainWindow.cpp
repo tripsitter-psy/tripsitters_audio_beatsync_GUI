@@ -25,8 +25,8 @@
 
 // Cross-platform popen/pclose
 #ifdef _WIN32
-#define popen_compat popen_compat
-#define pclose_compat pclose_compat
+#define popen_compat _popen
+#define pclose_compat _pclose
 #else
 #define popen_compat popen
 #define pclose_compat pclose
