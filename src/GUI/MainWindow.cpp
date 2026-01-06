@@ -21,12 +21,85 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <vector>
+#include <string>
 #include "../utils/LogArchiver.h"
 
 // Cross-platform popen/pclose
 #ifdef _WIN32
+#include <windows.h>
 #define popen_compat _popen
 #define pclose_compat _pclose
+
+// Run a command hidden (no console window) and capture output.
+static int runHiddenCommandGUI(const std::string& cmdLine, std::string& output) {
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    sa.lpSecurityDescriptor = NULL;
+
+    HANDLE hReadPipe, hWritePipe;
+    if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) {
+        return -1;
+    }
+    SetHandleInformation(hReadPipe, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOA si = {0};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
+    si.wShowWindow = SW_HIDE;
+    si.hStdOutput = hWritePipe;
+    si.hStdError = hWritePipe;
+
+    PROCESS_INFORMATION pi = {0};
+    
+    // Parse out the executable path from the command line
+    std::string exePath;
+    std::string args;
+    
+    if (!cmdLine.empty() && cmdLine[0] == '"') {
+        size_t endQuote = cmdLine.find('"', 1);
+        if (endQuote != std::string::npos) {
+            exePath = cmdLine.substr(1, endQuote - 1);
+            args = cmdLine.substr(endQuote + 1);
+        }
+    } else {
+        size_t space = cmdLine.find(' ');
+        if (space != std::string::npos) {
+            exePath = cmdLine.substr(0, space);
+            args = cmdLine.substr(space);
+        } else {
+            exePath = cmdLine;
+        }
+    }
+    
+    std::string fullCmdLine = "\"" + exePath + "\"" + args;
+    std::vector<char> cmdBuf(fullCmdLine.begin(), fullCmdLine.end());
+    cmdBuf.push_back('\0');
+    
+    BOOL ok = CreateProcessA(exePath.c_str(), cmdBuf.data(), NULL, NULL, TRUE,
+                              CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    CloseHandle(hWritePipe);
+    if (!ok) {
+        CloseHandle(hReadPipe);
+        return -1;
+    }
+
+    char buf[512];
+    DWORD bytesRead;
+    while (ReadFile(hReadPipe, buf, sizeof(buf) - 1, &bytesRead, NULL) && bytesRead > 0) {
+        buf[bytesRead] = '\0';
+        output += buf;
+    }
+    CloseHandle(hReadPipe);
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exitCode = 0;
+    GetExitCodeProcess(pi.hProcess, &exitCode);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return static_cast<int>(exitCode);
+}
 #else
 #define popen_compat popen
 #define pclose_compat pclose
@@ -70,13 +143,47 @@ MainWindow::MainWindow()
               wxDefaultPosition, wxSize(1344, 950),
               wxDEFAULT_FRAME_STYLE & ~(wxRESIZE_BORDER | wxMAXIMIZE_BOX))
 {
+    // Log progress for crash diagnosis
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "MainWindow ctor: entered" << std::endl;
+    }
+
     m_settingsManager = std::make_unique<SettingsManager>();
-    
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "MainWindow ctor: after settings manager" << std::endl;
+    }
+
     SetupFonts();
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "MainWindow ctor: after SetupFonts" << std::endl;
+    }
+
     LoadBackgroundImage();
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "MainWindow ctor: after LoadBackgroundImage" << std::endl;
+    }
+
     CreateControls();
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "MainWindow ctor: after CreateControls" << std::endl;
+    }
+
     CreateLayout();
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "MainWindow ctor: after CreateLayout" << std::endl;
+    }
+
     ApplyPsychedelicStyling();
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "MainWindow ctor: after ApplyPsychedelicStyling" << std::endl;
+    }
 
 #ifdef __WXUNIVERSAL__
     // Make all child windows have dark backgrounds to complement psychedelic background
@@ -87,8 +194,16 @@ MainWindow::MainWindow()
 #endif
 
     LoadSettings();
-    
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "MainWindow ctor: after LoadSettings" << std::endl;
+    }
+
     Centre();
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "MainWindow ctor: after Centre" << std::endl;
+    }
 
     // Add menu bar with Help -> View Logs & Diagnostics
     const int ID_VIEW_LOGS = wxID_HIGHEST + 1;
@@ -119,24 +234,56 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::SetupFonts() {
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "SetupFonts: start\n";
+    }
     const wxString face = ChooseBrandFontFace();
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "SetupFonts: after ChooseBrandFontFace\n";
+    }
 
     // Cyberpunk-style fonts (Corpta)
     m_titleFont = wxFont(20, wxFONTFAMILY_MODERN, wxFONTSTYLE_NORMAL, 
                          wxFONTWEIGHT_BOLD, false, face);
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "SetupFonts: after m_titleFont\n";
+    }
     m_labelFont = wxFont(10, wxFONTFAMILY_MODERN, wxFONTSTYLE_NORMAL, 
                          wxFONTWEIGHT_NORMAL, false, face);
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "SetupFonts: after m_labelFont\n";
+    }
 }
 
 void MainWindow::LoadBackgroundImage() {
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "LoadBackgroundImage: start\n";
+    }
     wxString exePath = wxStandardPaths::Get().GetExecutablePath();
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "LoadBackgroundImage: after GetExecutablePath\n";
+    }
     wxString assetsDir = wxFileName(exePath).GetPath() + "/assets/";
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "LoadBackgroundImage: after assetsDir\n";
+    }
 
     // Try the new MTV artwork first, then existing fallbacks
     wxArrayString candidates;
     candidates.Add(assetsDir + "asset - this one.png");
     candidates.Add(assetsDir + "ComfyUI_03324_.png");
     candidates.Add(assetsDir + "background.png");
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "LoadBackgroundImage: after candidates\n";
+    }
 
     wxImage img;
     for (size_t i = 0; i < candidates.GetCount(); ++i) {
@@ -146,6 +293,10 @@ void MainWindow::LoadBackgroundImage() {
                 break;
             }
         }
+    }
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "LoadBackgroundImage: after image search\n";
     }
 
     if (img.IsOk()) {
@@ -166,6 +317,10 @@ void MainWindow::LoadBackgroundImage() {
 
         img.Rescale(newW, newH, wxIMAGE_QUALITY_HIGH);
         m_backgroundBitmap = wxBitmap(img);
+        {
+            std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+            dbg << "LoadBackgroundImage: after bitmap from image\n";
+        }
     }
 
     // Fallback: Create gradient background if no image loaded
@@ -175,6 +330,14 @@ void MainWindow::LoadBackgroundImage() {
         dc.GradientFillLinear(wxRect(0, 0, 1344, 768),
             wxColour(10, 10, 26), wxColour(25, 0, 50), wxSOUTH);
         m_backgroundBitmap = bmp;
+        {
+            std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+            dbg << "LoadBackgroundImage: after fallback gradient\n";
+        }
+    }
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "LoadBackgroundImage: end\n";
     }
 }
 
@@ -251,6 +414,10 @@ void MainWindow::ApplyPsychedelicStyling() {
         m_beatRateChoice->SetForegroundColour(lightText);
         m_beatRateChoice->Refresh();
     }
+    if (m_analysisModeChoice) {
+        m_analysisModeChoice->SetForegroundColour(lightText);
+        m_analysisModeChoice->Refresh();
+    }
     if (m_resolutionChoice) {
         m_resolutionChoice->SetForegroundColour(lightText);
         m_resolutionChoice->Refresh();
@@ -295,7 +462,15 @@ void MainWindow::ApplyPsychedelicStyling() {
 }
 
 void MainWindow::CreateControls() {
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "CreateControls: entered\n";
+    }
     m_mainPanel = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxHSCROLL | wxVSCROLL | wxCLIP_CHILDREN | wxFULL_REPAINT_ON_RESIZE);
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "CreateControls: panel created\n";
+    }
     m_mainPanel->SetScrollRate(10, 10);
     m_mainPanel->SetVirtualSize(1344, 1400);  // Taller virtual size for scrolling
     m_mainPanel->SetDoubleBuffered(true);  // Enable double buffering
@@ -458,23 +633,55 @@ void MainWindow::CreateControls() {
 #endif
     
     // Input Files Section
+{
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "CreateControls: before audio picker\n";
+    }
     m_audioFilePicker = new wxFilePickerCtrl(m_mainPanel, wxID_ANY, "",
         "Select Audio File", 
         "Audio Files (*.wav;*.mp3;*.flac;*.ogg;*.m4a)|*.wav;*.mp3;*.flac;*.ogg;*.m4a",
         wxDefaultPosition, wxDefaultSize, wxFLP_DEFAULT_STYLE | wxFLP_USE_TEXTCTRL);
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "CreateControls: after audio picker\n";
+    }
     
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "CreateControls: before video radio buttons\n";
+    }
     m_singleVideoRadio = new wxRadioButton(m_mainPanel, wxID_ANY, "Single Video",
         wxDefaultPosition, wxDefaultSize, wxRB_GROUP);
     m_multiClipRadio = new wxRadioButton(m_mainPanel, wxID_ANY, "Multiple Clips");
     m_multiClipRadio->SetValue(true);
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "CreateControls: after video radio buttons\n";
+    }
     
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "CreateControls: before single video picker\n";
+    }
     m_singleVideoPicker = new wxFilePickerCtrl(m_mainPanel, wxID_ANY, "",
         "Select Video File", 
         "Video Files (*.mp4;*.avi;*.mov;*.mkv;*.webm)|*.mp4;*.avi;*.mov;*.mkv;*.webm");
     m_singleVideoPicker->Show(false);
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "CreateControls: after single video picker\n";
+    }
     
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "CreateControls: before video folder picker\n";
+    }
     m_videoFolderPicker = new wxDirPickerCtrl(m_mainPanel, wxID_ANY, "",
         "Select Folder with Video Clips");
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "CreateControls: after video folder picker\n";
+    }
     
     // Output Section
     m_outputFilePicker = new wxFilePickerCtrl(m_mainPanel, wxID_ANY, "",
@@ -488,6 +695,13 @@ void MainWindow::CreateControls() {
     m_beatRateChoice->Append("Every 4th Beat (1/4x)");
     m_beatRateChoice->Append("Every 8th Beat (1/8x)");
     m_beatRateChoice->SetSelection(0);
+    
+    // Analysis Mode selection (Energy-based vs AI)
+    m_analysisModeChoice = new wxChoice(m_mainPanel, wxID_ANY);
+    m_analysisModeChoice->Append("Energy (Fast)");
+    m_analysisModeChoice->Append("AI Beat Detection");
+    m_analysisModeChoice->Append("AI + Stem Separation (Best)");
+    m_analysisModeChoice->SetSelection(1);  // Default to AI mode
     
     m_resolutionChoice = new wxChoice(m_mainPanel, wxID_ANY);
     m_resolutionChoice->Append("1920x1080 (Full HD)");
@@ -521,15 +735,51 @@ void MainWindow::CreateControls() {
 
     m_vignetteCheck = new wxCheckBox(m_mainPanel, wxID_ANY, "Vignette");
     m_beatFlashCheck = new wxCheckBox(m_mainPanel, wxID_ANY, "Beat Flash");
-    m_beatZoomCheck = new wxCheckBox(m_mainPanel, wxID_ANY, "Beat Zoom Pulse");
+    m_flashIntensitySlider = new wxSlider(m_mainPanel, wxID_ANY, 30, 10, 100,
+        wxDefaultPosition, wxSize(80, -1), wxSL_HORIZONTAL);
+    m_beatZoomCheck = new wxCheckBox(m_mainPanel, wxID_ANY, "Beat Zoom");
+    m_zoomIntensitySlider = new wxSlider(m_mainPanel, wxID_ANY, 4, 1, 15,
+        wxDefaultPosition, wxSize(80, -1), wxSL_HORIZONTAL);
+    
+    // Effect beat divisor (effect on every Nth beat)
+    m_effectBeatDivisorChoice = new wxChoice(m_mainPanel, wxID_ANY);
+    m_effectBeatDivisorChoice->Append("Every beat");
+    m_effectBeatDivisorChoice->Append("Every 2nd");
+    m_effectBeatDivisorChoice->Append("Every 4th");
+    m_effectBeatDivisorChoice->Append("Every 8th");
+    m_effectBeatDivisorChoice->SetSelection(0);
+    // Sync divisor to visualizer on change
+    m_effectBeatDivisorChoice->Bind(wxEVT_CHOICE, [this](wxCommandEvent& e) {
+        int divisorIdx = m_effectBeatDivisorChoice->GetSelection();
+        int divisor = (divisorIdx == 0) ? 1 : (1 << divisorIdx);
+        if (m_beatVisualizer) {
+            m_beatVisualizer->SetEffectBeatDivisor(divisor);
+        }
+    });
+    // Set initial divisor (deferred until BeatVisualizer is created) // no-op here
+
 
     m_colorGradeCheck->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent& e) {
         m_colorPresetChoice->Enable(e.IsChecked());
+    });
+    
+    // Enable/disable intensity sliders based on checkbox state
+    m_flashIntensitySlider->Enable(false);
+    m_zoomIntensitySlider->Enable(false);
+    m_beatFlashCheck->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent& e) {
+        m_flashIntensitySlider->Enable(e.IsChecked());
+    });
+    m_beatZoomCheck->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent& e) {
+        m_zoomIntensitySlider->Enable(e.IsChecked());
     });
 
     // Beat Visualizer
     m_beatVisualizer = new BeatVisualizer(m_mainPanel, wxID_ANY, 
         wxDefaultPosition, wxSize(890, 120));
+    // Set initial divisor now that visualizer exists
+    if (m_beatVisualizer) {
+        m_beatVisualizer->SetEffectBeatDivisor(1);
+    }
     
     // Video Preview
     m_videoPreview = new VideoPreview(m_mainPanel, wxID_ANY, 
@@ -576,6 +826,7 @@ void MainWindow::CreateControls() {
     m_previewModeCheck->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent& e) {
         m_previewBeatsCtrl->Enable(e.IsChecked());
     });
+
 }
 
 void MainWindow::CreateLayout() {
@@ -674,22 +925,27 @@ void MainWindow::CreateLayout() {
     settingsGrid->Add(beatLabel, wxGBPosition(0, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
     settingsGrid->Add(m_beatRateChoice, wxGBPosition(0, 1), wxDefaultSpan, wxEXPAND);
 
+    wxStaticText* analysisLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Beat Detection:");
+    analysisLabel->SetForegroundColour(*wxWHITE);
+    settingsGrid->Add(analysisLabel, wxGBPosition(1, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
+    settingsGrid->Add(m_analysisModeChoice, wxGBPosition(1, 1), wxDefaultSpan, wxEXPAND);
+
     wxStaticText* resLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Output Resolution:");
     resLabel->SetForegroundColour(*wxWHITE);
-    settingsGrid->Add(resLabel, wxGBPosition(1, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
-    settingsGrid->Add(m_resolutionChoice, wxGBPosition(1, 1), wxDefaultSpan, wxEXPAND);
+    settingsGrid->Add(resLabel, wxGBPosition(2, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
+    settingsGrid->Add(m_resolutionChoice, wxGBPosition(2, 1), wxDefaultSpan, wxEXPAND);
 
     wxStaticText* fpsLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Frame Rate:");
     fpsLabel->SetForegroundColour(*wxWHITE);
-    settingsGrid->Add(fpsLabel, wxGBPosition(2, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
-    settingsGrid->Add(m_fpsChoice, wxGBPosition(2, 1), wxDefaultSpan, wxEXPAND);
+    settingsGrid->Add(fpsLabel, wxGBPosition(3, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
+    settingsGrid->Add(m_fpsChoice, wxGBPosition(3, 1), wxDefaultSpan, wxEXPAND);
 
     wxBoxSizer* previewSizer = new wxBoxSizer(wxHORIZONTAL);
     m_previewModeCheck->SetForegroundColour(*wxWHITE);
     previewSizer->Add(m_previewModeCheck, 0, wxALIGN_CENTER_VERTICAL);
     previewSizer->AddSpacer(10);
     previewSizer->Add(m_previewBeatsCtrl, 0);
-    settingsGrid->Add(previewSizer, wxGBPosition(3, 0), wxGBSpan(1, 2));
+    settingsGrid->Add(previewSizer, wxGBPosition(4, 0), wxGBSpan(1, 2));
 
     settingsGrid->AddGrowableCol(1);
     settingsBox->Add(settingsGrid, 1, wxEXPAND | wxALL, 10);
@@ -717,9 +973,15 @@ void MainWindow::CreateLayout() {
 
     wxBoxSizer* effectsRow2 = new wxBoxSizer(wxHORIZONTAL);
     m_beatFlashCheck->SetForegroundColour(*wxWHITE);
-    effectsRow2->Add(m_beatFlashCheck, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 20);
+    effectsRow2->Add(m_beatFlashCheck, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5);
+    effectsRow2->Add(m_flashIntensitySlider, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 15);
     m_beatZoomCheck->SetForegroundColour(*wxWHITE);
-    effectsRow2->Add(m_beatZoomCheck, 0, wxALIGN_CENTER_VERTICAL);
+    effectsRow2->Add(m_beatZoomCheck, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5);
+    effectsRow2->Add(m_zoomIntensitySlider, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 15);
+    wxStaticText* divisorLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Effect on:");
+    divisorLabel->SetForegroundColour(*wxWHITE);
+    effectsRow2->Add(divisorLabel, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5);
+    effectsRow2->Add(m_effectBeatDivisorChoice, 0, wxALIGN_CENTER_VERTICAL);
     effectsBox->Add(effectsRow2, 0, wxALL, 5);
 
     mainSizer->Add(effectsBox, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
@@ -828,7 +1090,11 @@ void MainWindow::OnPreviewFrame(wxCommandEvent& event) {
         }
         // find first video file (common extensions)
         wxArrayString files;
-        wxDir::GetAllFiles(folder, &files, "*.mp4;*.avi;*.mov;*.mkv;*.webm", wxDIR_FILES);
+        wxDir::GetAllFiles(folder, &files, "*.mp4", wxDIR_FILES);
+        wxDir::GetAllFiles(folder, &files, "*.avi", wxDIR_FILES);
+        wxDir::GetAllFiles(folder, &files, "*.mov", wxDIR_FILES);
+        wxDir::GetAllFiles(folder, &files, "*.mkv", wxDIR_FILES);
+        wxDir::GetAllFiles(folder, &files, "*.webm", wxDIR_FILES);
         if (files.IsEmpty()) {
             wxMessageBox("No video files found in folder", "No Video", wxOK | wxICON_WARNING, this);
             return;
@@ -906,6 +1172,7 @@ void MainWindow::OnStartProcessing(wxCommandEvent& event) {
     config.isMultiClip = m_multiClipRadio->GetValue();
     config.outputPath = outputPath;
     config.beatRate = m_beatRateChoice->GetSelection();
+    config.analysisMode = m_analysisModeChoice->GetSelection();
     config.resolution = m_resolutionChoice->GetStringSelection();
     config.fps = wxAtoi(m_fpsChoice->GetStringSelection().BeforeFirst(' '));
     config.previewMode = m_previewModeCheck->GetValue();
@@ -924,7 +1191,23 @@ void MainWindow::OnStartProcessing(wxCommandEvent& event) {
     }
     config.enableVignette = m_vignetteCheck->GetValue();
     config.enableBeatFlash = m_beatFlashCheck->GetValue();
+    config.flashIntensity = m_flashIntensitySlider->GetValue() / 100.0;  // Convert 10-100 to 0.1-1.0
     config.enableBeatZoom = m_beatZoomCheck->GetValue();
+    config.zoomIntensity = m_zoomIntensitySlider->GetValue() / 100.0;    // Convert 1-15 to 0.01-0.15
+    
+    // Effect beat divisor: 0=every, 1=every 2nd, 2=every 4th, 3=every 8th
+    int divisorIdx = m_effectBeatDivisorChoice->GetSelection();
+    config.effectBeatDivisor = (divisorIdx == 0) ? 1 : (1 << divisorIdx);  // 1, 2, 4, 8
+    
+    // Effect region from waveform (right-click to set)
+    if (m_beatVisualizer && m_beatVisualizer->HasEffectRegion()) {
+        auto effectRegion = m_beatVisualizer->GetEffectRegion();
+        config.effectStartTime = effectRegion.first;
+        config.effectEndTime = effectRegion.second;
+    } else {
+        config.effectStartTime = 0.0;
+        config.effectEndTime = -1.0;  // Full track
+    }
 
     UpdateUIState(true);
     StartProcessing(config);
@@ -992,6 +1275,7 @@ void MainWindow::UpdateUIState(bool processing) {
     m_multiClipRadio->Enable(!processing);
     m_outputFilePicker->Enable(!processing);
     m_beatRateChoice->Enable(!processing);
+    m_analysisModeChoice->Enable(!processing);
     m_resolutionChoice->Enable(!processing);
     m_fpsChoice->Enable(!processing);
     m_previewModeCheck->Enable(!processing);
@@ -1013,16 +1297,29 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
 
         // Use system temp directory for all temp files (fixes installed .app bundle issue)
         std::string tempDir = std::filesystem::temp_directory_path().string();
+#ifdef _WIN32
+        if (!tempDir.empty() && tempDir.back() != '\\' && tempDir.back() != '/') tempDir += '\\';
+#else
         if (!tempDir.empty() && tempDir.back() != '/') tempDir += '/';
+#endif
 
         try {
             // Step 1: Analyze audio
             wxThreadEvent* evt = new wxThreadEvent(wxEVT_PROCESSING_PROGRESS);
             evt->SetInt(5);
-            evt->SetString("Analyzing audio beats...");
+            
+            // Indicate analysis mode in status
+            wxString analysisStatus;
+            switch (config.analysisMode) {
+                case 1: analysisStatus = "Analyzing beats with BeatNet AI..."; break;
+                case 2: analysisStatus = "Analyzing beats with Demucs + BeatNet (this may take a while)..."; break;
+                default: analysisStatus = "Analyzing audio beats (energy-based)..."; break;
+            }
+            evt->SetString(analysisStatus);
             wxQueueEvent(this, evt);
             
             BeatSync::AudioAnalyzer analyzer;
+            analyzer.setAnalysisMode(static_cast<BeatSync::AnalysisMode>(config.analysisMode));
             BeatSync::BeatGrid beatGrid = analyzer.analyze(config.audioPath.ToStdString());
             
             if (m_cancelRequested) {
@@ -1036,11 +1333,13 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             // Apply beat rate
             int beatMultiplier = 1 << config.beatRate; // 0->1, 1->2, 2->4, 3->8
             std::vector<double> filteredBeats;
+            std::vector<size_t> originalBeatIndices;  // Track original beat indices for effect divisor
             for (size_t i = 0; i < beatGrid.getBeats().size(); i += beatMultiplier) {
                 double beatTime = beatGrid.getBeats()[i];
                 // Filter by selection range
                 if (beatTime >= config.selectionStart && beatTime <= config.selectionEnd) {
                     filteredBeats.push_back(beatTime);
+                    originalBeatIndices.push_back(i);  // Store original index
                 }
             }
 
@@ -1127,16 +1426,37 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             BeatSync::VideoWriter writer;
             writer.setOutputSettings(width, height, config.fps);
 
-            // Configure effects
+            // Configure effects (will set beat times later after calculating them)
             BeatSync::EffectsConfig effects;
             effects.enableColorGrade = config.enableColorGrade;
             effects.colorPreset = config.colorPreset.ToStdString();
             effects.enableVignette = config.enableVignette;
             effects.vignetteStrength = 0.5;
             effects.enableBeatFlash = config.enableBeatFlash;
+            effects.flashIntensity = config.flashIntensity;
             effects.enableBeatZoom = config.enableBeatZoom;
-            effects.bpm = config.bpm;
-            writer.setEffectsConfig(effects);
+            effects.zoomIntensity = config.zoomIntensity;
+            effects.effectBeatDivisor = config.effectBeatDivisor;
+            
+            // Convert effect region from original audio timeline to output timeline
+            // (subtract selection start since output starts at 0)
+            double outputDuration = config.selectionEnd - config.selectionStart;
+            if (config.effectStartTime > 0) {
+                effects.effectStartTime = std::max(0.0, config.effectStartTime - config.selectionStart);
+            } else {
+                effects.effectStartTime = 0.0;
+            }
+            if (config.effectEndTime > 0) {
+                effects.effectEndTime = std::max(0.0, config.effectEndTime - config.selectionStart);
+                // Clamp to output duration
+                effects.effectEndTime = std::min(effects.effectEndTime, outputDuration);
+            } else {
+                effects.effectEndTime = -1.0;  // Full track
+            }
+            
+            effects.bpm = beatGrid.getBPM();
+            effects.firstBeatOffset = 0.0;
+            // Note: beatTimesInOutput will be set after segment extraction loop
 
             bool hasEffects = config.enableColorGrade || config.enableVignette ||
                               config.enableBeatFlash || config.enableBeatZoom;
@@ -1152,6 +1472,9 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             }
 
             std::vector<std::string> segmentPaths;
+            std::vector<double> beatTimesInOutput;  // Track beat times in output video timeline
+            std::vector<size_t> beatIndicesInOutput; // Track original beat indices for effect divisor
+            double cumulativeTime = 0.0;
 
             for (size_t i = 0; i < filteredBeats.size(); i++) {
                 if (m_cancelRequested) {
@@ -1165,6 +1488,10 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
                     wxQueueEvent(this, cancelEvt);
                     return;
                 }
+                
+                // Record this beat's position in output timeline and original index
+                beatTimesInOutput.push_back(cumulativeTime);
+                beatIndicesInOutput.push_back(originalBeatIndices[i]);
                 
                 // Calculate segment duration based on beat timing
                 double beatTime = filteredBeats[i];
@@ -1200,6 +1527,7 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
                 }
 
                 segmentPaths.push_back(segmentPath);
+                cumulativeTime += duration;  // Track cumulative time for beat positions
                 
                 int progress = 10 + (int)(80.0 * (i + 1) / filteredBeats.size());
                 auto elapsed = std::chrono::steady_clock::now() - startTime;
@@ -1238,6 +1566,11 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
                 evt->SetInt(92);
                 evt->SetString("Applying effects...");
                 wxQueueEvent(this, evt);
+
+                // Now set the calculated beat times and original indices, then apply effects config
+                effects.beatTimesInOutput = beatTimesInOutput;
+                effects.originalBeatIndices = beatIndicesInOutput;
+                writer.setEffectsConfig(effects);
 
                 if (!writer.applyEffects(tempVideo, tempVideoFx)) {
                     for (const auto& s : segmentPaths) std::remove(s.c_str());
@@ -1352,6 +1685,7 @@ void MainWindow::OnProcessingComplete(bool success, const wxString& message) {
 
 void MainWindow::LoadSettings() {
     m_beatRateChoice->SetSelection(m_settingsManager->GetInt("BeatRate", 0));
+    m_analysisModeChoice->SetSelection(m_settingsManager->GetInt("AnalysisMode", 1));  // Default to AI mode
     m_resolutionChoice->SetSelection(m_settingsManager->GetInt("Resolution", 0));
     m_fpsChoice->SetSelection(m_settingsManager->GetInt("FPS", 0));
     m_previewModeCheck->SetValue(m_settingsManager->GetBool("PreviewMode", false));
@@ -1407,12 +1741,20 @@ void MainWindow::OnViewLogs(wxCommandEvent& WXUNUSED(event)) {
     if (envPath && envPath[0] != '\0') {
         full << "FFmpeg Path (env): " << envPath << "\n";
     } else {
-        // Try to find ffmpeg in PATH
+        // Try to find ffmpeg in PATH (hidden to avoid console flash)
 #ifdef _WIN32
-        const char* findCmd = "where ffmpeg 2>nul";
+        std::string ffmpegPathOutput;
+        int rc = runHiddenCommandGUI("where ffmpeg", ffmpegPathOutput);
+        if (rc == 0 && !ffmpegPathOutput.empty()) {
+            // Get first line only
+            size_t nl = ffmpegPathOutput.find('\n');
+            if (nl != std::string::npos) ffmpegPathOutput = ffmpegPathOutput.substr(0, nl);
+            full << "FFmpeg Path (system): " << ffmpegPathOutput << "\n";
+        } else {
+            full << "FFmpeg Path: not found in PATH\n";
+        }
 #else
         const char* findCmd = "which ffmpeg 2>/dev/null";
-#endif
         FILE* pipe = popen_compat(findCmd, "r");
         if (pipe) {
             char buf[512];
@@ -1425,13 +1767,14 @@ void MainWindow::OnViewLogs(wxCommandEvent& WXUNUSED(event)) {
         } else {
             full << "FFmpeg Path: (path check failed)\n";
         }
+#endif
     }
 
     // Show the resolved fallback used by VideoWriter for clarity
     BeatSync::VideoWriter diagWriter;
     full << "FFmpeg Path (resolved): " << diagWriter.resolveFfmpegPath() << "\n";
 
-    full << "wxWidgets Version: " << wxVERSION_STRING << "\n";
+    full << "wxWidgets Version: " << wxMAJOR_VERSION << "." << wxMINOR_VERSION << "." << wxRELEASE_NUMBER << "\n";
 
     // Show dialog with full log and actions
     wxDialog dlg(this, wxID_ANY, "Logs & Diagnostics", wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER);
@@ -1520,6 +1863,7 @@ void MainWindow::OnViewLogs(wxCommandEvent& WXUNUSED(event)) {
 
 void MainWindow::SaveSettings() {
     m_settingsManager->SetInt("BeatRate", m_beatRateChoice->GetSelection());
+    m_settingsManager->SetInt("AnalysisMode", m_analysisModeChoice->GetSelection());
     m_settingsManager->SetInt("Resolution", m_resolutionChoice->GetSelection());
     m_settingsManager->SetInt("FPS", m_fpsChoice->GetSelection());
     m_settingsManager->SetBool("PreviewMode", m_previewModeCheck->GetValue());
