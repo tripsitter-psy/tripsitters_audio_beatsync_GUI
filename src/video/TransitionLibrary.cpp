@@ -93,4 +93,28 @@ std::string TransitionLibrary::buildGlTransitionFilter(const std::string& name, 
     return oss.str();
 }
 
+std::string TransitionLibrary::buildChainedGlTransitionFilter(size_t numInputs, const std::string& name, double duration) const {
+    if (numInputs < 2) return "";
+
+    const TransitionShader* t = findByName(name);
+    if (!t) {
+        // fallback to fade
+        t = findByName("fade");
+        if (!t) return "";
+    }
+
+    std::string transitionFilter = buildGlTransitionFilter(t->name, duration);
+    if (transitionFilter.empty()) return "";
+
+    std::ostringstream fc;
+    for (size_t i = 0; i < numInputs - 1; ++i) {
+        std::string inA = (i == 0) ? (std::string("[0:v]")) : (std::string("[t") + std::to_string(i) + "]");
+        std::string inB = std::string("[") + std::to_string(i+1) + ":v]";
+        std::string out = std::string("[t") + std::to_string(i+1) + "]";
+        fc << inA << inB << transitionFilter << out;
+        if (i + 1 < numInputs - 1) fc << ";";
+    }
+    return fc.str();
+}
+
 } // namespace BeatSync

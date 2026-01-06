@@ -31,6 +31,10 @@ public:
     // Example output: "gltransition=source='path/to/fade.glsl':duration=0.3"
     std::string buildGlTransitionFilter(const std::string& name, double duration) const;
 
+    // Build a chained gltransition filter string for N inputs using the named transition
+    // Returns an empty string on failure
+    std::string buildChainedGlTransitionFilter(size_t numInputs, const std::string& name, double duration) const;
+
     const std::string& getLastError() const { return m_lastError; }
 
 private:
