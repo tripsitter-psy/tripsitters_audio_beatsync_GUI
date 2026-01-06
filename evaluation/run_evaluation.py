@@ -99,8 +99,16 @@ def run_query(q):
             cmd.append('--zero-audio-prefix')
         if q.get('mismatch_video_ext'):
             cmd.append('--mismatch-video-ext')
+        if q.get('corrupt_middle'):
+            cmd.append('--corrupt-middle')
+        if q.get('append_junk'):
+            cmd.append('--append-junk')
+        if q.get('strip_mp4_moov'):
+            cmd.append('--strip-mp4-moov')
         if q.get('corrupt_bytes'):
             cmd.extend(['--corrupt-bytes', str(q.get('corrupt_bytes'))])
+        if q.get('junk_bytes'):
+            cmd.extend(['--junk-bytes', str(q.get('junk_bytes'))])
 
         run_cmd(cmd)
     except Exception as e:

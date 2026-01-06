@@ -26,7 +26,12 @@ Corruption tests and flags:
 - `corrupt_video_header` — flips the first N bytes of the video file to corrupt its header/stream.
 - `mismatch_video_ext` — renames the video file to a wrong extension (e.g., `.m4a`) to simulate extension/content mismatch.
 
-Generator flags (supported by `generate_synthetic.py`): `--corrupt-audio-header`, `--corrupt-video-header`, `--zero-audio-prefix`, `--mismatch-video-ext`, `--corrupt-bytes`.
+Generator flags (supported by `generate_synthetic.py`): `--corrupt-audio-header`, `--corrupt-video-header`, `--zero-audio-prefix`, `--mismatch-video-ext`, `--corrupt-middle`, `--append-junk`, `--strip-mp4-moov`, `--corrupt-bytes`, `--junk-bytes`.
+
+New corruption variants:
+- `--corrupt-middle` — corrupts a block of bytes centered in the file (default `--corrupt-bytes` length); useful to damage framed audio/video content in the middle of the stream.
+- `--append-junk` — appends random bytes to the end of the file (default `--junk-bytes`), simulating trailing garbage or clipped network streams.
+- `--strip-mp4-moov` — attempts to locate the MP4 `moov` atom and zero out a region around it, breaking the container header (useful to simulate broken MOV/MP4 containers).
 
 Runner semantics:
 - Use `"expect_failure": true` in `queries.json` to indicate that a query is expected to fail or produce an unplayable output for corrupted inputs. The runner marks such queries as passed when the pipeline fails as expected (process error, no output, or non-playable output).

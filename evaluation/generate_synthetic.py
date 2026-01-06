@@ -93,7 +93,11 @@ def main():
     parser.add_argument("--corrupt-video-header", action='store_true', help="Corrupt the first bytes of the video file (header damage)")
     parser.add_argument("--zero-audio-prefix", action='store_true', help="Overwrite the first 1024 bytes of audio with zeros")
     parser.add_argument("--mismatch-video-ext", action='store_true', help="Rename video file to a wrong extension (e.g., .m4a) to simulate mismatch")
-    parser.add_argument("--corrupt-bytes", type=int, default=1024, help="Number of bytes to corrupt/zero at file start")
+    parser.add_argument("--corrupt-middle", action='store_true', help="Corrupt bytes in the middle of the file to damage frames")
+    parser.add_argument("--append-junk", action='store_true', help="Append random junk bytes to the end of the file to simulate stream garbage")
+    parser.add_argument("--strip-mp4-moov", action='store_true', help="Zero out the MP4 'moov' atom region to break the container header")
+    parser.add_argument("--corrupt-bytes", type=int, default=1024, help="Number of bytes to corrupt/zero at file start or middle")
+    parser.add_argument("--junk-bytes", type=int, default=1024, help="Number of junk bytes to append when --append-junk is used")
     args = parser.parse_args()
 
     outdir = Path(args.outdir)
@@ -152,14 +156,63 @@ def main():
             f.seek(0)
             f.write(b'\x00' * min(n, p.stat().st_size))
 
+    def corrupt_middle(p: Path, n: int):
+        print(f"Corrupting middle {n} bytes of {p}")
+        size = p.stat().st_size
+        if size == 0:
+            return
+        start = max(0, size // 2 - n // 2)
+        with open(p, 'r+b') as f:
+            f.seek(start)
+            data = bytearray(f.read(n))
+            for i in range(len(data)):
+                data[i] = (data[i] ^ 0xAA) & 0xFF
+            f.seek(start)
+            f.write(data)
+
+    def append_junk(p: Path, n: int):
+        print(f"Appending {n} junk bytes to {p}")
+        import os
+        with open(p, 'ab') as f:
+            f.write(os.urandom(n))
+
+    def strip_mp4_moov(p: Path, n: int):
+        print(f"Attempting to strip/zero 'moov' atom region in {p}")
+        data = p.read_bytes()
+        idx = data.find(b'moov')
+        if idx == -1:
+            print('moov atom not found; skipping')
+            return
+        start = max(0, idx - 512)
+        end = min(len(data), idx + n + 512)
+        # zero out region to damage header
+        data = data[:start] + (b'\x00' * (end - start)) + data[end:]
+        p.write_bytes(data)
+        print(f"Zeroed bytes {start}-{end} in {p} to corrupt moov")
+
     if args.corrupt_audio_header:
         corrupt_file_header(audio_path, args.corrupt_bytes)
 
     if args.zero_audio_prefix:
         zero_prefix(audio_path, args.corrupt_bytes)
 
+    if args.corrupt_middle:
+        corrupt_middle(audio_path, args.corrupt_bytes)
+
+    if args.append_junk:
+        append_junk(audio_path, args.junk_bytes)
+
     if args.corrupt_video_header and video is not None:
         corrupt_file_header(video, args.corrupt_bytes)
+
+    if args.corrupt_middle and video is not None:
+        corrupt_middle(video, args.corrupt_bytes)
+
+    if args.append_junk and video is not None:
+        append_junk(video, args.junk_bytes)
+
+    if args.strip_mp4_moov and video is not None:
+        strip_mp4_moov(video, args.corrupt_bytes)
 
     if args.mismatch_video_ext and video is not None:
         new = video.with_suffix('.m4a')

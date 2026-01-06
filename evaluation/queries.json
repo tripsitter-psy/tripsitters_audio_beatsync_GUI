@@ -127,5 +127,35 @@
     "zero_audio_prefix": true,
     "expect_failure": true,
     "notes": "Start of audio file zeroed; expect failure or unplayable output"
+  },
+  {
+    "id": "corrupt_middle_audio",
+    "mode": "sync",
+    "audio_duration": 10,
+    "video_duration": 10,
+    "corrupt_middle": true,
+    "corrupt_bytes": 2048,
+    "expect_failure": true,
+    "notes": "Corrupt bytes in middle of audio file to damage frames"
+  },
+  {
+    "id": "append_junk_video",
+    "mode": "sync",
+    "audio_duration": 10,
+    "video_duration": 10,
+    "append_junk": true,
+    "junk_bytes": 4096,
+    "expect_failure": true,
+    "notes": "Append junk bytes to end of video file to break stream"
+  },
+  {
+    "id": "strip_mp4_moov",
+    "mode": "sync",
+    "audio_duration": 10,
+    "video_duration": 10,
+    "strip_mp4_moov": true,
+    "corrupt_bytes": 8192,
+    "expect_failure": true,
+    "notes": "Zero out MP4 moov atom region to corrupt container header"
   }
 ]
