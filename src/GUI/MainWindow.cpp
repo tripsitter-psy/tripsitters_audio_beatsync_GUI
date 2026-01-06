@@ -1711,6 +1711,33 @@ void MainWindow::LoadSettings() {
     wxCommandEvent videoEvt;
     OnVideoSourceChanged(videoEvt);
 
+    // Effects: restore persisted settings
+    if (m_settingsManager) {
+        m_colorGradeCheck->SetValue(m_settingsManager->GetBool("EnableColorGrade", false));
+        wxString preset = m_settingsManager->GetString("ColorPreset", "Warm");
+        if (preset.Lower() == "warm") m_colorPresetChoice->SetSelection(0);
+        else if (preset.Lower() == "cool") m_colorPresetChoice->SetSelection(1);
+        else if (preset.Lower() == "vintage") m_colorPresetChoice->SetSelection(2);
+        else if (preset.Lower() == "vibrant") m_colorPresetChoice->SetSelection(3);
+        m_colorPresetChoice->Enable(m_colorGradeCheck->GetValue());
+
+        m_vignetteCheck->SetValue(m_settingsManager->GetBool("EnableVignette", false));
+
+        m_beatFlashCheck->SetValue(m_settingsManager->GetBool("EnableBeatFlash", false));
+        m_flashIntensitySlider->SetValue(m_settingsManager->GetInt("FlashIntensityValue", 30));
+        m_flashIntensitySlider->Enable(m_beatFlashCheck->GetValue());
+
+        m_beatZoomCheck->SetValue(m_settingsManager->GetBool("EnableBeatZoom", false));
+        m_zoomIntensitySlider->SetValue(m_settingsManager->GetInt("ZoomIntensityValue", 4));
+        m_zoomIntensitySlider->Enable(m_beatZoomCheck->GetValue());
+
+        int divisor = m_settingsManager->GetInt("EffectBeatDivisor", 1);
+        int sel = 0;
+        if (divisor == 1) sel = 0; else if (divisor == 2) sel = 1; else if (divisor == 4) sel = 2; else if (divisor == 8) sel = 3;
+        m_effectBeatDivisorChoice->SetSelection(sel);
+        if (m_beatVisualizer) m_beatVisualizer->SetEffectBeatDivisor(divisor);
+    }
+
     // Add a Help hint with Logs access tooltip
     if (GetMenuBar()) {
         wxMenuItem* helpItem = GetMenuBar()->FindItem(ID_VIEW_LOGS);
@@ -1872,6 +1899,21 @@ void MainWindow::SaveSettings() {
     m_settingsManager->SetString("LastAudioPath", m_audioFilePicker->GetPath());
     m_settingsManager->SetString("LastVideoPath",
         m_multiClipRadio->GetValue() ? m_videoFolderPicker->GetPath() : m_singleVideoPicker->GetPath());
+
+    // Persist effects
+    m_settingsManager->SetBool("EnableColorGrade", m_colorGradeCheck->GetValue());
+    m_settingsManager->SetString("ColorPreset", m_colorPresetChoice->GetStringSelection());
+    m_settingsManager->SetBool("EnableVignette", m_vignetteCheck->GetValue());
+
+    m_settingsManager->SetBool("EnableBeatFlash", m_beatFlashCheck->GetValue());
+    m_settingsManager->SetInt("FlashIntensityValue", m_flashIntensitySlider->GetValue());
+
+    m_settingsManager->SetBool("EnableBeatZoom", m_beatZoomCheck->GetValue());
+    m_settingsManager->SetInt("ZoomIntensityValue", m_zoomIntensitySlider->GetValue());
+
+    int divIdx = m_effectBeatDivisorChoice->GetSelection();
+    int divisor = (divIdx == 0) ? 1 : (1 << divIdx);
+    m_settingsManager->SetInt("EffectBeatDivisor", divisor);
 }
 
 #ifdef __WXUNIVERSAL__
