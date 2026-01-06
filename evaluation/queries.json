@@ -12,5 +12,36 @@
     "audio_duration": 5,
     "video_duration": 7,
     "notes": "Audio shorter than video to test -shortest behavior"
+  },
+  {
+    "id": "sync_long",
+    "mode": "sync",
+    "audio_duration": 120,
+    "video_duration": 120,
+    "notes": "Longer audio/video to test performance and stability"
+  },
+  {
+    "id": "multiclip_basic",
+    "mode": "multiclip",
+    "audio_duration": 90,
+    "num_clips": 10,
+    "clip_duration": 10,
+    "notes": "Basic multiclip test: 10 clips of 10s each"
+  },
+  {
+    "id": "multiclip_mismatch",
+    "mode": "multiclip",
+    "audio_duration": 20,
+    "num_clips": 5,
+    "clip_duration": 10,
+    "notes": "Audio shorter than combined clips to exercise padding/shortest behavior"
+  },
+  {
+    "id": "silent_audio",
+    "mode": "sync",
+    "audio_duration": 10,
+    "video_duration": 10,
+    "silent": true,
+    "notes": "Silent audio to test beat detection robustness"
   }
 ]

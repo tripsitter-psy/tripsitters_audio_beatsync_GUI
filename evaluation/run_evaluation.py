@@ -73,22 +73,31 @@ def run_query(q):
 
     # generate synthetic media
     gen = Path("./evaluation/generate_synthetic.py")
-    cmd = ["python", str(gen), "--outdir", str(tmp), "--audio-duration", str(q['audio_duration']), "--video-duration", str(q['video_duration']), "--id", q['id']]
     try:
+        if q.get('mode', 'sync') == 'multiclip':
+            cmd = ["python", str(gen), "--outdir", str(tmp), "--audio-duration", str(q['audio_duration']), "--num-clips", str(q['num_clips']), "--clip-duration", str(q['clip_duration']), "--id", q['id']]
+        else:
+            cmd = ["python", str(gen), "--outdir", str(tmp), "--audio-duration", str(q['audio_duration']), "--video-duration", str(q.get('video_duration', q['audio_duration'])), "--id", q['id']]
+        if q.get('silent'):
+            cmd.append('--silent')
+        if q.get('audio_sr'):
+            cmd.extend(['--audio-sr', str(q.get('audio_sr'))])
         run_cmd(cmd)
     except Exception as e:
         return {"id": q['id'], "error": str(e)}
 
     audio = tmp / f"{q['id']}.wav"
-    video = tmp / f"{q['id']}.mp4"
-    assert audio.exists() and video.exists()
-
     out = tmp / f"{q['id']}.out.mp4"
 
-    # run the app (use beatsync CLI)
+    # determine run command based on mode
     start = time.time()
     try:
-        run_cmd([str(ROOT / "build" / "bin" / "Release" / "beatsync.exe"), "sync", str(video), str(audio), "-o", str(out)], check=True)
+        if q.get('mode', 'sync') == 'multiclip':
+            clips_dir = tmp / 'clips'
+            run_cmd([str(ROOT / "build" / "bin" / "Release" / "beatsync.exe"), "multiclip", str(clips_dir), str(audio), "-o", str(out)], check=True)
+        else:
+            video = tmp / f"{q['id']}.mp4"
+            run_cmd([str(ROOT / "build" / "bin" / "Release" / "beatsync.exe"), "sync", str(video), str(audio), "-o", str(out)], check=True)
     except Exception as e:
         return {"id": q['id'], "error": str(e)}
     elapsed = time.time() - start
