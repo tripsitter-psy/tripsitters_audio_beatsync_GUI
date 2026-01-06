@@ -80,10 +80,10 @@ target_link_libraries(TripSitter
 if(APPLE)
     set_target_properties(TripSitter PROPERTIES
         MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "TripSitter"
+        MACOSX_BUNDLE_BUNDLE_NAME "MTV Trip Sitter"
         MACOSX_BUNDLE_BUNDLE_VERSION "${CPACK_PACKAGE_VERSION_MAJOR}.${CPACK_PACKAGE_VERSION_MINOR}.${CPACK_PACKAGE_VERSION_PATCH}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${CPACK_PACKAGE_VERSION_MAJOR}.${CPACK_PACKAGE_VERSION_MINOR}.${CPACK_PACKAGE_VERSION_PATCH}"
-        MACOSX_BUNDLE_GUI_IDENTIFIER "com.tripsitter.beatsync"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.mtv.tripsitter"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/assets/Info.plist.in"
     )
 endif()
@@ -121,9 +121,9 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/assets DESTINATION .)
 
 # CPack packaging configuration (ZIP + NSIS for Windows)
 include(InstallRequiredSystemLibraries)
-set(CPACK_PACKAGE_NAME "TripSitter")
-set(CPACK_PACKAGE_VENDOR "TripSitter")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "TripSitter - Audio Beat Sync GUI")
+set(CPACK_PACKAGE_NAME "MTVTripSitter")
+set(CPACK_PACKAGE_VENDOR "MTV")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "MTV Trip Sitter - Audio Beat Sync GUI")
 set(CPACK_PACKAGE_VERSION_MAJOR "0")
 set(CPACK_PACKAGE_VERSION_MINOR "1")
 set(CPACK_PACKAGE_VERSION_PATCH "0")
@@ -133,11 +133,11 @@ set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
 # Platform-specific CPack generators
 if(WIN32)
     set(CPACK_GENERATOR "ZIP;NSIS")
-    set(CPACK_NSIS_DISPLAY_NAME "TripSitter")
+    set(CPACK_NSIS_DISPLAY_NAME "MTV Trip Sitter")
     set(CPACK_NSIS_CONTACT "support@example.com")
 elseif(APPLE)
     set(CPACK_GENERATOR "DragNDrop")
-    set(CPACK_DMG_VOLUME_NAME "TripSitter")
+    set(CPACK_DMG_VOLUME_NAME "MTV Trip Sitter")
     set(CPACK_DMG_FORMAT "UDZO")
     # Install the .app bundle
     install(TARGETS TripSitter BUNDLE DESTINATION .)

@@ -37,10 +37,6 @@ public:
      */
     std::string getLastError() const;
 
-private:
-    double m_sensitivity;
-    std::string m_lastError;
-
     // Audio processing
     struct AudioData {
         std::vector<float> samples;  // Mono audio samples
@@ -49,9 +45,13 @@ private:
     };
 
     /**
-     * @brief Load and decode audio file using FFmpeg
+     * @brief Load and decode audio file using FFmpeg (exposed for waveform visualization)
      */
     AudioData loadAudioFile(const std::string& filePath);
+
+private:
+    double m_sensitivity;
+    std::string m_lastError;
 
     /**
      * @brief Detect beats in audio samples using energy-based algorithm

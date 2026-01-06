@@ -18,8 +18,8 @@ public:
         wxTheme::Set(new TripSitter::PsychedelicTheme());
 #endif
 
-        SetAppName("TripSitter");
-        SetVendorName("TripSitter");
+        SetAppName("MTV Trip Sitter");
+        SetVendorName("MTV Trip Sitter");
 
         MainWindow* frame = new MainWindow();
         frame->Show(true);

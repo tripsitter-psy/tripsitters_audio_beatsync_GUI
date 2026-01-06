@@ -6,6 +6,8 @@
 #include "../video/VideoWriter.h"
 #include "../video/VideoProcessor.h"
 #include <wx/statbox.h>
+#include <wx/statbmp.h>
+#include <wx/bitmap.h>
 #include <wx/gbsizer.h>
 #include <wx/stdpaths.h>
 #include <wx/filename.h>
@@ -13,6 +15,7 @@
 #include <wx/dcbuffer.h>
 #include <wx/clipbrd.h>
 #include <wx/textdlg.h>
+#include <wx/fontenum.h>
 #include <filesystem>
 #include <chrono>
 #include <algorithm>
@@ -29,13 +32,32 @@ wxDEFINE_EVENT(wxEVT_PROCESSING_PROGRESS, wxThreadEvent);
 wxDEFINE_EVENT(wxEVT_PROCESSING_COMPLETE, wxThreadEvent);
 wxDEFINE_EVENT(wxEVT_PROCESSING_ERROR, wxThreadEvent);
 
+namespace {
+// Pick the installed face name for the brand font (handles Corpta demo/regular names).
+wxString ChooseBrandFontFace() {
+    wxFontEnumerator fe;
+    wxArrayString faces = fe.GetFacenames();
+    wxArrayString candidates;
+    candidates.Add("Corpta");
+    candidates.Add("Corpta DEMO");
+    candidates.Add("Corpta DEMO Regular");
+    for (auto& name : candidates) {
+        if (faces.Index(name, false) != wxNOT_FOUND) {
+            return name;
+        }
+    }
+    // Fallback: keep requested name even if missing; wxWidgets will substitute system font
+    return "Corpta";
+}
+}
+
 wxBEGIN_EVENT_TABLE(MainWindow, wxFrame)
     EVT_PAINT(MainWindow::OnPaint)
     EVT_CLOSE(MainWindow::OnClose)
 wxEND_EVENT_TABLE()
 
 MainWindow::MainWindow()
-    : wxFrame(nullptr, wxID_ANY, "Trip Sitter - Audio Beat Sync GUI",
+    : wxFrame(nullptr, wxID_ANY, "MTV Trip Sitter - Audio Beat Sync GUI",
               wxDefaultPosition, wxSize(1344, 950),
               wxDEFAULT_FRAME_STYLE & ~(wxRESIZE_BORDER | wxMAXIMIZE_BOX))
 {
@@ -88,19 +110,22 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::SetupFonts() {
-    // Cyberpunk-style fonts
+    const wxString face = ChooseBrandFontFace();
+
+    // Cyberpunk-style fonts (Corpta)
     m_titleFont = wxFont(20, wxFONTFAMILY_MODERN, wxFONTSTYLE_NORMAL, 
-                         wxFONTWEIGHT_BOLD, false, "Consolas");
+                         wxFONTWEIGHT_BOLD, false, face);
     m_labelFont = wxFont(10, wxFONTFAMILY_MODERN, wxFONTSTYLE_NORMAL, 
-                         wxFONTWEIGHT_NORMAL, false, "Consolas");
+                         wxFONTWEIGHT_NORMAL, false, face);
 }
 
 void MainWindow::LoadBackgroundImage() {
     wxString exePath = wxStandardPaths::Get().GetExecutablePath();
     wxString assetsDir = wxFileName(exePath).GetPath() + "/assets/";
 
-    // Try the upscaled version first, then fall back to background.png
+    // Try the new MTV artwork first, then existing fallbacks
     wxArrayString candidates;
+    candidates.Add(assetsDir + "asset - this one.png");
     candidates.Add(assetsDir + "ComfyUI_03324_.png");
     candidates.Add(assetsDir + "background.png");
 
@@ -155,13 +180,9 @@ void MainWindow::ApplyPsychedelicStyling() {
     return;
 #endif
 
-    // Set window background to black
-    SetBackgroundColour(wxColour(10, 10, 26));
-
-    // Apply neon colors to UI elements
+    // Apply neon accent colors while letting the background art show through
     wxColour cyan(0, 217, 255);
     wxColour purple(139, 0, 255);
-    wxColour darkBg(20, 20, 40);
 
     if (m_mainPanel) {
         // Make panel transparent to show background image
@@ -178,48 +199,39 @@ void MainWindow::ApplyPsychedelicStyling() {
         }
     }
     
-    // Style text inputs and dropdowns with dark backgrounds
-    wxColour darkInput(20, 20, 40);
+    // Style text inputs and dropdowns with light text; keep native backgrounds
     wxColour lightText(200, 220, 255);
 
     // Style file pickers and their children
     if (m_audioFilePicker) {
-        m_audioFilePicker->SetBackgroundColour(darkInput);
         m_audioFilePicker->SetForegroundColour(lightText);
         // Style the text control inside the file picker
         wxWindowList& children = m_audioFilePicker->GetChildren();
         for (auto child : children) {
-            child->SetBackgroundColour(darkInput);
             child->SetForegroundColour(lightText);
         }
         m_audioFilePicker->Refresh();
     }
     if (m_singleVideoPicker) {
-        m_singleVideoPicker->SetBackgroundColour(darkInput);
         m_singleVideoPicker->SetForegroundColour(lightText);
         wxWindowList& children = m_singleVideoPicker->GetChildren();
         for (auto child : children) {
-            child->SetBackgroundColour(darkInput);
             child->SetForegroundColour(lightText);
         }
         m_singleVideoPicker->Refresh();
     }
     if (m_videoFolderPicker) {
-        m_videoFolderPicker->SetBackgroundColour(darkInput);
         m_videoFolderPicker->SetForegroundColour(lightText);
         wxWindowList& children = m_videoFolderPicker->GetChildren();
         for (auto child : children) {
-            child->SetBackgroundColour(darkInput);
             child->SetForegroundColour(lightText);
         }
         m_videoFolderPicker->Refresh();
     }
     if (m_outputFilePicker) {
-        m_outputFilePicker->SetBackgroundColour(darkInput);
         m_outputFilePicker->SetForegroundColour(lightText);
         wxWindowList& children = m_outputFilePicker->GetChildren();
         for (auto child : children) {
-            child->SetBackgroundColour(darkInput);
             child->SetForegroundColour(lightText);
         }
         m_outputFilePicker->Refresh();
@@ -227,42 +239,37 @@ void MainWindow::ApplyPsychedelicStyling() {
 
     // Style dropdowns
     if (m_beatRateChoice) {
-        m_beatRateChoice->SetBackgroundColour(darkInput);
         m_beatRateChoice->SetForegroundColour(lightText);
         m_beatRateChoice->Refresh();
     }
     if (m_resolutionChoice) {
-        m_resolutionChoice->SetBackgroundColour(darkInput);
         m_resolutionChoice->SetForegroundColour(lightText);
         m_resolutionChoice->Refresh();
     }
     if (m_fpsChoice) {
-        m_fpsChoice->SetBackgroundColour(darkInput);
         m_fpsChoice->SetForegroundColour(lightText);
         m_fpsChoice->Refresh();
     }
 
     // Style text inputs
     if (m_previewTimestampCtrl) {
-        m_previewTimestampCtrl->SetBackgroundColour(darkInput);
         m_previewTimestampCtrl->SetForegroundColour(lightText);
         m_previewTimestampCtrl->Refresh();
     }
     if (m_previewBeatsCtrl) {
-        m_previewBeatsCtrl->SetBackgroundColour(darkInput);
         m_previewBeatsCtrl->SetForegroundColour(lightText);
         m_previewBeatsCtrl->Refresh();
     }
 
     // Style buttons
     if (m_startButton) {
-        m_startButton->SetBackgroundColour(cyan);
-        m_startButton->SetForegroundColour(*wxBLACK);
+        m_startButton->SetBackgroundColour(wxNullColour);
+        m_startButton->SetForegroundColour(*wxWHITE);
         m_startButton->SetFont(m_titleFont);
     }
 
     if (m_cancelButton) {
-        m_cancelButton->SetBackgroundColour(purple);
+        m_cancelButton->SetBackgroundColour(wxNullColour);
         m_cancelButton->SetForegroundColour(*wxWHITE);
     }
     
@@ -517,6 +524,19 @@ void MainWindow::CreateControls() {
     // Buttons
     m_startButton = new wxButton(m_mainPanel, wxID_ANY, "START SYNC", 
         wxDefaultPosition, wxSize(250, 45));
+
+    // Apply custom start-button artwork when available
+    {
+        wxString exePath = wxStandardPaths::Get().GetExecutablePath();
+        wxString assetsDir = wxFileName(exePath).GetPath() + "/assets/";
+        wxBitmap startBmp;
+        if (startBmp.LoadFile(assetsDir + "button asset alpha.png", wxBITMAP_TYPE_PNG) && startBmp.IsOk()) {
+            m_startButton->SetBitmap(startBmp);
+            m_startButton->SetLabel(""); // image-only when asset exists
+            m_startButton->SetMinSize(startBmp.GetSize());
+        }
+    }
+
     m_cancelButton = new wxButton(m_mainPanel, wxID_ANY, "CANCEL",
         wxDefaultPosition, wxSize(120, 45));
     m_cancelButton->Enable(false);
@@ -542,20 +562,48 @@ void MainWindow::CreateLayout() {
     wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
     mainSizer->AddSpacer(15);
     
-    // Title
-    wxStaticText* title = new wxStaticText(m_mainPanel, wxID_ANY, 
-        "TRIP SITTER");
-    title->SetFont(wxFont(28, wxFONTFAMILY_MODERN, wxFONTSTYLE_NORMAL, 
-        wxFONTWEIGHT_BOLD, false, "Impact"));
-    title->SetForegroundColour(wxColour(0, 217, 255));
-    mainSizer->Add(title, 0, wxALIGN_CENTER_HORIZONTAL | wxALL, 5);
-    
-    wxStaticText* subtitle = new wxStaticText(m_mainPanel, wxID_ANY, 
-        "Audio Beat Sync GUI");
-    subtitle->SetFont(wxFont(14, wxFONTFAMILY_MODERN, wxFONTSTYLE_ITALIC, 
-        wxFONTWEIGHT_NORMAL, false, "Consolas"));
-    subtitle->SetForegroundColour(wxColour(139, 0, 255));
-    mainSizer->Add(subtitle, 0, wxALIGN_CENTER_HORIZONTAL | wxBOTTOM, 10);
+    // Header image (MTV Trip Sitter)
+    wxString exePath = wxStandardPaths::Get().GetExecutablePath();
+    wxString assetsDir = wxFileName(exePath).GetPath() + "/assets/";
+    wxBitmap headerBitmap;
+    if (headerBitmap.LoadFile(assetsDir + "asset for top hedder alpha_2.png", wxBITMAP_TYPE_PNG) && headerBitmap.IsOk()) {
+        // Scale down to a friendly size while preserving aspect ratio
+        wxImage img = headerBitmap.ConvertToImage();
+        if (headerBitmap.HasAlpha() && !img.HasAlpha()) {
+            img.InitAlpha();
+        }
+        const int maxW = 900;
+        const int maxH = 260;
+        if (img.GetWidth() > maxW || img.GetHeight() > maxH) {
+            double scaleW = static_cast<double>(maxW) / img.GetWidth();
+            double scaleH = static_cast<double>(maxH) / img.GetHeight();
+            double scale = std::min(scaleW, scaleH);
+            int newW = static_cast<int>(img.GetWidth() * scale);
+            int newH = static_cast<int>(img.GetHeight() * scale);
+            img.Rescale(newW, newH, wxIMAGE_QUALITY_HIGH);
+        }
+        m_headerBitmap = wxBitmap(img, -1);
+        wxPanel* headerPanel = new wxPanel(
+            m_mainPanel, wxID_ANY, wxDefaultPosition, m_headerBitmap.GetSize(),
+            wxBORDER_NONE | wxTRANSPARENT_WINDOW);
+        headerPanel->SetMinSize(m_headerBitmap.GetSize());
+        headerPanel->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+        headerPanel->Bind(wxEVT_ERASE_BACKGROUND, [](wxEraseEvent&){ /* no-op to let parent show through */ });
+        headerPanel->Bind(wxEVT_PAINT, [this](wxPaintEvent& evt){
+            wxPaintDC dc(static_cast<wxWindow*>(evt.GetEventObject()));
+            if (m_headerBitmap.IsOk()) {
+                dc.DrawBitmap(m_headerBitmap, 0, 0, true);
+            }
+        });
+        mainSizer->Add(headerPanel, 0, wxALIGN_CENTER_HORIZONTAL | wxALL, 5);
+    } else {
+        // Fallback text if the header image is missing
+        wxStaticText* title = new wxStaticText(m_mainPanel, wxID_ANY, "MTV TRIP SITTER");
+        title->SetFont(wxFont(28, wxFONTFAMILY_MODERN, wxFONTSTYLE_NORMAL, 
+            wxFONTWEIGHT_BOLD, false, ChooseBrandFontFace()));
+        title->SetForegroundColour(wxColour(0, 217, 255));
+        mainSizer->Add(title, 0, wxALIGN_CENTER_HORIZONTAL | wxALL, 5);
+    }
     
     // Input Files Section
     wxStaticText* inputSectionLabel = new wxStaticText(m_mainPanel, wxID_ANY, "INPUT FILES");

@@ -1,0 +1,81 @@
+trigger:
+- main
+
+pr:
+- main
+
+pool:
+  vmImage: 'macOS-13'
+
+variables:
+  buildType: 'Release'
+  cmakeGenerator: 'Ninja'
+  osxArchitectures: 'arm64'
+
+steps:
+- checkout: self
+  clean: true
+
+- script: |
+    set -euo pipefail
+    brew update
+    brew install cmake ninja wxwidgets ffmpeg
+  displayName: Install Homebrew dependencies
+
+- script: |
+    set -euo pipefail
+    FFMPEG_PREFIX=$(brew --prefix ffmpeg)
+    WXCONFIG=$(brew --prefix wxwidgets)/bin/wx-config
+    cmake -S . -B build -G "${CMAKE_GENERATOR}" \
+      -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+      -DBUILD_TESTS=ON \
+      -DFFMPEG_ROOT="${FFMPEG_PREFIX}" \
+      -DwxWidgets_CONFIG_EXECUTABLE="${WXCONFIG}" \
+      -DCMAKE_OSX_ARCHITECTURES="${OSX_ARCHES}"
+  env:
+    BUILD_TYPE: $(buildType)
+    CMAKE_GENERATOR: $(cmakeGenerator)
+    OSX_ARCHES: $(osxArchitectures)
+  displayName: Configure CMake (arm build)
+
+- script: |
+    set -euo pipefail
+    cmake --build build --config ${BUILD_TYPE}
+  env:
+    BUILD_TYPE: $(buildType)
+  displayName: Build
+
+- script: |
+    set -euo pipefail
+    ctest --test-dir build -C ${BUILD_TYPE} --output-on-failure
+  env:
+    BUILD_TYPE: $(buildType)
+  displayName: Run tests
+
+- script: |
+    set -euo pipefail
+    pushd build
+    cpack -G DragNDrop -C ${BUILD_TYPE}
+    popd
+  env:
+    BUILD_TYPE: $(buildType)
+  displayName: Package (DMG)
+
+- script: |
+    set -euo pipefail
+    mkdir -p artifacts
+    if ls build/*.dmg >/dev/null 2>&1; then
+      cp build/*.dmg artifacts/
+    fi
+    APP_PATH=$(find build -name "TripSitter.app" -type d | head -n 1)
+    if [ -n "${APP_PATH}" ]; then
+      ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" artifacts/TripSitter-app.zip
+    fi
+  displayName: Collect artifacts
+
+- task: PublishBuildArtifacts@1
+  inputs:
+    PathtoPublish: artifacts
+    ArtifactName: macOS
+    publishLocation: Container
+  displayName: Publish artifacts
