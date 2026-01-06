@@ -88,6 +88,12 @@ def main():
     parser.add_argument("--audio-codec", type=str, default="wav", help="Audio codec/format: wav, mp3, aac")
     parser.add_argument("--truncate-audio", type=int, default=0, help="Truncate audio by percent (0-99)")
     parser.add_argument("--truncate-video", type=int, default=0, help="Truncate video by percent (0-99)")
+    # corruption options
+    parser.add_argument("--corrupt-audio-header", action='store_true', help="Corrupt the first bytes of the audio file (header damage)")
+    parser.add_argument("--corrupt-video-header", action='store_true', help="Corrupt the first bytes of the video file (header damage)")
+    parser.add_argument("--zero-audio-prefix", action='store_true', help="Overwrite the first 1024 bytes of audio with zeros")
+    parser.add_argument("--mismatch-video-ext", action='store_true', help="Rename video file to a wrong extension (e.g., .m4a) to simulate mismatch")
+    parser.add_argument("--corrupt-bytes", type=int, default=1024, help="Number of bytes to corrupt/zero at file start")
     args = parser.parse_args()
 
     outdir = Path(args.outdir)
@@ -100,13 +106,13 @@ def main():
         print("ffmpeg not found in PATH; synthetic media generation requires ffmpeg. Skipping generation.")
         return 1
 
-    create_audio(audio, args.audio_duration, sample_rate=args.audio_sr, silent=args.silent)
-
+    # generate base audio and video
     audio_path = create_audio(audio, args.audio_duration, sample_rate=args.audio_sr, silent=args.silent, channels=args.channels, codec=args.audio_codec)
 
     if args.num_clips and args.num_clips > 0:
         clips_dir = create_clip_set(outdir, args.num_clips, args.clip_duration)
         print("Generated clip set:", clips_dir)
+        video = None
     else:
         video = outdir / f"{args.id}.mp4"
         create_video(video, args.video_duration)
@@ -121,7 +127,7 @@ def main():
             f.truncate(cut)
         print(f"Truncated audio to {cut} bytes ({args.truncate_audio}% removed)")
 
-    if args.truncate_video and args.truncate_video > 0 and not args.num_clips:
+    if args.truncate_video and args.truncate_video > 0 and video is not None:
         p = video
         size = p.stat().st_size
         cut = int(size * (100 - args.truncate_video) / 100.0)
@@ -129,35 +135,38 @@ def main():
             f.truncate(cut)
         print(f"Truncated video to {cut} bytes ({args.truncate_video}% removed)")
 
+    # Apply corruption operations
+    def corrupt_file_header(p: Path, n: int):
+        print(f"Corrupting header of {p} ({n} bytes)")
+        with open(p, 'r+b') as f:
+            f.seek(0)
+            data = bytearray(f.read(n))
+            for i in range(len(data)):
+                data[i] = (data[i] ^ 0xFF) & 0xFF
+            f.seek(0)
+            f.write(data)
+
+    def zero_prefix(p: Path, n: int):
+        print(f"Zeroing first {n} bytes of {p}")
+        with open(p, 'r+b') as f:
+            f.seek(0)
+            f.write(b'\x00' * min(n, p.stat().st_size))
+
+    if args.corrupt_audio_header:
+        corrupt_file_header(audio_path, args.corrupt_bytes)
+
+    if args.zero_audio_prefix:
+        zero_prefix(audio_path, args.corrupt_bytes)
+
+    if args.corrupt_video_header and video is not None:
+        corrupt_file_header(video, args.corrupt_bytes)
+
+    if args.mismatch_video_ext and video is not None:
+        new = video.with_suffix('.m4a')
+        print(f"Renaming video {video} -> {new} to mismatch extension")
+        video.rename(new)
+        video = new
+
     return 0
 
-if __name__ == '__main__':
-    raise SystemExit(main())
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--outdir", default="./evaluation/tmp", help="Output directory")
-    parser.add_argument("--audio-duration", type=float, default=5.0)
-    parser.add_argument("--video-duration", type=float, default=5.0)
-    parser.add_argument("--id", default="sample")
-    args = parser.parse_args()
-
-    outdir = Path(args.outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
-
-    audio = outdir / f"{args.id}.wav"
-    video = outdir / f"{args.id}.mp4"
-
-    # check ffmpeg
-    if not shutil.which("ffmpeg"):
-        print("ffmpeg not found in PATH; synthetic media generation requires ffmpeg. Skipping generation.")
-        return 1
-
-    create_audio(audio, args.audio_duration)
-    create_video(video, args.video_duration)
-
-    print("Generated:", audio, video)
-    return 0
-
-if __name__ == '__main__':
-    raise SystemExit(main())

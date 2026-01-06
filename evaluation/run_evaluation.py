@@ -90,6 +90,17 @@ def run_query(q):
             cmd.extend(['--truncate-audio', str(q.get('truncate_audio'))])
         if q.get('truncate_video'):
             cmd.extend(['--truncate-video', str(q.get('truncate_video'))])
+        # corruption options
+        if q.get('corrupt_audio_header'):
+            cmd.append('--corrupt-audio-header')
+        if q.get('corrupt_video_header'):
+            cmd.append('--corrupt-video-header')
+        if q.get('zero_audio_prefix'):
+            cmd.append('--zero-audio-prefix')
+        if q.get('mismatch_video_ext'):
+            cmd.append('--mismatch-video-ext')
+        if q.get('corrupt_bytes'):
+            cmd.extend(['--corrupt-bytes', str(q.get('corrupt_bytes'))])
 
         run_cmd(cmd)
     except Exception as e:
@@ -116,7 +127,8 @@ def run_query(q):
             video = tmp / f"{q['id']}.mp4"
             run_cmd([str(ROOT / "build" / "bin" / "Release" / "beatsync.exe"), "sync", str(video), str(audio), "-o", str(out)], check=True)
     except Exception as e:
-        return {"id": q['id'], "error": str(e)}
+        expect_failure = q.get('expect_failure', False)
+        return {"id": q['id'], "error": str(e), "passed": expect_failure}
     elapsed = time.time() - start
 
     # collect metrics
@@ -127,6 +139,16 @@ def run_query(q):
         "playable": check_playable(out) if out.exists() else False,
         "alignment_s": measure_alignment(audio, out) if out.exists() else -1
     }
+
+    # evaluate pass/fail for this query
+    expect_failure = q.get('expect_failure', False)
+    alignment_threshold = q.get('alignment_threshold', 1.0)
+    if expect_failure:
+        # Pass if we either errored earlier (handled above) or output exists but is not playable
+        result['passed'] = (not result['output_exists']) or (not result['playable'])
+    else:
+        result['passed'] = result['output_exists'] and result['playable'] and (result['alignment_s'] >= 0 and result['alignment_s'] <= alignment_threshold)
+
     return result
 
 
@@ -154,14 +176,14 @@ def main():
     print("Evaluation complete. Results written to:", RESULTS)
     print(json.dumps(report, indent=2))
 
-    # simple pass/fail: all outputs exist and alignment < 1s
-    passed = True
+    # aggregate pass/fail based on per-query 'passed'
+    overall_passed = True
     for r in results:
-        if r.get('error') or not r.get('output_exists') or r.get('alignment_s', 999) > 1.0:
-            passed = False
+        if not r.get('passed', False):
+            overall_passed = False
             break
 
-    return 0 if passed else 2
+    return 0 if overall_passed else 2
 
 
 if __name__ == '__main__':

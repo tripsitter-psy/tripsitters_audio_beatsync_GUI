@@ -91,5 +91,41 @@
     "video_duration": 10,
     "truncate_video_pct": 40,
     "notes": "Truncated/corrupt video file"
+  },
+  {
+    "id": "corrupt_audio_header",
+    "mode": "sync",
+    "audio_duration": 10,
+    "video_duration": 10,
+    "corrupt_audio_header": true,
+    "expect_failure": true,
+    "notes": "Audio header bytes corrupted; expect failure or unplayable output"
+  },
+  {
+    "id": "corrupt_video_header",
+    "mode": "sync",
+    "audio_duration": 10,
+    "video_duration": 10,
+    "corrupt_video_header": true,
+    "expect_failure": true,
+    "notes": "Video header corrupted; expect failure or unplayable output"
+  },
+  {
+    "id": "mismatch_video_extension",
+    "mode": "sync",
+    "audio_duration": 10,
+    "video_duration": 10,
+    "mismatch_video_ext": true,
+    "expect_failure": true,
+    "notes": "Video file renamed to wrong extension to mismatch content and extension"
+  },
+  {
+    "id": "zero_audio_prefix",
+    "mode": "sync",
+    "audio_duration": 10,
+    "video_duration": 10,
+    "zero_audio_prefix": true,
+    "expect_failure": true,
+    "notes": "Start of audio file zeroed; expect failure or unplayable output"
   }
 ]
