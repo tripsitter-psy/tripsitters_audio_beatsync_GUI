@@ -1,0 +1,16 @@
+[
+  {
+    "id": "sync_short",
+    "mode": "sync",
+    "audio_duration": 6,
+    "video_duration": 6,
+    "notes": "Short synthetic sine + color video for basic alignment test"
+  },
+  {
+    "id": "sync_short_mismatch",
+    "mode": "sync",
+    "audio_duration": 5,
+    "video_duration": 7,
+    "notes": "Audio shorter than video to test -shortest behavior"
+  }
+]
