@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import time
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,7 +59,11 @@ def parse_traces() -> dict:
         return traces
     with open(trace_file, 'r', encoding='utf-8') as f:
         for line in f:
-            obj = json.loads(line)
+            try:
+                obj = json.loads(line)
+            except Exception:
+                # skip malformed trace lines
+                continue
             name = obj.get('span')
             traces.setdefault(name, 0)
             traces[name] += 1
@@ -71,14 +76,23 @@ def run_query(q):
         shutil.rmtree(tmp)
     tmp.mkdir(parents=True)
 
+    # Dump environment and paths for debugging generator invocation
+    try:
+        with open(tmp / "generator.env.txt", 'w', encoding='utf-8') as ef:
+            ef.write(f"python_executable={sys.executable}\n")
+            ef.write(f"ffmpeg_which={shutil.which('ffmpeg')}\n")
+            ef.write(f"PATH={os.environ.get('PATH')}\n")
+    except Exception:
+        pass
+
     # generate synthetic media
     gen = Path("./evaluation/generate_synthetic.py")
 
     # Build generator command
     if q.get('mode', 'sync') == 'multiclip':
-        cmd = ["python", str(gen), "--outdir", str(tmp), "--audio-duration", str(q['audio_duration']), "--num-clips", str(q['num_clips']), "--clip-duration", str(q['clip_duration']), "--id", q['id']]
+        cmd = [sys.executable, str(gen), "--outdir", str(tmp), "--audio-duration", str(q['audio_duration']), "--num-clips", str(q['num_clips']), "--clip-duration", str(q['clip_duration']), "--id", q['id']]
     else:
-        cmd = ["python", str(gen), "--outdir", str(tmp), "--audio-duration", str(q['audio_duration']), "--video-duration", str(q.get('video_duration', q['audio_duration'])), "--id", q['id']]
+        cmd = [sys.executable, str(gen), "--outdir", str(tmp), "--audio-duration", str(q['audio_duration']), "--video-duration", str(q.get('video_duration', q['audio_duration'])), "--id", q['id']]
     if q.get('silent'):
         cmd.append('--silent')
     if q.get('audio_sr'):
