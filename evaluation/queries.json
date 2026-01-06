@@ -43,5 +43,53 @@
     "video_duration": 10,
     "silent": true,
     "notes": "Silent audio to test beat detection robustness"
+  },
+  {
+    "id": "sample_rate_8k",
+    "mode": "sync",
+    "audio_duration": 8,
+    "video_duration": 8,
+    "audio_sr": 8000,
+    "notes": "Low sample rate audio (8k)"
+  },
+  {
+    "id": "sample_rate_48k",
+    "mode": "sync",
+    "audio_duration": 8,
+    "video_duration": 8,
+    "audio_sr": 48000,
+    "notes": "High sample rate audio (48k)"
+  },
+  {
+    "id": "mono_audio",
+    "mode": "sync",
+    "audio_duration": 10,
+    "video_duration": 10,
+    "audio_channels": 1,
+    "notes": "Mono audio test"
+  },
+  {
+    "id": "codec_mp3",
+    "mode": "sync",
+    "audio_duration": 10,
+    "video_duration": 10,
+    "audio_codec": "mp3",
+    "notes": "MP3 encoded audio"
+  },
+  {
+    "id": "truncate_audio",
+    "mode": "sync",
+    "audio_duration": 10,
+    "video_duration": 10,
+    "truncate_audio_pct": 30,
+    "notes": "Truncated/corrupt audio file"
+  },
+  {
+    "id": "truncate_video",
+    "mode": "sync",
+    "audio_duration": 10,
+    "video_duration": 10,
+    "truncate_video_pct": 40,
+    "notes": "Truncated/corrupt video file"
   }
 ]

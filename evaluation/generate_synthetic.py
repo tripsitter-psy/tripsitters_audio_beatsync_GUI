@@ -12,29 +12,39 @@ def run_cmd(cmd):
     subprocess.check_call(cmd)
 
 
-def create_audio(path: Path, duration: float, sample_rate: int = 44100, silent: bool = False):
+def create_audio(path: Path, duration: float, sample_rate: int = 44100, silent: bool = False, channels: int = 2, codec: str = 'wav'):
     # Use ffmpeg sine source or anullsrc for silence
     if silent:
         src = f"anullsrc=channel_layout=stereo:sample_rate={sample_rate}"
-        cmd = [
+        base_cmd = [
             "ffmpeg", "-y",
             "-f", "lavfi",
             "-i", src,
             "-t", str(duration),
             "-ar", str(sample_rate),
-            "-ac", "2",
-            str(path)
+            "-ac", str(channels),
         ]
     else:
-        cmd = [
+        base_cmd = [
             "ffmpeg", "-y",
             "-f", "lavfi",
             "-i", f"sine=frequency=440:duration={duration}:sample_rate={sample_rate}",
             "-ar", str(sample_rate),
-            "-ac", "2",
-            str(path)
+            "-ac", str(channels),
         ]
+
+    if codec == 'mp3':
+        out = str(path.with_suffix('.mp3'))
+        cmd = base_cmd + ["-codec:a", "libmp3lame", out]
+    elif codec in ('aac', 'm4a'):
+        out = str(path.with_suffix('.m4a'))
+        cmd = base_cmd + ["-codec:a", "aac", out]
+    else:
+        out = str(path.with_suffix('.wav'))
+        cmd = base_cmd + [out]
+
     run_cmd(cmd)
+    return Path(out)
 
 
 def create_video(path: Path, duration: float, resolution: str = "640x360", label: str = ""):
@@ -74,6 +84,10 @@ def main():
     parser.add_argument("--clip-duration", type=float, default=5.0, help="Duration for each clip when generating multiclip set")
     parser.add_argument("--silent", action='store_true', help="Generate silent audio")
     parser.add_argument("--audio-sr", type=int, default=44100, help="Audio sample rate")
+    parser.add_argument("--channels", type=int, default=2, help="Number of audio channels (1=mono,2=stereo)")
+    parser.add_argument("--audio-codec", type=str, default="wav", help="Audio codec/format: wav, mp3, aac")
+    parser.add_argument("--truncate-audio", type=int, default=0, help="Truncate audio by percent (0-99)")
+    parser.add_argument("--truncate-video", type=int, default=0, help="Truncate video by percent (0-99)")
     args = parser.parse_args()
 
     outdir = Path(args.outdir)
@@ -88,13 +102,33 @@ def main():
 
     create_audio(audio, args.audio_duration, sample_rate=args.audio_sr, silent=args.silent)
 
+    audio_path = create_audio(audio, args.audio_duration, sample_rate=args.audio_sr, silent=args.silent, channels=args.channels, codec=args.audio_codec)
+
     if args.num_clips and args.num_clips > 0:
         clips_dir = create_clip_set(outdir, args.num_clips, args.clip_duration)
         print("Generated clip set:", clips_dir)
     else:
         video = outdir / f"{args.id}.mp4"
         create_video(video, args.video_duration)
-        print("Generated:", audio, video)
+        print("Generated:", audio_path, video)
+
+    # Optionally truncate audio or video
+    if args.truncate_audio and args.truncate_audio > 0:
+        p = audio_path
+        size = p.stat().st_size
+        cut = int(size * (100 - args.truncate_audio) / 100.0)
+        with open(p, 'rb+') as f:
+            f.truncate(cut)
+        print(f"Truncated audio to {cut} bytes ({args.truncate_audio}% removed)")
+
+    if args.truncate_video and args.truncate_video > 0 and not args.num_clips:
+        p = video
+        size = p.stat().st_size
+        cut = int(size * (100 - args.truncate_video) / 100.0)
+        with open(p, 'rb+') as f:
+            f.truncate(cut)
+        print(f"Truncated video to {cut} bytes ({args.truncate_video}% removed)")
+
     return 0
 
 if __name__ == '__main__':

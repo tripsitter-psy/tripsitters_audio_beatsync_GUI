@@ -82,11 +82,28 @@ def run_query(q):
             cmd.append('--silent')
         if q.get('audio_sr'):
             cmd.extend(['--audio-sr', str(q.get('audio_sr'))])
+        if q.get('audio_channels'):
+            cmd.extend(['--channels', str(q.get('audio_channels'))])
+        if q.get('audio_codec'):
+            cmd.extend(['--audio-codec', str(q.get('audio_codec'))])
+        if q.get('truncate_audio'):
+            cmd.extend(['--truncate-audio', str(q.get('truncate_audio'))])
+        if q.get('truncate_video'):
+            cmd.extend(['--truncate-video', str(q.get('truncate_video'))])
+
         run_cmd(cmd)
     except Exception as e:
         return {"id": q['id'], "error": str(e)}
 
-    audio = tmp / f"{q['id']}.wav"
+    # Locate generated audio file (could be .wav, .mp3, .m4a)
+    audio = None
+    for p in tmp.iterdir():
+        if p.name.startswith(q['id']) and p.suffix.lower() in ('.wav', '.mp3', '.m4a'):
+            audio = p
+            break
+    if audio is None:
+        return {"id": q['id'], "error": "Generated audio not found"}
+
     out = tmp / f"{q['id']}.out.mp4"
 
     # determine run command based on mode
