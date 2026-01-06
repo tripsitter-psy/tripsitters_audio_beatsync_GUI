@@ -13,9 +13,11 @@ This roadmap outlines the integration of advanced open-source AI algorithms for 
 
 Essentia is a C++ library that can replace/supplement the current AudioAnalyzer.
 
+**Status:** In progress — CMake and vcpkg integration scaffolding added; analyzer stub present and conditional test added. Next: wire real Essentia calls and add integration tests.
+
 **Tasks:**
-- [ ] Add Essentia as a dependency (vcpkg or manual build)
-- [ ] Create `EssentiaAnalyzer` class wrapping Essentia's beat tracking
+- [x] Add Essentia as a dependency (vcpkg or manual build) (vcpkg.json updated)
+- [x] Create `EssentiaAnalyzer` class wrapping Essentia's beat tracking (stub exists)
 - [ ] Implement onset detection using Essentia's `OnsetDetection` algorithm
 - [ ] Add BPM estimation with `RhythmExtractor2013`
 - [ ] Compare accuracy vs current implementation

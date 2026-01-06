@@ -50,17 +50,34 @@ set(CORE_SOURCES
 
 # Optional feature sources (always compiled as stubs; actual libs wired via flags)
 set(OPTIONAL_SOURCES)
+
+# BeatNet and Demucs/StemSeparator are now always compiled for AI analysis modes
+# These are called via Python scripts and don't need external libraries
+list(APPEND OPTIONAL_SOURCES 
+    src/audio/BeatNetBridge.cpp
+    src/audio/StemSeparator.cpp
+)
+
+# ONNX Runtime support for native AI inference (no Python needed)
+# Enabled by default - this is the recommended way to use AI beat detection
+option(USE_ONNX "Enable ONNX Runtime for native AI inference" ON)
+if(USE_ONNX)
+    find_package(onnxruntime CONFIG QUIET)
+    if(onnxruntime_FOUND)
+        message(STATUS "ONNX Runtime found - enabling native AI inference")
+        list(APPEND OPTIONAL_SOURCES 
+            src/audio/OnnxBeatDetector.cpp
+            src/audio/OnnxStemSeparator.cpp
+        )
+        add_definitions(-DUSE_ONNX)
+    else()
+        message(WARNING "ONNX Runtime not found. Install with: vcpkg install onnxruntime-gpu")
+    endif()
+endif()
+
 if(USE_ESSENTIA)
     list(APPEND OPTIONAL_SOURCES src/audio/EssentiaAnalyzer.cpp)
     add_definitions(-DUSE_ESSENTIA)
-endif()
-if(USE_BEATNET)
-    list(APPEND OPTIONAL_SOURCES src/audio/BeatNetBridge.cpp)
-    add_definitions(-DUSE_BEATNET)
-endif()
-if(USE_DEMUCS)
-    list(APPEND OPTIONAL_SOURCES src/audio/StemSeparator.cpp)
-    add_definitions(-DUSE_DEMUCS)
 endif()
 if(USE_GLTRANSITIONS)
     list(APPEND OPTIONAL_SOURCES src/video/TransitionLibrary.cpp)
@@ -86,6 +103,9 @@ add_executable(beatsync src/main.cpp ${CORE_SOURCES} ${OPTIONAL_SOURCES})
 target_link_libraries(beatsync
     avformat avcodec avutil swresample swscale avfilter
 )
+if(USE_ONNX AND onnxruntime_FOUND)
+    target_link_libraries(beatsync onnxruntime::onnxruntime)
+endif()
 
 # GUI executable (NEW)
 if(WIN32)
@@ -105,6 +125,22 @@ target_link_libraries(TripSitter
     ${wxWidgets_LIBRARIES}
     avformat avcodec avutil swresample swscale avfilter
 )
+if(USE_ONNX AND onnxruntime_FOUND)
+    target_link_libraries(TripSitter onnxruntime::onnxruntime)
+endif()
+
+# Optional: link Essentia if requested and available
+if(USE_ESSENTIA)
+    find_package(Essentia CONFIG QUIET)
+    if(Essentia_FOUND)
+        message(STATUS "Essentia found - enabling Essentia analyzer support")
+        target_link_libraries(beatsync PUBLIC Essentia::essentia)
+        target_link_libraries(TripSitter PUBLIC Essentia::essentia)
+        add_compile_definitions(HAVE_ESSENTIA)
+    else()
+        message(WARNING "USE_ESSENTIA enabled but Essentia package not found. EssentiaAnalyzer will remain a stub.")
+    endif()
+endif()
 
 # macOS App Bundle configuration
 if(APPLE)
@@ -161,6 +197,28 @@ else()
     install(TARGETS TripSitter RUNTIME DESTINATION .)
 endif()
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/assets DESTINATION .)
+
+# Install AI tools if they exist (bundled executables for beat detection)
+# These are built separately with PyInstaller - see scripts/build_ai_tools.py
+if(EXISTS "${CMAKE_SOURCE_DIR}/scripts/dist/beatnet_analyze.exe")
+    install(PROGRAMS "${CMAKE_SOURCE_DIR}/scripts/dist/beatnet_analyze.exe" DESTINATION ai_tools)
+endif()
+if(EXISTS "${CMAKE_SOURCE_DIR}/scripts/dist/demucs_separate.exe")
+    install(PROGRAMS "${CMAKE_SOURCE_DIR}/scripts/dist/demucs_separate.exe" DESTINATION ai_tools)
+endif()
+
+# Install ONNX models if they exist (preferred method - no Python needed)
+if(EXISTS "${CMAKE_SOURCE_DIR}/models")
+    install(DIRECTORY "${CMAKE_SOURCE_DIR}/models" DESTINATION .)
+endif()
+
+# Also install the Python scripts as fallback (for users who have Python)
+install(FILES 
+    "${CMAKE_SOURCE_DIR}/scripts/beatnet_analyze.py"
+    "${CMAKE_SOURCE_DIR}/scripts/demucs_separate.py"
+    DESTINATION scripts
+    OPTIONAL
+)
 
 # CPack packaging configuration (ZIP + NSIS for Windows)
 include(InstallRequiredSystemLibraries)
