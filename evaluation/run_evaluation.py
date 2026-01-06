@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 import sys
 from pathlib import Path
@@ -178,8 +179,6 @@ def run_query(q):
             raise RuntimeError(f"beatsync failed: {r.stderr[:200]}")
 
         # Copy ffmpeg concat logs from system temp if present to aid debugging
-        import tempfile
-        import shutil
         sys_temp = Path(tempfile.gettempdir())
         for name in ("beatsync_ffmpeg_concat.log", "tripsitter_debug.log"):
             src = sys_temp / name
