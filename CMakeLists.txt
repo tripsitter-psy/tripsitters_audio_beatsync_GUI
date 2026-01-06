@@ -20,6 +20,13 @@ endif()
 # Set USE_WXUNIVERSAL=ON to use wxUniversal build with custom theming
 option(USE_WXUNIVERSAL "Use wxUniversal build for custom theming" OFF)
 
+# Optional AI / advanced feature flags (stubs included; wire deps when available)
+option(USE_ESSENTIA "Enable Essentia-based beat analyzer" OFF)
+option(USE_BEATNET "Enable BeatNet Python bridge" OFF)
+option(USE_DEMUCS "Enable Demucs stem separation" OFF)
+option(USE_GLTRANSITIONS "Enable GLSL transitions library" OFF)
+option(USE_AUDIOREACTIVE "Enable FFT-driven audio-reactive effects" OFF)
+
 if(WIN32)
     set(wxWidgets_ROOT_DIR "C:/wxWidgets-3.2.4")
     if(USE_WXUNIVERSAL)
@@ -41,6 +48,29 @@ set(CORE_SOURCES
     src/video/VideoWriter.cpp
 )
 
+# Optional feature sources (always compiled as stubs; actual libs wired via flags)
+set(OPTIONAL_SOURCES)
+if(USE_ESSENTIA)
+    list(APPEND OPTIONAL_SOURCES src/audio/EssentiaAnalyzer.cpp)
+    add_definitions(-DUSE_ESSENTIA)
+endif()
+if(USE_BEATNET)
+    list(APPEND OPTIONAL_SOURCES src/audio/BeatNetBridge.cpp)
+    add_definitions(-DUSE_BEATNET)
+endif()
+if(USE_DEMUCS)
+    list(APPEND OPTIONAL_SOURCES src/audio/StemSeparator.cpp)
+    add_definitions(-DUSE_DEMUCS)
+endif()
+if(USE_GLTRANSITIONS)
+    list(APPEND OPTIONAL_SOURCES src/video/TransitionLibrary.cpp)
+    add_definitions(-DUSE_GLTRANSITIONS)
+endif()
+if(USE_AUDIOREACTIVE)
+    list(APPEND OPTIONAL_SOURCES src/audio/FFTAnalyzer.cpp src/video/AudioReactiveEffects.cpp)
+    add_definitions(-DUSE_AUDIOREACTIVE)
+endif()
+
 set(GUI_SOURCES
     src/GUI/MainWindow.cpp
     src/GUI/BeatVisualizer.cpp
@@ -52,7 +82,7 @@ set(GUI_SOURCES
 )
 
 # CLI executable (existing)
-add_executable(beatsync src/main.cpp ${CORE_SOURCES})
+add_executable(beatsync src/main.cpp ${CORE_SOURCES} ${OPTIONAL_SOURCES})
 target_link_libraries(beatsync
     avformat avcodec avutil swresample swscale avfilter
 )
@@ -63,12 +93,12 @@ if(WIN32)
     # or no icon is present in the assets directory.
     if(EXISTS "${CMAKE_SOURCE_DIR}/assets/icon.rc")
         set(GUI_ICON_RC "${CMAKE_SOURCE_DIR}/assets/icon.rc")
-        add_executable(TripSitter WIN32 src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${GUI_ICON_RC})
+        add_executable(TripSitter WIN32 src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${OPTIONAL_SOURCES} ${GUI_ICON_RC})
     else()
-        add_executable(TripSitter WIN32 src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
+        add_executable(TripSitter WIN32 src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${OPTIONAL_SOURCES})
     endif()
 else()
-    add_executable(TripSitter src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
+    add_executable(TripSitter src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${OPTIONAL_SOURCES})
 endif()
 
 target_link_libraries(TripSitter

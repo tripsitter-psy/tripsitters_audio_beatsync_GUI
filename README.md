@@ -6,6 +6,27 @@ A C++ desktop application for automatically synchronizing video clips with music
 
 Phase 1 implements core beat detection functionality with a command-line interface.
 
+## Roadmap (summary)
+
+High-level priorities from the roadmap:
+- High: Essentia-native analyzer, Demucs stem separation (drums-first beats), GLSL transition library for beat-synced cuts.
+- Medium: BeatNet Python bridge, beat-synced transition timing rules, FFT-driven audio-reactive effects.
+- Low: Shader visualizer overlays, future AI video generation.
+
+See [ROADMAP.md](ROADMAP.md) for the detailed plan, file layout, and milestones (v0.2.0–v1.0.0).
+
+## AI feature scaffold (optional)
+
+To prep for the roadmap’s AI features, a minimal scaffold is included:
+- Placeholder Python bridges: [scripts/beatnet_analyze.py](scripts/beatnet_analyze.py) and [scripts/demucs_separate.py](scripts/demucs_separate.py) currently emit stub JSON messages.
+- Python deps list: [scripts/requirements.txt](scripts/requirements.txt). Create an env and install with:
+  ```bash
+  python3 -m venv ~/.tripsitter-env
+  source ~/.tripsitter-env/bin/activate
+  pip install -r scripts/requirements.txt
+  ```
+- Essentia hook stub: [src/audio/EssentiaAnalyzer.h](src/audio/EssentiaAnalyzer.h) is ready to wire once the Essentia dependency is added to CMake.
+
 ### Features
 
 - **Audio File Loading**: Supports MP3, WAV, FLAC, and other formats via FFmpeg

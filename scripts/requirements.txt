@@ -1,0 +1,7 @@
+torch>=2.0
+torchaudio
+demucs==4.*
+beatnet
+librosa
+soundfile
+tqdm
