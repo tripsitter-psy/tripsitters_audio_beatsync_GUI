@@ -1,10 +1,10 @@
 #include <wx/wx.h>
 #include <wx/image.h>
-#include "gui/MainWindow.h"
+#include "GUI/MainWindow.h"
 
 #ifdef __WXUNIVERSAL__
 #include <wx/univ/theme.h>
-#include "gui/PsychedelicTheme.h"
+#include "GUI/PsychedelicTheme.h"
 #endif
 
 class TripSitterApp : public wxApp {

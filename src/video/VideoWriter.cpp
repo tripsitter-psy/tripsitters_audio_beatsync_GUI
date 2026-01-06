@@ -8,6 +8,16 @@
 #include <chrono>
 #include <ctime>
 #include <cstring>
+
+// Cross-platform popen/pclose
+#ifdef _WIN32
+#define popen_compat popen_compat
+#define pclose_compat pclose_compat
+#else
+#define popen_compat popen
+#define pclose_compat pclose
+#endif
+
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
@@ -83,7 +93,7 @@ std::string VideoWriter::getFFmpegPath() const {
 
     // 2. Try to find ffmpeg in PATH
 #ifdef _WIN32
-    FILE* pipe = _popen("where ffmpeg 2>nul", "r");
+    FILE* pipe = popen_compat("where ffmpeg 2>nul", "r");
 #else
     FILE* pipe = popen("which ffmpeg 2>/dev/null", "r");
 #endif
@@ -94,7 +104,7 @@ std::string VideoWriter::getFFmpegPath() const {
             result += buffer;
         }
 #ifdef _WIN32
-        _pclose(pipe);
+        pclose_compat(pipe);
 #else
         pclose(pipe);
 #endif
@@ -286,7 +296,7 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
     std::cout << "Extracting segment: " << inputVideo << " @ " << startTime << "s for " << duration << "s -> " << outputVideo << "\n";
 
     // Use FFmpeg command-line for reliable segment extraction
-    // Note: _popen() on Windows passes commands to cmd.exe, so we need proper quote escaping
+    // Note: popen_compat() on Windows passes commands to cmd.exe, so we need proper quote escaping
     //
     // FIX: Normalize ALL clips to same resolution (1920x1080), frame rate (24fps),
     // and pixel format to prevent freezing from mixed source formats
@@ -315,10 +325,10 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
 #else
     std::string fullCmd = cmd.str() + " 2>&1";
 #endif
-    FILE* pipe = _popen(fullCmd.c_str(), "r");
+    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg";
-        appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentFast::_popen_failed", fullCmd, -1, "", "start=" + std::to_string(startTime) + ", dur=" + std::to_string(duration));
+        appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentFast::popen_compat_failed", fullCmd, -1, "", "start=" + std::to_string(startTime) + ", dur=" + std::to_string(duration));
         return false;
     }
 
@@ -329,7 +339,7 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
         ffmpegOutput += buffer;
     }
 
-    int exitCode = _pclose(pipe);
+    int exitCode = pclose_compat(pipe);
 
     // Check file size regardless of exit code for better diagnostics
     long fileSize = -1;
@@ -411,10 +421,10 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
 #else
     std::string fullCmd = cmd.str() + " 2>&1";
 #endif
-    FILE* pipe = _popen(fullCmd.c_str(), "r");
+    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg for precise copy";
-        appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentPrecise::_popen_failed", fullCmd, -1, "", "start=" + std::to_string(startTime) + ", dur=" + std::to_string(duration));
+        appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentPrecise::popen_compat_failed", fullCmd, -1, "", "start=" + std::to_string(startTime) + ", dur=" + std::to_string(duration));
         return false;
     }
 
@@ -425,7 +435,7 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
         ffmpegOutput += buffer;
     }
 
-    int exitCode = _pclose(pipe);
+    int exitCode = pclose_compat(pipe);
 
     long fileSize = -1;
     {
@@ -540,7 +550,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 #else
     std::string fullCmd = cmd.str() + " 2>&1";
 #endif
-    FILE* pipe = _popen(fullCmd.c_str(), "r");
+    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg";
         std::remove(listFile.c_str());
@@ -553,7 +563,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
         ffmpegOutput += buffer;
     }
 
-    int exitCode = _pclose(pipe);
+    int exitCode = pclose_compat(pipe);
 
     // Persist FFmpeg output for debugging
     {
@@ -599,7 +609,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
     #else
         std::string fullReencodeCmd = reencodeCmd.str() + " 2>&1";
     #endif
-        FILE* pipe2 = _popen(fullReencodeCmd.c_str(), "r");
+        FILE* pipe2 = popen_compat(fullReencodeCmd.c_str(), "r");
         std::string reencodeOutput;
         if (!pipe2) {
             m_lastError = "FFmpeg re-encode fallback failed to start";
@@ -608,7 +618,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
         while (fgets(buffer, sizeof(buffer), pipe2) != nullptr) {
             reencodeOutput += buffer;
         }
-        int rc2 = _pclose(pipe2);
+        int rc2 = pclose_compat(pipe2);
 
         // Log re-encode output
         FILE* logf2 = fopen("beatsync_ffmpeg_concat.log", "a");
@@ -679,7 +689,7 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
 #else
     std::string fullCmd = cmd.str() + " 2>&1";
 #endif
-    FILE* pipe = _popen(fullCmd.c_str(), "r");
+    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg for audio muxing";
         return false;
@@ -692,7 +702,7 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
         ffmpegOutput += buffer;
     }
 
-    int exitCode = _pclose(pipe);
+    int exitCode = pclose_compat(pipe);
 
     // Persist muxing output for troubleshooting
     {
@@ -798,14 +808,14 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
             << " -c copy -y \"" << outputVideo << "\"";
 
         std::string fullCmd = cmd.str() + " 2>&1";
-        FILE* pipe = _popen(fullCmd.c_str(), "r");
+        FILE* pipe = popen_compat(fullCmd.c_str(), "r");
         if (!pipe) {
             m_lastError = "Failed to execute FFmpeg for effects copy";
             return false;
         }
         char buffer[256];
         while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {}
-        int exitCode = _pclose(pipe);
+        int exitCode = pclose_compat(pipe);
         return exitCode == 0;
     }
 
@@ -846,7 +856,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
     std::cout << "Applying effects...\n";
 
     std::string fullCmd = cmd.str() + " 2>&1";
-    FILE* pipe = _popen(fullCmd.c_str(), "r");
+    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg for effects";
         return false;
@@ -858,7 +868,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         ffmpegOutput += buffer;
     }
 
-    int exitCode = _pclose(pipe);
+    int exitCode = pclose_compat(pipe);
 
     if (exitCode != 0) {
         m_lastError = "FFmpeg effects processing failed";

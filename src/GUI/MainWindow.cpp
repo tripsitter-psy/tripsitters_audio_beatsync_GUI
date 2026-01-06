@@ -23,6 +23,15 @@
 #include <sstream>
 #include "../utils/LogArchiver.h"
 
+// Cross-platform popen/pclose
+#ifdef _WIN32
+#define popen_compat popen_compat
+#define pclose_compat pclose_compat
+#else
+#define popen_compat popen
+#define pclose_compat pclose
+#endif
+
 #ifdef __WXUNIVERSAL__
 #include "PsychedelicTheme.h"
 #endif
@@ -397,34 +406,45 @@ void MainWindow::CreateControls() {
 
     m_mainPanel->Bind(wxEVT_SIZE, [this, refreshChildRects](wxSizeEvent&){ m_mainPanel->CallAfter(refreshChildRects); });
 
-    // Draw background at fixed position (compensate for scroll offset)
+    // Draw background at fixed position (static - doesn't scroll)
     m_mainPanel->Bind(wxEVT_PAINT, [this](wxPaintEvent& evt) {
         // Use auto-buffered paint DC to avoid flicker
         wxAutoBufferedPaintDC dc(m_mainPanel);
 
-        // Get scroll position (in scroll units) and pixels per unit
-        int viewX, viewY;
-        m_mainPanel->GetViewStart(&viewX, &viewY);
-        int pixelX, pixelY;
-        m_mainPanel->GetScrollPixelsPerUnit(&pixelX, &pixelY);
-
-        // Compute negated offset to keep bitmap fixed relative to window
-        int offsetX = -viewX * pixelX;
-        int offsetY = -viewY * pixelY;
+        wxSize clientSize = m_mainPanel->GetClientSize();
 
         if (m_backgroundBitmap.IsOk()) {
-            // Tile the bitmap to ensure the visible client area is fully covered
+            // Draw background at fixed (0,0) - STATIC, doesn't move with scroll
+            // Scale to cover the client area
             wxSize bmpSize = m_backgroundBitmap.GetSize();
-            wxSize client = m_mainPanel->GetClientSize();
-            for (int y = offsetY - bmpSize.y; y < client.y + bmpSize.y; y += bmpSize.y) {
-                for (int x = offsetX - bmpSize.x; x < client.x + bmpSize.x; x += bmpSize.x) {
-                    dc.DrawBitmap(m_backgroundBitmap, x, y, false);
-                }
+            double scaleW = (double)clientSize.x / bmpSize.x;
+            double scaleH = (double)clientSize.y / bmpSize.y;
+            double scale = std::max(scaleW, scaleH);
+
+            int scaledW = (int)(bmpSize.x * scale);
+            int scaledH = (int)(bmpSize.y * scale);
+
+            // Center the scaled image
+            int offsetX = (clientSize.x - scaledW) / 2;
+            int offsetY = (clientSize.y - scaledH) / 2;
+
+            // Cache scaled bitmap for performance
+            static wxSize lastClientSize(0, 0);
+            static wxBitmap cachedScaledBitmap;
+
+            if (lastClientSize != clientSize || !cachedScaledBitmap.IsOk()) {
+                wxImage img = m_backgroundBitmap.ConvertToImage();
+                wxImage scaledImg = img.Scale(scaledW, scaledH, wxIMAGE_QUALITY_BILINEAR);
+                cachedScaledBitmap = wxBitmap(scaledImg);
+                lastClientSize = clientSize;
             }
+
+            // Draw at (0,0) device coordinates - BEFORE any scroll transform
+            dc.DrawBitmap(cachedScaledBitmap, offsetX, offsetY, false);
         } else {
-            // Clear to background colour if no bitmap
-            dc.SetBackground(wxBrush(GetBackgroundColour()));
-            dc.Clear();
+            // Fallback gradient
+            dc.GradientFillLinear(wxRect(0, 0, clientSize.x, clientSize.y),
+                wxColour(10, 10, 26), wxColour(25, 0, 50), wxSOUTH);
         }
 
         // Prepare DC so child controls are drawn in the correct scrolled coordinates
@@ -1318,7 +1338,8 @@ void MainWindow::OnProcessingComplete(bool success, const wxString& message) {
     } else {
         // Reuse the full logs dialog for errors
         m_statusText->SetLabel(message);
-        OnViewLogs(wxCommandEvent());
+        wxCommandEvent evt;
+        OnViewLogs(evt);
     }
 }
 
@@ -1345,8 +1366,9 @@ void MainWindow::LoadSettings() {
             m_singleVideoRadio->SetValue(true);
         }
     }
-    
-    OnVideoSourceChanged(wxCommandEvent());
+
+    wxCommandEvent videoEvt;
+    OnVideoSourceChanged(videoEvt);
 
     // Add a Help hint with Logs access tooltip
     if (GetMenuBar()) {
@@ -1378,18 +1400,23 @@ void MainWindow::OnViewLogs(wxCommandEvent& WXUNUSED(event)) {
     if (envPath && envPath[0] != '\0') {
         full << "FFmpeg Path (env): " << envPath << "\n";
     } else {
-        // Try 'where ffmpeg' on Windows
-        FILE* pipe = _popen("where ffmpeg 2>nul", "r");
+        // Try to find ffmpeg in PATH
+#ifdef _WIN32
+        const char* findCmd = "where ffmpeg 2>nul";
+#else
+        const char* findCmd = "which ffmpeg 2>/dev/null";
+#endif
+        FILE* pipe = popen_compat(findCmd, "r");
         if (pipe) {
             char buf[512];
             if (fgets(buf, sizeof(buf), pipe) != nullptr) {
-                full << "FFmpeg Path (where): " << buf;
+                full << "FFmpeg Path (system): " << buf;
             } else {
                 full << "FFmpeg Path: not found in PATH\n";
             }
-            _pclose(pipe);
+            pclose_compat(pipe);
         } else {
-            full << "FFmpeg Path: (where check failed)\n";
+            full << "FFmpeg Path: (path check failed)\n";
         }
     }
 

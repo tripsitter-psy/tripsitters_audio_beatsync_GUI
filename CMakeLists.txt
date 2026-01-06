@@ -42,12 +42,12 @@ set(CORE_SOURCES
 )
 
 set(GUI_SOURCES
-    src/gui/MainWindow.cpp
-    src/gui/BeatVisualizer.cpp
-    src/gui/VideoPreview.cpp
-    src/gui/ProcessingThread.cpp
-    src/gui/SettingsManager.cpp
-    src/gui/PsychedelicTheme.cpp
+    src/GUI/MainWindow.cpp
+    src/GUI/BeatVisualizer.cpp
+    src/GUI/VideoPreview.cpp
+    src/GUI/ProcessingThread.cpp
+    src/GUI/SettingsManager.cpp
+    src/GUI/PsychedelicTheme.cpp
     src/utils/LogArchiver.cpp
 )
 
@@ -63,12 +63,12 @@ if(WIN32)
     # or no icon is present in the assets directory.
     if(EXISTS "${CMAKE_SOURCE_DIR}/assets/icon.rc")
         set(GUI_ICON_RC "${CMAKE_SOURCE_DIR}/assets/icon.rc")
-        add_executable(TripSitter WIN32 src/gui_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${GUI_ICON_RC})
+        add_executable(TripSitter WIN32 src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${GUI_ICON_RC})
     else()
-        add_executable(TripSitter WIN32 src/gui_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
+        add_executable(TripSitter WIN32 src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
     endif()
 else()
-    add_executable(TripSitter src/gui_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
+    add_executable(TripSitter src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
 endif()
 
 target_link_libraries(TripSitter
@@ -94,11 +94,20 @@ set_target_properties(beatsync TripSitter PROPERTIES
 )
 
 # Copy assets to build directory
-add_custom_command(TARGET TripSitter POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_SOURCE_DIR}/assets
-    ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets
-)
+if(APPLE)
+    # macOS: Copy assets into app bundle's MacOS folder (next to executable)
+    add_custom_command(TARGET TripSitter POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/assets
+        $<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/assets
+    )
+else()
+    add_custom_command(TARGET TripSitter POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/assets
+        ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets
+    )
+endif()
 
 # Copy FFmpeg DLLs to output directory (Windows only)
 if(WIN32)
@@ -116,7 +125,11 @@ if(WIN32)
 endif()
 
 # Install TripSitter executable and assets for packaging
-install(TARGETS TripSitter RUNTIME DESTINATION .)
+if(APPLE)
+    install(TARGETS TripSitter BUNDLE DESTINATION .)
+else()
+    install(TARGETS TripSitter RUNTIME DESTINATION .)
+endif()
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/assets DESTINATION .)
 
 # CPack packaging configuration (ZIP + NSIS for Windows)
@@ -139,8 +152,6 @@ elseif(APPLE)
     set(CPACK_GENERATOR "DragNDrop")
     set(CPACK_DMG_VOLUME_NAME "MTV Trip Sitter")
     set(CPACK_DMG_FORMAT "UDZO")
-    # Install the .app bundle
-    install(TARGETS TripSitter BUNDLE DESTINATION .)
 else()
     set(CPACK_GENERATOR "TGZ")
 endif()
