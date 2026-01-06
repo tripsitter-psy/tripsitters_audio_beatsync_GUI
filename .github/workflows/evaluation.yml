@@ -34,18 +34,31 @@ jobs:
 
       - name: Build
         run: |
+          mkdir -p build
           if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            cmake -S . -B build -DCMAKE_OSX_ARCHITECTURES=arm64
+            cmake -S . -B build -DCMAKE_OSX_ARCHITECTURES=arm64 2>&1 | tee build/cmake_config.log
           else
-            cmake -S . -B build
+            cmake -S . -B build 2>&1 | tee build/cmake_config.log
           fi
-          cmake --build build --config Release
+          cmake --build build --config Release 2>&1 | tee build/build.log
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ matrix.os }}
+          path: |
+            build/cmake_config.log
+            build/build.log
+            build/**/Testing/**
 
       - name: Run evaluation
+        if: success()
         run: |
           python evaluation/run_evaluation.py
 
       - name: Upload results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: evaluation-results-${{ matrix.os }}
