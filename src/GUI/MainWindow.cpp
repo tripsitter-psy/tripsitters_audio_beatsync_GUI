@@ -1007,10 +1007,14 @@ void MainWindow::UpdateUIState(bool processing) {
 
 void MainWindow::StartProcessing(const ProcessingConfig& config) {
     m_cancelRequested = false;
-    
+
     m_processingThread = std::make_unique<std::thread>([this, config]() {
         auto startTime = std::chrono::steady_clock::now();
-        
+
+        // Use system temp directory for all temp files (fixes installed .app bundle issue)
+        std::string tempDir = std::filesystem::temp_directory_path().string();
+        if (!tempDir.empty() && tempDir.back() != '/') tempDir += '/';
+
         try {
             // Step 1: Analyze audio
             wxThreadEvent* evt = new wxThreadEvent(wxEVT_PROCESSING_PROGRESS);
@@ -1178,7 +1182,7 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
                 }
 
                 std::string videoFile = videoFiles[i % videoFiles.size()];
-                std::string segmentPath = "temp_segment_" + std::to_string(i) + ".mp4";
+                std::string segmentPath = tempDir + "temp_segment_" + std::to_string(i) + ".mp4";
 
                 // Extract from the BEGINNING of each video clip (0.0), not the beat timestamp
                 // The beat timing determines duration, but each clip starts from 0
@@ -1215,7 +1219,10 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             evt->SetString("Concatenating segments...");
             wxQueueEvent(this, evt);
             
-            if (!writer.concatenateVideos(segmentPaths, "temp_video.mp4")) {
+            std::string tempVideo = tempDir + "temp_video.mp4";
+            std::string tempVideoFx = tempDir + "temp_video_fx.mp4";
+
+            if (!writer.concatenateVideos(segmentPaths, tempVideo)) {
                 for (const auto& s : segmentPaths) std::remove(s.c_str());
                 wxThreadEvent* errorEvt = new wxThreadEvent(wxEVT_PROCESSING_COMPLETE);
                 errorEvt->SetInt(0);
@@ -1225,23 +1232,23 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             }
 
             // Step 5.5: Apply effects (if any enabled)
-            std::string videoForAudio = "temp_video.mp4";
+            std::string videoForAudio = tempVideo;
             if (hasEffects) {
                 evt = new wxThreadEvent(wxEVT_PROCESSING_PROGRESS);
                 evt->SetInt(92);
                 evt->SetString("Applying effects...");
                 wxQueueEvent(this, evt);
 
-                if (!writer.applyEffects("temp_video.mp4", "temp_video_fx.mp4")) {
+                if (!writer.applyEffects(tempVideo, tempVideoFx)) {
                     for (const auto& s : segmentPaths) std::remove(s.c_str());
-                    std::remove("temp_video.mp4");
+                    std::remove(tempVideo.c_str());
                     wxThreadEvent* errorEvt = new wxThreadEvent(wxEVT_PROCESSING_COMPLETE);
                     errorEvt->SetInt(0);
                     errorEvt->SetString(wxString::Format("Effects processing failed: %s", wxString(writer.getLastError())));
                     wxQueueEvent(this, errorEvt);
                     return;
                 }
-                videoForAudio = "temp_video_fx.mp4";
+                videoForAudio = tempVideoFx;
             }
 
             // Step 6: Mux with audio
@@ -1254,8 +1261,8 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
                 config.outputPath.ToStdString(), true,
                 config.selectionStart, config.selectionEnd)) {
                 for (const auto& s : segmentPaths) std::remove(s.c_str());
-                std::remove("temp_video.mp4");
-                if (hasEffects) std::remove("temp_video_fx.mp4");
+                std::remove(tempVideo.c_str());
+                if (hasEffects) std::remove(tempVideoFx.c_str());
                 wxThreadEvent* errorEvt = new wxThreadEvent(wxEVT_PROCESSING_COMPLETE);
                 errorEvt->SetInt(0);
                 errorEvt->SetString(wxString::Format("Adding audio failed: %s", wxString(writer.getLastError())));
@@ -1281,12 +1288,12 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
                 }
 
                 if (outMissing || outTiny) {
-                    const char* src = hasEffects ? "temp_video_fx.mp4" : "temp_video.mp4";
+                    std::string src = hasEffects ? tempVideoFx : tempVideo;
                     std::filesystem::copy_file(src, outPath, std::filesystem::copy_options::overwrite_existing, ec);
                     if (ec) {
                         for (const auto& s : segmentPaths) std::remove(s.c_str());
-                        std::remove("temp_video.mp4");
-                        if (hasEffects) std::remove("temp_video_fx.mp4");
+                        std::remove(tempVideo.c_str());
+                        if (hasEffects) std::remove(tempVideoFx.c_str());
                         wxThreadEvent* errorEvt = new wxThreadEvent(wxEVT_PROCESSING_COMPLETE);
                         errorEvt->SetInt(0);
                         errorEvt->SetString(wxString::Format("Output copy failed: %s", wxString(ec.message())));
@@ -1300,8 +1307,8 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             for (const auto& seg : segmentPaths) {
                 std::remove(seg.c_str());
             }
-            std::remove("temp_video.mp4");
-            if (hasEffects) std::remove("temp_video_fx.mp4");
+            std::remove(tempVideo.c_str());
+            if (hasEffects) std::remove(tempVideoFx.c_str());
             
             // Success
             wxThreadEvent* successEvt = new wxThreadEvent(wxEVT_PROCESSING_COMPLETE);

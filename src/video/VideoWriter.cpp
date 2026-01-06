@@ -8,6 +8,7 @@
 #include <chrono>
 #include <ctime>
 #include <cstring>
+#include <filesystem>
 
 // Cross-platform popen/pclose
 #ifdef _WIN32
@@ -28,6 +29,19 @@ extern "C" {
 namespace BeatSync {
 
 namespace {
+// Helper to get temp directory path with trailing slash
+std::string getTempDir() {
+    std::string tempDir = std::filesystem::temp_directory_path().string();
+    if (!tempDir.empty() && tempDir.back() != '/' && tempDir.back() != '\\') {
+#ifdef _WIN32
+        tempDir += '\\';
+#else
+        tempDir += '/';
+#endif
+    }
+    return tempDir;
+}
+
 // Lightweight logger to capture FFmpeg command, exit code, and recent output.
 void appendFfmpegLog(const std::string& logFile,
                      const std::string& label,
@@ -472,8 +486,8 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
         return false;
     }
 
-    // Create concat list file
-    std::string listFile = "beatsync_concat_list.txt";
+    // Create concat list file in temp directory
+    std::string listFile = getTempDir() + "beatsync_concat_list.txt";
     FILE* f = fopen(listFile.c_str(), "w");
     if (!f) {
         m_lastError = "Could not create concat list file";
@@ -483,7 +497,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
     // Log what we're concatenating for debugging
     std::cout << "Creating concat list with " << inputVideos.size() << " videos:\n";
 
-    FILE* debugLog = fopen("tripsitter_debug.log", "a");
+    FILE* debugLog = fopen((getTempDir() + "tripsitter_debug.log").c_str(), "a");
     if (debugLog) {
         fprintf(debugLog, "\n=== Concatenation Step ===\n");
         fprintf(debugLog, "Creating concat list with %zu videos:\n", inputVideos.size());
@@ -501,7 +515,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
             std::cout << " [MISSING!]\n";
             missingCount++;
 
-            debugLog = fopen("tripsitter_debug.log", "a");
+            debugLog = fopen((getTempDir() + "tripsitter_debug.log").c_str(), "a");
             if (debugLog) {
                 fprintf(debugLog, "  - %s [MISSING!]\n", video.c_str());
                 fclose(debugLog);
@@ -513,7 +527,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
             std::cout << " [OK, " << size << " bytes]\n";
             fclose(check);
 
-            debugLog = fopen("tripsitter_debug.log", "a");
+            debugLog = fopen((getTempDir() + "tripsitter_debug.log").c_str(), "a");
             if (debugLog) {
                 fprintf(debugLog, "  - %s [OK, %ld bytes]\n", video.c_str(), size);
                 fclose(debugLog);
@@ -525,7 +539,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
     if (missingCount > 0) {
         m_lastError = "Cannot concatenate: " + std::to_string(missingCount) + " segment files are missing!";
 
-        debugLog = fopen("tripsitter_debug.log", "a");
+        debugLog = fopen((getTempDir() + "tripsitter_debug.log").c_str(), "a");
         if (debugLog) {
             fprintf(debugLog, "ERROR: %d segment files are missing!\n", missingCount);
             fclose(debugLog);
@@ -567,7 +581,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 
     // Persist FFmpeg output for debugging
     {
-        FILE* logf = fopen("beatsync_ffmpeg_concat.log", "a");
+        FILE* logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
         if (logf) {
             fprintf(logf, "\n--- FFmpeg concat run ---\ncmd: %s\nexit: %d\noutput:\n%s\n", cmd.str().c_str(), exitCode, ffmpegOutput.c_str());
             fclose(logf);
@@ -621,7 +635,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
         int rc2 = pclose_compat(pipe2);
 
         // Log re-encode output
-        FILE* logf2 = fopen("beatsync_ffmpeg_concat.log", "a");
+        FILE* logf2 = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
         if (logf2) {
             fprintf(logf2, "\n--- FFmpeg re-encode run ---\ncmd: %s\nexit: %d\noutput:\n%s\n", reencodeCmd.str().c_str(), rc2, reencodeOutput.c_str());
             fclose(logf2);
@@ -706,7 +720,7 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
 
     // Persist muxing output for troubleshooting
     {
-        FILE* logf = fopen("beatsync_ffmpeg_concat.log", "a");
+        FILE* logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
         if (logf) {
             fprintf(logf, "\n--- FFmpeg audio mux run ---\ncmd: %s\nexit: %d\noutput:\n%s\n", cmd.str().c_str(), exitCode, ffmpegOutput.c_str());
             fclose(logf);
