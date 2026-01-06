@@ -73,46 +73,57 @@ def run_query(q):
 
     # generate synthetic media
     gen = Path("./evaluation/generate_synthetic.py")
-    try:
-        if q.get('mode', 'sync') == 'multiclip':
-            cmd = ["python", str(gen), "--outdir", str(tmp), "--audio-duration", str(q['audio_duration']), "--num-clips", str(q['num_clips']), "--clip-duration", str(q['clip_duration']), "--id", q['id']]
-        else:
-            cmd = ["python", str(gen), "--outdir", str(tmp), "--audio-duration", str(q['audio_duration']), "--video-duration", str(q.get('video_duration', q['audio_duration'])), "--id", q['id']]
-        if q.get('silent'):
-            cmd.append('--silent')
-        if q.get('audio_sr'):
-            cmd.extend(['--audio-sr', str(q.get('audio_sr'))])
-        if q.get('audio_channels'):
-            cmd.extend(['--channels', str(q.get('audio_channels'))])
-        if q.get('audio_codec'):
-            cmd.extend(['--audio-codec', str(q.get('audio_codec'))])
-        if q.get('truncate_audio'):
-            cmd.extend(['--truncate-audio', str(q.get('truncate_audio'))])
-        if q.get('truncate_video'):
-            cmd.extend(['--truncate-video', str(q.get('truncate_video'))])
-        # corruption options
-        if q.get('corrupt_audio_header'):
-            cmd.append('--corrupt-audio-header')
-        if q.get('corrupt_video_header'):
-            cmd.append('--corrupt-video-header')
-        if q.get('zero_audio_prefix'):
-            cmd.append('--zero-audio-prefix')
-        if q.get('mismatch_video_ext'):
-            cmd.append('--mismatch-video-ext')
-        if q.get('corrupt_middle'):
-            cmd.append('--corrupt-middle')
-        if q.get('append_junk'):
-            cmd.append('--append-junk')
-        if q.get('strip_mp4_moov'):
-            cmd.append('--strip-mp4-moov')
-        if q.get('corrupt_bytes'):
-            cmd.extend(['--corrupt-bytes', str(q.get('corrupt_bytes'))])
-        if q.get('junk_bytes'):
-            cmd.extend(['--junk-bytes', str(q.get('junk_bytes'))])
 
-        run_cmd(cmd)
-    except Exception as e:
-        return {"id": q['id'], "error": str(e)}
+    # Build generator command
+    if q.get('mode', 'sync') == 'multiclip':
+        cmd = ["python", str(gen), "--outdir", str(tmp), "--audio-duration", str(q['audio_duration']), "--num-clips", str(q['num_clips']), "--clip-duration", str(q['clip_duration']), "--id", q['id']]
+    else:
+        cmd = ["python", str(gen), "--outdir", str(tmp), "--audio-duration", str(q['audio_duration']), "--video-duration", str(q.get('video_duration', q['audio_duration'])), "--id", q['id']]
+    if q.get('silent'):
+        cmd.append('--silent')
+    if q.get('audio_sr'):
+        cmd.extend(['--audio-sr', str(q.get('audio_sr'))])
+    if q.get('audio_channels'):
+        cmd.extend(['--channels', str(q.get('audio_channels'))])
+    if q.get('audio_codec'):
+        cmd.extend(['--audio-codec', str(q.get('audio_codec'))])
+    if q.get('truncate_audio'):
+        cmd.extend(['--truncate-audio', str(q.get('truncate_audio'))])
+    if q.get('truncate_video'):
+        cmd.extend(['--truncate-video', str(q.get('truncate_video'))])
+    # corruption options
+    if q.get('corrupt_audio_header'):
+        cmd.append('--corrupt-audio-header')
+    if q.get('corrupt_video_header'):
+        cmd.append('--corrupt-video-header')
+    if q.get('zero_audio_prefix'):
+        cmd.append('--zero-audio-prefix')
+    if q.get('mismatch_video_ext'):
+        cmd.append('--mismatch-video-ext')
+    if q.get('corrupt_middle'):
+        cmd.append('--corrupt-middle')
+    if q.get('append_junk'):
+        cmd.append('--append-junk')
+    if q.get('strip_mp4_moov'):
+        cmd.append('--strip-mp4-moov')
+    if q.get('corrupt_bytes'):
+        cmd.extend(['--corrupt-bytes', str(q.get('corrupt_bytes'))])
+    if q.get('junk_bytes'):
+        cmd.extend(['--junk-bytes', str(q.get('junk_bytes'))])
+
+    # run generator with captured output and persist logs to tmp
+    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        (tmp / "generator.stdout.txt").write_text(r.stdout, encoding='utf-8')
+    except Exception:
+        pass
+    try:
+        (tmp / "generator.stderr.txt").write_text(r.stderr, encoding='utf-8')
+    except Exception:
+        pass
+
+    if r.returncode != 0:
+        return {"id": q['id'], "error": "generator failed", "generator_stdout": r.stdout, "generator_stderr": r.stderr}
 
     # Locate generated audio file (could be .wav, .mp3, .m4a)
     audio = None
@@ -121,7 +132,9 @@ def run_query(q):
             audio = p
             break
     if audio is None:
-        return {"id": q['id'], "error": "Generated audio not found"}
+        # include generator logs and directory listing to aid debugging
+        files = [p.name for p in tmp.iterdir()]
+        return {"id": q['id'], "error": "Generated audio not found", "generator_stdout": r.stdout, "generator_stderr": r.stderr, "tmp_files": files}
 
     out = tmp / f"{q['id']}.out.mp4"
 
