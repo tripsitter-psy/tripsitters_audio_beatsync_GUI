@@ -4,6 +4,17 @@ project(TripSitterBeatSync)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# macOS specific settings
+if(APPLE)
+    # Set minimum macOS version
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS deployment version")
+    
+    # Default to ARM64 for Apple Silicon, but allow override
+    if(NOT CMAKE_OSX_ARCHITECTURES)
+        set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Target architectures for macOS")
+    endif()
+endif()
+
 # Platform-specific FFmpeg setup
 if(WIN32)
     if(NOT DEFINED FFMPEG_ROOT)
@@ -35,12 +46,24 @@ elseif(APPLE)
             libswscale
             libavfilter
         )
+        # Ensure FFmpeg is found for the target architecture
+        if(NOT FFMPEG_FOUND)
+            message(FATAL_ERROR "FFmpeg not found. Install with: brew install ffmpeg")
+        endif()
     endif()
 endif()
 
 # wxWidgets setup
 # Set USE_WXUNIVERSAL=ON to use wxUniversal build with custom theming
 option(USE_WXUNIVERSAL "Use wxUniversal build for custom theming" OFF)
+
+if(APPLE)
+    # On macOS, prefer Homebrew wxWidgets
+    set(wxWidgets_ROOT_DIR "/opt/homebrew/lib/wx/config" "/usr/local/lib/wx/config")
+    set(wxWidgets_CONFIG_EXECUTABLE "/opt/homebrew/bin/wx-config" "/usr/local/bin/wx-config")
+    # Ensure we find the correct wxWidgets for the target architecture
+    set(wxWidgets_USE_STATIC OFF)
+endif()
 
 if(WIN32)
     set(wxWidgets_ROOT_DIR "C:/wxWidgets-3.2.4")
@@ -61,6 +84,7 @@ set(CORE_SOURCES
     src/audio/BeatGrid.cpp
     src/video/VideoProcessor.cpp
     src/video/VideoWriter.cpp
+    src/utils/ProcessUtils.cpp
 )
 
 set(GUI_SOURCES
@@ -134,7 +158,15 @@ if(APPLE)
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${CPACK_PACKAGE_VERSION_MAJOR}.${CPACK_PACKAGE_VERSION_MINOR}.${CPACK_PACKAGE_VERSION_PATCH}"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.tripsitter.beatsync"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/assets/Info.plist.in"
+        # Ensure the bundle supports both architectures
+        XCODE_ATTRIBUTE_ARCHS "${CMAKE_OSX_ARCHITECTURES}"
+        XCODE_ATTRIBUTE_VALID_ARCHS "${CMAKE_OSX_ARCHITECTURES}"
     )
+    
+    # Add required frameworks for macOS
+    find_library(COCOA_LIBRARY Cocoa)
+    find_library(FOUNDATION_LIBRARY Foundation)
+    target_link_libraries(TripSitter ${COCOA_LIBRARY} ${FOUNDATION_LIBRARY})
 endif()
 
 # Output directory
@@ -202,6 +234,9 @@ elseif(APPLE)
     set(CPACK_DMG_VOLUME_NAME "TripSitter")
     set(CPACK_DMG_FORMAT "UDZO")
     set(CPACK_BUNDLE_NAME "TripSitter")
+    # Ensure the DMG is codesigned if possible
+    set(CPACK_BUNDLE_APPLE_CERT_APP "")
+    set(CPACK_BUNDLE_APPLE_CODESIGN_PARAMETER "--deep --force --verbose --sign -")
 else()
     set(CPACK_GENERATOR "ZIP;TGZ")
 endif()
