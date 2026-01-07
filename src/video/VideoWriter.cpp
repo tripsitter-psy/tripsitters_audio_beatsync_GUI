@@ -158,7 +158,7 @@ static void probeInputsForAudioAndDuration(const std::vector<std::string>& input
 #endif
         if (durRc == 0) {
             if (!durOut.empty()) {
-                try { durations[i] = std::stod(durOut); } catch (...) { durations[i] = 0.0; }
+                try { durations[i] = std::stod(durOut); } catch (const std::invalid_argument&) { durations[i] = 0.0; } catch (const std::out_of_range&) { durations[i] = 0.0; }
             }
         } else {
             appendFfmpegLog(getTempDir() + "beatsync_ffmpeg_concat.log", "probe_duration_failed", durCmdStr, durRc, durOut, "file=" + inputVideos[i]);

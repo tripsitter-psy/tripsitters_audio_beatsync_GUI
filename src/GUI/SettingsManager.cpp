@@ -1,6 +1,6 @@
 #include "SettingsManager.h"
 #include <wx/stdpaths.h>
-#include <fstream>
+
 
 SettingsManager::SettingsManager() {
     // Initialize settings storage in the user's data directory

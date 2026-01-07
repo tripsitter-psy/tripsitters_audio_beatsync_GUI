@@ -1,13 +1,16 @@
 #include <catch2/catch_all.hpp>
 #include <string>
 #include <filesystem>
+#include <cstdlib>
 #include "../src/video/TransitionLibrary.h"
 
 using namespace BeatSync;
 
 TEST_CASE("TransitionLibrary loads shaders and builds filters", "[transition]") {
-    // Locate repo root relative to this test source file so test works regardless of CTest working dir
-    std::filesystem::path repoRoot = std::filesystem::path(__FILE__).parent_path().parent_path();
+    // Locate repo root from environment so test is independent of source file location
+    const char* repoRootEnv = std::getenv("BEATSYNC_REPO_ROOT");
+    REQUIRE(repoRootEnv != nullptr);
+    std::filesystem::path repoRoot = std::filesystem::path(repoRootEnv);
     // Attempt to find assets/transitions relative to repo root
     std::filesystem::path transDir = repoRoot / "assets" / "transitions";
 
