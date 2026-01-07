@@ -1,7 +1,22 @@
 #include <wx/wx.h>
 #include <wx/image.h>
 #include <fstream>
+#include <ctime>
 #include "GUI/MainWindow.h"
+
+// Very early startup marker: runs during static initialization before main/OnInit.
+// This helps determine whether the process begins executing at all on the user's machine.
+static int WriteEarlyStartupMarker() {
+    try {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "EARLY_START_MARKER: pid=" << (unsigned)GetCurrentProcessId() << " ts=" << std::time(nullptr) << std::endl;
+        dbg.flush();
+    } catch(...) {
+        // best-effort only
+    }
+    return 0;
+}
+static int g_earlyStartupMarker = WriteEarlyStartupMarker();
 
 #ifdef __WXUNIVERSAL__
 #include <wx/univ/theme.h>
@@ -66,6 +81,18 @@ public:
         // Initialize image handlers for PNG, JPEG, etc.
         wxInitAllImageHandlers();
 
+        // Write an OnInit marker file so we can detect that OnInit ran even when there's no console
+        try {
+            const char* tmp = std::getenv("TMP");
+            if (!tmp) tmp = std::getenv("TEMP");
+            std::string tempPath = tmp ? tmp : ".";
+            std::string p = tempPath + "\\tripsitter_marker_OnInit_start.txt";
+            std::ofstream m(p, std::ios::out);
+            m << "OnInit_start pid=" << (unsigned)GetCurrentProcessId() << " ts=" << std::time(nullptr) << std::endl;
+            m.flush();
+        } catch(...) {}
+
+
 #ifdef __WXUNIVERSAL__
         // Set the psychedelic theme for wxUniversal builds
         wxTheme::Set(new TripSitter::PsychedelicTheme());
@@ -75,7 +102,27 @@ public:
         SetVendorName("MTV Trip Sitter");
 
         MainWindow* frame = new MainWindow();
+        {
+            try {
+                const char* tmp = std::getenv("TMP");
+                if (!tmp) tmp = std::getenv("TEMP");
+                std::string tempPath = tmp ? tmp : ".";
+                std::string p = tempPath + "\\tripsitter_marker_MainWindow_created.txt";
+                std::ofstream m(p, std::ios::out);
+                m << "MainWindow_created pid=" << (unsigned)GetCurrentProcessId() << " ts=" << std::time(nullptr) << std::endl;
+                m.flush();
+            } catch(...) {}
+        }
         frame->Show(true);
+        try {
+            const char* tmp = std::getenv("TMP");
+            if (!tmp) tmp = std::getenv("TEMP");
+            std::string tempPath = tmp ? tmp : ".";
+            std::string p = tempPath + "\\tripsitter_marker_MainWindow_shown.txt";
+            std::ofstream m(p, std::ios::out);
+            m << "MainWindow_shown pid=" << (unsigned)GetCurrentProcessId() << " ts=" << std::time(nullptr) << std::endl;
+            m.flush();
+        } catch(...) {}
 
         return true;
     }

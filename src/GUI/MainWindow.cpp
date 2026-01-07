@@ -146,6 +146,16 @@ MainWindow::MainWindow()
 {
     // Log progress for crash diagnosis
     {
+        // early ctor marker
+        try {
+            const char* tmp = std::getenv("TMP");
+            if (!tmp) tmp = std::getenv("TEMP");
+            std::string tempPath = tmp ? tmp : ".";
+            std::string p = tempPath + "\\tripsitter_marker_MainWindow_ctor_start.txt";
+            std::ofstream m(p, std::ios::out);
+            m << "MainWindow_ctor_start pid=" << (unsigned)GetCurrentProcessId() << " ts=" << std::time(nullptr) << std::endl;
+            m.flush();
+        } catch(...) {}
         std::ofstream dbg("tripsitter_debug.log", std::ios::app);
         dbg << "MainWindow ctor: entered" << std::endl;
     }
@@ -179,6 +189,18 @@ MainWindow::MainWindow()
         std::ofstream dbg("tripsitter_debug.log", std::ios::app);
         dbg << "MainWindow ctor: after CreateLayout" << std::endl;
     }
+
+    // marker: ctor finished
+    try {
+        const char* tmp = std::getenv("TMP");
+        if (!tmp) tmp = std::getenv("TEMP");
+        std::string tempPath = tmp ? tmp : ".";
+        std::string p = tempPath + "\\tripsitter_marker_MainWindow_ctor_end.txt";
+        std::ofstream m(p, std::ios::out);
+        m << "MainWindow_ctor_end pid=" << (unsigned)GetCurrentProcessId() << " ts=" << std::time(nullptr) << std::endl;
+        m.flush();
+    } catch(...) {}
+
 
     ApplyPsychedelicStyling();
     {
