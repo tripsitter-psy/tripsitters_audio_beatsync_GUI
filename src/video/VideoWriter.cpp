@@ -699,22 +699,75 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
                 // Build a chained filter_complex for N inputs
                 std::string filterComplex = buildGlTransitionFilterComplex(inputVideos.size(), t->name, m_effects.transitionDuration);
 
-                // Build ffmpeg command with all inputs
+                // Probe inputs for audio presence and duration so missing tracks can be filled with anullsrc
+                std::vector<double> durations(inputVideos.size(), 0.0);
+                std::vector<bool> hasAudio(inputVideos.size(), false);
+                for (size_t i = 0; i < inputVideos.size(); ++i) {
+                    std::string probeOut;
+#ifdef _WIN32
+                    std::ostringstream probeCmd;
+                    probeCmd << "\"" << ffmpegPath << "\" -v error -select_streams a -show_entries stream=index -of csv=p=0 \"" << inputVideos[i] << "\"";
+                    runHiddenCommand(probeCmd.str(), probeOut);
+#else
+                    std::ostringstream probeCmd;
+                    probeCmd << ffmpegPath << " -v error -select_streams a -show_entries stream=index -of csv=p=0 \"" << inputVideos[i] << "\" 2>&1";
+                    FILE* p = popen_compat(probeCmd.str().c_str(), "r");
+                    if (p) {
+                        char buf[256];
+                        while (fgets(buf, sizeof(buf), p) != nullptr) probeOut += buf;
+                        pclose_compat(p);
+                    }
+#endif
+                    if (!probeOut.empty()) hasAudio[i] = true;
+
+                    // get duration
+                    std::string durOut;
+#ifdef _WIN32
+                    std::ostringstream durCmd;
+                    durCmd << "\"" << ffmpegPath << "\" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"" << inputVideos[i] << "\"";
+                    runHiddenCommand(durCmd.str(), durOut);
+#else
+                    std::ostringstream durCmd;
+                    durCmd << ffmpegPath << " -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"" << inputVideos[i] << "\" 2>&1";
+                    FILE* p2 = popen_compat(durCmd.str().c_str(), "r");
+                    if (p2) {
+                        char buf2[256];
+                        while (fgets(buf2, sizeof(buf2), p2) != nullptr) durOut += buf2;
+                        pclose_compat(p2);
+                    }
+#endif
+                    if (!durOut.empty()) {
+                        try { durations[i] = std::stod(durOut); } catch (...) { durations[i] = 0.0; }
+                    }
+                }
+
+                // Build ffmpeg command with all inputs (video inputs only)
                 std::ostringstream cmd;
                 for (const auto &v : inputVideos) {
                     cmd << " -i \"" << v << "\"";
                 }
 
-                // Add filter_complex and maps. For audio, attempt a concat across all audio streams
+                // Add filter_complex and maps. For audio, attempt a concat across all audio streams,
+                // but insert anullsrc fillers for inputs that lack audio.
                 std::ostringstream fcEsc;
                 fcEsc << filterComplex;
 
-                // Attempt audio concat of all input audio streams
+                // Add anullsrc sources for missing audio tracks (labeled as anull<i>)
+                for (size_t i = 0; i < inputVideos.size(); ++i) {
+                    if (!hasAudio[i]) {
+                        double d = (durations[i] > 0.0) ? durations[i] : 1.0;
+                        // ensure separator
+                        if (!filterComplex.empty() && fcEsc.str().back() != ';') fcEsc << ";";
+                        fcEsc << "anullsrc=cl=stereo:r=44100:d=" << std::fixed << std::setprecision(3) << d << "[anull" << i << "]";
+                    }
+                }
+
+                // Build concat clause using either actual [i:a] streams or the generated [anullX] labels
                 if (inputVideos.size() >= 1) {
-                    // append audio concat part: [0:a][1:a]...[N-1:a]concat=n=N:v=0:a=1[aout]
-                    fcEsc << ";";
+                    if (!fcEsc.str().empty()) fcEsc << ";";
                     for (size_t i = 0; i < inputVideos.size(); ++i) {
-                        fcEsc << "[" << i << ":a]";
+                        if (hasAudio[i]) fcEsc << "[" << i << ":a]";
+                        else fcEsc << "[anull" << i << "]";
                     }
                     fcEsc << "concat=n=" << inputVideos.size() << ":v=0:a=1[aout]";
                 }
