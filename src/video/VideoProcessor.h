@@ -55,6 +55,8 @@ public:
      */
     VideoInfo getInfo() const;
 
+    // Returns true if the opened file contains an audio stream
+    bool hasAudio() const;
     /**
      * @brief Get the path of the currently open video
      */

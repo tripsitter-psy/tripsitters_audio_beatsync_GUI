@@ -4,27 +4,28 @@ project(TripSitterBeatSync)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Platform-specific FFmpeg setup
+# FFmpeg setup
+# On Windows we default to the dev install path; on other platforms prefer passing
+# -DFFMPEG_ROOT to CMake (e.g., use `brew --prefix ffmpeg` on macOS).
 if(WIN32)
     set(FFMPEG_ROOT "C:/ffmpeg-dev/ffmpeg-master-latest-win64-gpl-shared")
+endif()
+if(FFMPEG_ROOT)
     include_directories(${FFMPEG_ROOT}/include)
     link_directories(${FFMPEG_ROOT}/lib)
-elseif(APPLE)
-    # Use pkg-config to find FFmpeg on macOS (installed via Homebrew)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
-        libavformat
-        libavcodec
-        libavutil
-        libswresample
-        libswscale
-        libavfilter
-    )
 endif()
 
 # wxWidgets setup
+# On Windows we ship a default path; on macOS/Linux we let find_package find it
 # Set USE_WXUNIVERSAL=ON to use wxUniversal build with custom theming
 option(USE_WXUNIVERSAL "Use wxUniversal build for custom theming" OFF)
+
+# Optional AI / advanced feature flags (stubs included; wire deps when available)
+option(USE_ESSENTIA "Enable Essentia-based beat analyzer" OFF)
+option(USE_BEATNET "Enable BeatNet Python bridge" OFF)
+option(USE_DEMUCS "Enable Demucs stem separation" OFF)
+option(USE_GLTRANSITIONS "Enable GLSL transitions library" OFF)
+option(USE_AUDIOREACTIVE "Enable FFT-driven audio-reactive effects" OFF)
 
 if(WIN32)
     set(wxWidgets_ROOT_DIR "C:/wxWidgets-3.2.4")
@@ -45,24 +46,73 @@ set(CORE_SOURCES
     src/audio/BeatGrid.cpp
     src/video/VideoProcessor.cpp
     src/video/VideoWriter.cpp
+    src/utils/ProcessUtils.cpp
+    src/tracing/Tracing.cpp
 )
 
+# Optional feature sources (always compiled as stubs; actual libs wired via flags)
+set(OPTIONAL_SOURCES)
+
+# BeatNet and Demucs/StemSeparator are now always compiled for AI analysis modes
+# These are called via Python scripts and don't need external libraries
+list(APPEND OPTIONAL_SOURCES 
+    src/audio/BeatNetBridge.cpp
+    src/audio/StemSeparator.cpp
+)
+
+# TransitionLibrary is lightweight and compiled even when the feature is off
+# so the runtime can discover and use shipped shaders when present.
+list(APPEND OPTIONAL_SOURCES
+    src/video/TransitionLibrary.cpp
+)
+
+# ONNX Runtime support for native AI inference (no Python needed)
+# Enabled by default - this is the recommended way to use AI beat detection
+option(USE_ONNX "Enable ONNX Runtime for native AI inference" ON)
+if(USE_ONNX)
+    find_package(onnxruntime CONFIG QUIET)
+    if(onnxruntime_FOUND)
+        message(STATUS "ONNX Runtime found - enabling native AI inference")
+        list(APPEND OPTIONAL_SOURCES 
+            src/audio/OnnxBeatDetector.cpp
+            src/audio/OnnxStemSeparator.cpp
+        )
+        add_definitions(-DUSE_ONNX)
+    else()
+        message(WARNING "ONNX Runtime not found. Install with: vcpkg install onnxruntime-gpu")
+    endif()
+endif()
+
+if(USE_ESSENTIA)
+    list(APPEND OPTIONAL_SOURCES src/audio/EssentiaAnalyzer.cpp)
+    add_definitions(-DUSE_ESSENTIA)
+endif()
+if(USE_GLTRANSITIONS)
+    list(APPEND OPTIONAL_SOURCES src/video/TransitionLibrary.cpp)
+    add_definitions(-DUSE_GLTRANSITIONS)
+endif()
+if(USE_AUDIOREACTIVE)
+    list(APPEND OPTIONAL_SOURCES src/audio/FFTAnalyzer.cpp src/video/AudioReactiveEffects.cpp)
+    add_definitions(-DUSE_AUDIOREACTIVE)
+endif()
+
 set(GUI_SOURCES
-    src/gui/MainWindow.cpp
-    src/gui/BeatVisualizer.cpp
-    src/gui/VideoPreview.cpp
-    src/gui/ProcessingThread.cpp
-    src/gui/SettingsManager.cpp
-    src/gui/PsychedelicTheme.cpp
+    src/GUI/MainWindow.cpp
+    src/GUI/BeatVisualizer.cpp
+    src/GUI/VideoPreview.cpp
+    src/GUI/ProcessingThread.cpp
+    src/GUI/SettingsManager.cpp
+    src/GUI/PsychedelicTheme.cpp
     src/utils/LogArchiver.cpp
 )
 
 # CLI executable (existing)
-add_executable(beatsync src/main.cpp ${CORE_SOURCES})
-if(APPLE)
-    target_link_libraries(beatsync PkgConfig::FFMPEG)
-else()
-    target_link_libraries(beatsync avformat avcodec avutil swresample swscale avfilter)
+add_executable(beatsync src/main.cpp ${CORE_SOURCES} ${OPTIONAL_SOURCES})
+target_link_libraries(beatsync
+    avformat avcodec avutil swresample swscale avfilter
+)
+if(USE_ONNX AND onnxruntime_FOUND)
+    target_link_libraries(beatsync onnxruntime::onnxruntime)
 endif()
 
 # GUI executable (NEW)
@@ -71,34 +121,43 @@ if(WIN32)
     # or no icon is present in the assets directory.
     if(EXISTS "${CMAKE_SOURCE_DIR}/assets/icon.rc")
         set(GUI_ICON_RC "${CMAKE_SOURCE_DIR}/assets/icon.rc")
-        add_executable(TripSitter WIN32 src/gui_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${GUI_ICON_RC})
+        add_executable(TripSitter WIN32 src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${OPTIONAL_SOURCES} ${GUI_ICON_RC})
     else()
-        add_executable(TripSitter WIN32 src/gui_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
+        add_executable(TripSitter WIN32 src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${OPTIONAL_SOURCES})
     endif()
 else()
-    add_executable(TripSitter src/gui_main.cpp ${CORE_SOURCES} ${GUI_SOURCES})
+    add_executable(TripSitter src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${OPTIONAL_SOURCES})
 endif()
 
-if(APPLE)
-    target_link_libraries(TripSitter
-        ${wxWidgets_LIBRARIES}
-        PkgConfig::FFMPEG
-    )
-else()
-    target_link_libraries(TripSitter
-        ${wxWidgets_LIBRARIES}
-        avformat avcodec avutil swresample swscale avfilter
-    )
+target_link_libraries(TripSitter
+    ${wxWidgets_LIBRARIES}
+    avformat avcodec avutil swresample swscale avfilter
+)
+if(USE_ONNX AND onnxruntime_FOUND)
+    target_link_libraries(TripSitter onnxruntime::onnxruntime)
+endif()
+
+# Optional: link Essentia if requested and available
+if(USE_ESSENTIA)
+    find_package(Essentia CONFIG QUIET)
+    if(Essentia_FOUND)
+        message(STATUS "Essentia found - enabling Essentia analyzer support")
+        target_link_libraries(beatsync PUBLIC Essentia::essentia)
+        target_link_libraries(TripSitter PUBLIC Essentia::essentia)
+        add_compile_definitions(HAVE_ESSENTIA)
+    else()
+        message(WARNING "USE_ESSENTIA enabled but Essentia package not found. EssentiaAnalyzer will remain a stub.")
+    endif()
 endif()
 
 # macOS App Bundle configuration
 if(APPLE)
     set_target_properties(TripSitter PROPERTIES
         MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "TripSitter"
+        MACOSX_BUNDLE_BUNDLE_NAME "MTV Trip Sitter"
         MACOSX_BUNDLE_BUNDLE_VERSION "${CPACK_PACKAGE_VERSION_MAJOR}.${CPACK_PACKAGE_VERSION_MINOR}.${CPACK_PACKAGE_VERSION_PATCH}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${CPACK_PACKAGE_VERSION_MAJOR}.${CPACK_PACKAGE_VERSION_MINOR}.${CPACK_PACKAGE_VERSION_PATCH}"
-        MACOSX_BUNDLE_GUI_IDENTIFIER "com.tripsitter.beatsync"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.mtv.tripsitter"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/assets/Info.plist.in"
     )
 endif()
@@ -110,11 +169,11 @@ set_target_properties(beatsync TripSitter PROPERTIES
 
 # Copy assets to build directory
 if(APPLE)
-    # For macOS app bundle, copy to Resources folder
+    # macOS: Copy assets into app bundle's MacOS folder (next to executable)
     add_custom_command(TARGET TripSitter POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/assets
-        $<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/Resources/assets
+        $<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/assets
     )
 else()
     add_custom_command(TARGET TripSitter POST_BUILD
@@ -133,6 +192,13 @@ if(WIN32)
             ${DLL}
             $<TARGET_FILE_DIR:TripSitter>
         )
+        # Also copy FFmpeg DLLs into the tests output directory so test executables can find them at runtime
+        add_custom_command(TARGET TripSitter POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/tests/$<CONFIG>
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${DLL}
+            ${CMAKE_BINARY_DIR}/tests/$<CONFIG>
+        )
     endforeach()
 
     # Also install FFmpeg DLLs so they are included by CPack
@@ -147,11 +213,33 @@ else()
 endif()
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/assets DESTINATION .)
 
-# CPack packaging configuration
+# Install AI tools if they exist (bundled executables for beat detection)
+# These are built separately with PyInstaller - see scripts/build_ai_tools.py
+if(EXISTS "${CMAKE_SOURCE_DIR}/scripts/dist/beatnet_analyze.exe")
+    install(PROGRAMS "${CMAKE_SOURCE_DIR}/scripts/dist/beatnet_analyze.exe" DESTINATION ai_tools)
+endif()
+if(EXISTS "${CMAKE_SOURCE_DIR}/scripts/dist/demucs_separate.exe")
+    install(PROGRAMS "${CMAKE_SOURCE_DIR}/scripts/dist/demucs_separate.exe" DESTINATION ai_tools)
+endif()
+
+# Install ONNX models if they exist (preferred method - no Python needed)
+if(EXISTS "${CMAKE_SOURCE_DIR}/models")
+    install(DIRECTORY "${CMAKE_SOURCE_DIR}/models" DESTINATION .)
+endif()
+
+# Also install the Python scripts as fallback (for users who have Python)
+install(FILES 
+    "${CMAKE_SOURCE_DIR}/scripts/beatnet_analyze.py"
+    "${CMAKE_SOURCE_DIR}/scripts/demucs_separate.py"
+    DESTINATION scripts
+    OPTIONAL
+)
+
+# CPack packaging configuration (ZIP + NSIS for Windows)
 include(InstallRequiredSystemLibraries)
-set(CPACK_PACKAGE_NAME "TripSitter")
-set(CPACK_PACKAGE_VENDOR "TripSitter")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "TripSitter - Audio Beat Sync GUI")
+set(CPACK_PACKAGE_NAME "MTVTripSitter")
+set(CPACK_PACKAGE_VENDOR "MTV")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "MTV Trip Sitter - Audio Beat Sync GUI")
 set(CPACK_PACKAGE_VERSION_MAJOR "0")
 set(CPACK_PACKAGE_VERSION_MINOR "1")
 set(CPACK_PACKAGE_VERSION_PATCH "0")
@@ -161,15 +249,14 @@ set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
 # Platform-specific CPack generators
 if(WIN32)
     set(CPACK_GENERATOR "ZIP;NSIS")
-    set(CPACK_NSIS_DISPLAY_NAME "TripSitter")
+    set(CPACK_NSIS_DISPLAY_NAME "MTV Trip Sitter")
     set(CPACK_NSIS_CONTACT "support@example.com")
 elseif(APPLE)
-    set(CPACK_GENERATOR "ZIP;DragNDrop")
-    set(CPACK_DMG_VOLUME_NAME "TripSitter")
+    set(CPACK_GENERATOR "DragNDrop")
+    set(CPACK_DMG_VOLUME_NAME "MTV Trip Sitter")
     set(CPACK_DMG_FORMAT "UDZO")
-    set(CPACK_BUNDLE_NAME "TripSitter")
 else()
-    set(CPACK_GENERATOR "ZIP;TGZ")
+    set(CPACK_GENERATOR "TGZ")
 endif()
 
 # Tests (disabled by default). Enable with -DBUILD_TESTS=ON

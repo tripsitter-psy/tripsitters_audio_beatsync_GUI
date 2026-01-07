@@ -34,8 +34,21 @@ struct EffectsConfig {
 
     // Beat effects
     bool enableBeatFlash = false;
+    double flashIntensity = 0.3;          // Flash brightness (0.1 to 1.0, default 0.3)
+    
     bool enableBeatZoom = false;
-    double bpm = 120.0;                   // For beat-synced effects
+    double zoomIntensity = 0.04;          // Zoom amount (0.01 to 0.15, default 0.04 = 4%)
+    
+    int effectBeatDivisor = 1;            // Effect on every Nth beat (1=every, 2=every other, 4=every 4th)
+    
+    // Effect region (for applying effects to a subset of the video)
+    double effectStartTime = 0.0;         // Start time for effects (0 = from beginning)
+    double effectEndTime = -1.0;          // End time for effects (-1 = to end)
+    
+    double bpm = 120.0;                   // For beat-synced effects (fallback)
+    double firstBeatOffset = 0.0;         // Time of first beat (for proper sync)
+    std::vector<double> beatTimesInOutput; // Precise beat times in output video timeline
+    std::vector<size_t> originalBeatIndices; // Original beat indices (for divisor filtering)
 };
 
 /**
@@ -154,6 +167,20 @@ public:
      * @return true if successful
      */
     bool applyEffects(const std::string& inputVideo, const std::string& outputVideo);
+
+    // Exposed for testing: build chained gltransition filter_complex for N inputs
+    std::string buildGlTransitionFilterComplex(size_t numInputs, const std::string& transitionName, double duration) const;
+
+    // Build chained audio filter for inputs; wrapper probes files then calls flags-based helper
+    std::string buildChainedAudioFilter(const std::vector<std::string>& inputVideos, double transitionDuration) const;
+
+    // Test helper: build chained audio filter from boolean hasAudio flags (no IO)
+    std::string buildChainedAudioFilterFromFlags(const std::vector<bool>& hasAudio, double transitionDuration) const;
+
+    // Probe inputs for audio presence and duration (fills durations and hasAudio vectors)
+    bool probeInputsAudioAndDuration(const std::vector<std::string>& inputVideos,
+                                     std::vector<double>& durations,
+                                     std::vector<bool>& hasAudio) const;
 
 private:
     std::string m_lastError;

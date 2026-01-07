@@ -1,7 +1,21 @@
 #include "AudioAnalyzer.h"
+#include "BeatNetBridge.h"
+#include "StemSeparator.h"
+
+#ifdef USE_ONNX
+#include "OnnxBeatDetector.h"
+#include "OnnxStemSeparator.h"
+#endif
+
 #include <cmath>
 #include <algorithm>
 #include <iostream>
+#include <filesystem>
+
+#ifdef _WIN32
+#define NOMINMAX  // Prevent Windows.h from defining min/max macros
+#include <windows.h>
+#endif
 
 // FFmpeg includes
 extern "C" {
@@ -16,57 +30,204 @@ namespace BeatSync {
 
 AudioAnalyzer::AudioAnalyzer()
     : m_sensitivity(0.5)
+    , m_analysisMode(AnalysisMode::Energy)
 {
 }
 
 AudioAnalyzer::~AudioAnalyzer() {
 }
 
+void AudioAnalyzer::setAnalysisMode(AnalysisMode mode) {
+    m_analysisMode = mode;
+}
+
+void AudioAnalyzer::setPythonPath(const std::string& pythonPath) {
+    m_pythonPath = pythonPath;
+}
+
 BeatGrid AudioAnalyzer::analyze(const std::string& audioFilePath) {
-    BeatGrid beatGrid;
     m_lastError.clear();
 
-    try {
-        // Load and decode audio
-        AudioData audio = loadAudioFile(audioFilePath);
-
-        if (audio.samples.empty()) {
-            m_lastError = "Failed to load audio file";
-            return beatGrid;
-        }
-
-        std::cout << "Audio loaded: " << audio.duration << "s, "
-                  << audio.sampleRate << " Hz, "
-                  << audio.samples.size() << " samples\n";
-
-        // Detect beats
-        std::vector<double> beats = detectBeats(audio);
-
-        if (beats.empty()) {
-            m_lastError = "No beats detected";
-            return beatGrid;
-        }
-
-        std::cout << "Detected " << beats.size() << " beats\n";
-
-        // Set beats in grid
-        beatGrid.setBeats(beats);
-
-        // Set the actual audio file duration (for padding to full length)
-        beatGrid.setAudioDuration(audio.duration);
-
-        // Estimate and set BPM
-        double bpm = estimateBPM(beats);
-        beatGrid.setBPM(bpm);
-
-        std::cout << "Estimated BPM: " << bpm << "\n";
-        std::cout << "Audio duration: " << audio.duration << "s, Last beat: " << beatGrid.getDuration() << "s\n";
-
-    } catch (const std::exception& e) {
-        m_lastError = std::string("Exception during analysis: ") + e.what();
+    // Dispatch based on analysis mode
+    switch (m_analysisMode) {
+        case AnalysisMode::BeatNet:
+            std::cout << "Using BeatNet analysis mode...\n";
+            return analyzeWithBeatNet(audioFilePath);
+            
+        case AnalysisMode::DemucsPlus:
+            std::cout << "Using Demucs + BeatNet analysis mode...\n";
+            return analyzeWithDemucsPlus(audioFilePath);
+            
+        case AnalysisMode::Energy:
+        default:
+            // Fall through to energy-based analysis
+            break;
     }
 
-    return beatGrid;
+    // Delegate energy-based analysis to helper
+    return analyzeEnergy(audioFilePath);
+}
+
+BeatGrid AudioAnalyzer::analyzeWithBeatNet(const std::string& audioFilePath) {
+#ifdef USE_ONNX
+    // Try ONNX-based detection first (no Python needed)
+    OnnxBeatDetector onnxDetector;
+    
+    // Look for ONNX model in standard locations
+    std::vector<std::string> modelSearchPaths = {
+        "models/beatnet_tcn.onnx",
+        "../models/beatnet_tcn.onnx",
+        "../../models/beatnet_tcn.onnx",
+    };
+    
+    #ifdef _WIN32
+    char exePath[MAX_PATH];
+    if (GetModuleFileNameA(NULL, exePath, MAX_PATH)) {
+        std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
+        modelSearchPaths.push_back((exeDir / "models" / "beatnet_tcn.onnx").string());
+        modelSearchPaths.push_back((exeDir.parent_path() / "models" / "beatnet_tcn.onnx").string());
+    }
+    #endif
+    
+    for (const auto& modelPath : modelSearchPaths) {
+        if (std::filesystem::exists(modelPath)) {
+            std::cout << "Found ONNX model: " << modelPath << std::endl;
+            if (onnxDetector.initialize(modelPath)) {
+                BeatGrid grid = onnxDetector.analyze(audioFilePath);
+                if (!grid.isEmpty()) {
+                    std::cout << "ONNX beat detection successful!" << std::endl;
+                    return grid;
+                }
+            }
+            break;
+        }
+    }
+    std::cout << "ONNX model not found or failed, falling back to Python BeatNet..." << std::endl;
+#endif
+    
+    // Fall back to Python-based BeatNet
+    BeatNetBridge bridge;
+    if (!m_pythonPath.empty()) {
+        bridge.setPythonPath(m_pythonPath);
+    }
+    
+    BeatGrid grid = bridge.analyze(audioFilePath);
+    
+    if (grid.isEmpty()) {
+        m_lastError = bridge.getLastError();
+        std::cout << "BeatNet failed, falling back to energy-based detection: " << m_lastError << std::endl;
+        
+        // Fallback to energy-based without mutating analysis mode
+        return analyzeEnergy(audioFilePath);
+    }
+    
+    // Set audio duration
+    AudioData audio = loadAudioFile(audioFilePath);
+    if (!audio.samples.empty()) {
+        grid.setAudioDuration(audio.duration);
+    }
+    
+    return grid;
+}
+
+BeatGrid AudioAnalyzer::analyzeWithDemucsPlus(const std::string& audioFilePath) {
+    std::string analysisTarget = audioFilePath;  // Default to original audio
+    
+    // Create temp directory for stems
+    std::string tempDir = std::filesystem::temp_directory_path().string();
+    #ifdef _WIN32
+    tempDir += "\\beatsync_stems\\";
+    #else
+    tempDir += "/beatsync_stems/";
+    #endif
+    
+#ifdef USE_ONNX
+    // Try ONNX-based stem separation first
+    OnnxStemSeparator onnxSeparator;
+    
+    std::vector<std::string> modelSearchPaths = {
+        "models/demucs_htdemucs.onnx",
+        "models/stem_separator_simple.onnx",
+        "../models/demucs_htdemucs.onnx",
+    };
+    
+    #ifdef _WIN32
+    char exePath[MAX_PATH];
+    if (GetModuleFileNameA(NULL, exePath, MAX_PATH)) {
+        std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
+        modelSearchPaths.insert(modelSearchPaths.begin(), 
+            (exeDir / "models" / "demucs_htdemucs.onnx").string());
+        modelSearchPaths.insert(modelSearchPaths.begin() + 1,
+            (exeDir / "models" / "stem_separator_simple.onnx").string());
+    }
+    #endif
+    
+    bool onnxSeparated = false;
+    for (const auto& modelPath : modelSearchPaths) {
+        if (std::filesystem::exists(modelPath)) {
+            std::cout << "Found ONNX stem separator: " << modelPath << std::endl;
+            if (onnxSeparator.initialize(modelPath)) {
+                std::cout << "Separating stems with ONNX..." << std::endl;
+                OnnxStemPaths onnxStems = onnxSeparator.separate(audioFilePath, tempDir);
+                if (onnxStems.success && !onnxStems.drums.empty() && 
+                    std::filesystem::exists(onnxStems.drums)) {
+                    std::cout << "Using ONNX drums stem: " << onnxStems.drums << std::endl;
+                    analysisTarget = onnxStems.drums;
+                    onnxSeparated = true;
+                }
+            }
+            break;
+        }
+    }
+    
+    if (!onnxSeparated) {
+        std::cout << "ONNX stem separation not available, trying Python Demucs..." << std::endl;
+    }
+#endif
+
+    // Fall back to Python-based Demucs if ONNX didn't work
+    if (analysisTarget == audioFilePath) {
+        StemSeparator separator;
+        if (!m_pythonPath.empty()) {
+            separator.setPythonPath(m_pythonPath);
+        }
+        
+        std::cout << "Separating stems with Demucs..." << std::endl;
+        StemPaths stems = separator.separate(audioFilePath, tempDir);
+        
+        if (!stems.drums.empty() && std::filesystem::exists(stems.drums)) {
+            std::cout << "Using drums stem for beat detection: " << stems.drums << std::endl;
+            analysisTarget = stems.drums;
+        } else {
+            std::cout << "Demucs separation failed or drums stem not available: " 
+                      << separator.getLastError() << std::endl;
+            std::cout << "Falling back to full audio for BeatNet..." << std::endl;
+        }
+    }
+    
+    // Step 2: Run BeatNet on drums stem (or original audio if separation failed)
+    BeatNetBridge bridge;
+    if (!m_pythonPath.empty()) {
+        bridge.setPythonPath(m_pythonPath);
+    }
+    
+    BeatGrid grid = bridge.analyze(analysisTarget);
+    
+    if (grid.isEmpty()) {
+        m_lastError = bridge.getLastError();
+        std::cout << "BeatNet failed, falling back to energy-based detection: " << m_lastError << std::endl;
+        
+        // Final fallback to energy-based without mutating analysis mode
+        return analyzeEnergy(audioFilePath);
+    }
+    
+    // Set audio duration from original file
+    AudioData audio = loadAudioFile(audioFilePath);
+    if (!audio.samples.empty()) {
+        grid.setAudioDuration(audio.duration);
+    }
+    
+    return grid;
 }
 
 void AudioAnalyzer::setSensitivity(double sensitivity) {
@@ -310,6 +471,54 @@ std::vector<double> AudioAnalyzer::detectBeats(const AudioData& audio) {
 
     return beats;
 }
+
+// Extracted energy-based analysis into helper to avoid mutating analysis mode during fallbacks
+BeatGrid AudioAnalyzer::analyzeEnergy(const std::string& audioFilePath) {
+    BeatGrid beatGrid;
+
+    try {
+        // Load and decode audio
+        AudioData audio = loadAudioFile(audioFilePath);
+
+        if (audio.samples.empty()) {
+            m_lastError = "Failed to load audio file";
+            return beatGrid;
+        }
+
+        std::cout << "Audio loaded: " << audio.duration << "s, "
+                  << audio.sampleRate << " Hz, "
+                  << audio.samples.size() << " samples\n";
+
+        // Detect beats
+        std::vector<double> beats = detectBeats(audio);
+
+        if (beats.empty()) {
+            m_lastError = "No beats detected";
+            return beatGrid;
+        }
+
+        std::cout << "Detected " << beats.size() << " beats\n";
+
+        // Set beats in grid
+        beatGrid.setBeats(beats);
+
+        // Set the actual audio file duration (for padding to full length)
+        beatGrid.setAudioDuration(audio.duration);
+
+        // Estimate and set BPM
+        double bpm = estimateBPM(beats);
+        beatGrid.setBPM(bpm);
+
+        std::cout << "Estimated BPM: " << bpm << "\n";
+        std::cout << "Audio duration: " << audio.duration << "s, Last beat: " << beatGrid.getDuration() << "s\n";
+
+    } catch (const std::exception& e) {
+        m_lastError = std::string("Exception during analysis: ") + e.what();
+    }
+
+    return beatGrid;
+}
+
 
 double AudioAnalyzer::calculateEnergy(const std::vector<float>& samples, size_t start, size_t length) {
     double energy = 0.0;

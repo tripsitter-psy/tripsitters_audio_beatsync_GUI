@@ -2,6 +2,7 @@
 #include "audio/BeatGrid.h"
 #include "video/VideoProcessor.h"
 #include "video/VideoWriter.h"
+#include "tracing/Tracing.h"
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -39,6 +40,9 @@ void printUsage(const char* programName) {
 }
 
 int main(int argc, char* argv[]) {
+    // Initialize tracing for CLI
+    Tracing::ScopedInit _tracerInit("beatsync");
+
     // Check arguments
     if (argc < 2) {
         printUsage(argv[0]);

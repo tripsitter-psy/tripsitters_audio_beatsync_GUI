@@ -31,3 +31,54 @@ add_executable(test_logarchiver_catch2
 target_include_directories(test_logarchiver_catch2 PRIVATE ${CMAKE_SOURCE_DIR}/src/utils)
 target_link_libraries(test_logarchiver_catch2 PRIVATE Catch2::Catch2)
 add_test(NAME logarchiver_catch2 COMMAND test_logarchiver_catch2)
+
+# Transition library tests
+add_executable(test_transition_library
+    catch_main.cpp
+    test_transition_library.cpp
+    ../src/video/TransitionLibrary.cpp
+)
+
+target_include_directories(test_transition_library PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_transition_library PRIVATE Catch2::Catch2)
+add_test(NAME transition_library COMMAND test_transition_library)
+
+# Transition chaining tests
+add_executable(test_transition_chaining
+    catch_main.cpp
+    test_transition_chaining.cpp
+    ../src/video/TransitionLibrary.cpp
+    ../src/video/VideoWriter.cpp
+    ../src/video/VideoProcessor.cpp
+    ../src/audio/BeatGrid.cpp
+    ../src/audio/AudioAnalyzer.cpp
+    ../src/audio/BeatNetBridge.cpp
+    ../src/audio/StemSeparator.cpp
+    ../src/tracing/Tracing.cpp
+    ../src/utils/ProcessUtils.cpp
+)
+
+target_include_directories(test_transition_chaining PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_transition_chaining PRIVATE Catch2::Catch2 avformat avcodec avutil swresample swscale avfilter)
+add_test(NAME transition_chaining COMMAND test_transition_chaining)
+
+# Audio transition filter tests
+if(EXISTS "${CMAKE_SOURCE_DIR}/tests/test_audio_transition_filter.cpp")
+    add_executable(test_audio_transition_filter
+        catch_main.cpp
+        test_audio_transition_filter.cpp
+        ../src/video/VideoWriter.cpp
+        ../src/video/VideoProcessor.cpp
+        ../src/video/TransitionLibrary.cpp
+        ../src/audio/BeatGrid.cpp
+        ../src/audio/AudioAnalyzer.cpp
+        ../src/audio/BeatNetBridge.cpp
+        ../src/audio/StemSeparator.cpp
+    )
+
+    target_include_directories(test_audio_transition_filter PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(test_audio_transition_filter PRIVATE Catch2::Catch2 avformat avcodec avutil swresample swscale avfilter)
+    add_test(NAME audio_transition_filter COMMAND test_audio_transition_filter)
+else()
+    message(STATUS "Skipping test_audio_transition_filter - source not present")
+endif()

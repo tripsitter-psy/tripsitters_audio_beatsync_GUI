@@ -305,3 +305,59 @@ For Phase 2, you'll need to install OpenCV:
 # Then reconfigure
 cmake .. -DCMAKE_TOOLCHAIN_FILE=[vcpkg-path]/scripts/buildsystems/vcpkg.cmake
 ```
+## Building AI Beat Detection Tools (Optional)
+
+MTV Trip Sitter supports three beat detection modes:
+1. **Energy (Fast)** - Built-in, no extra dependencies
+2. **BeatNet AI** - Neural network beat detection
+3. **Demucs + BeatNet (Best)** - AI stem separation + beat detection
+
+For modes 2 and 3, you can either:
+- Have users install Python with dependencies, OR
+- **Bundle pre-built executables** (recommended for distribution)
+
+### Building Bundled AI Tools
+
+This creates standalone `.exe` files that bundle all AI dependencies, so end users don't need Python or any packages.
+
+#### Prerequisites
+```bash
+# Install Python 3.8+ and required packages
+pip install pyinstaller torch torchaudio demucs BeatNet numpy
+```
+
+#### Build AI Executables
+```bash
+# Option 1: Use the batch script
+build_ai_tools.bat
+
+# Option 2: Run Python directly
+cd scripts
+python build_ai_tools.py
+```
+
+This creates:
+- `scripts/dist/beatnet_analyze.exe` (~500MB - includes PyTorch)
+- `scripts/dist/demucs_separate.exe` (~600MB - includes Demucs models)
+
+#### Include in Installer
+
+Once built, the CMake install will automatically include these files in `ai_tools/` directory.
+
+```bash
+# Rebuild to pick up AI tools
+cd build
+cmake ..
+cmake --build . --config Release
+
+# Create installer with AI tools included
+cpack -G NSIS
+```
+
+### Without Bundled AI Tools
+
+If you don't bundle the AI tools, users can still use AI modes by:
+1. Installing Python 3.8+
+2. Running: `pip install torch torchaudio demucs BeatNet numpy`
+
+The application will automatically fall back to Python scripts if bundled executables aren't found.

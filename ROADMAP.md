@@ -1,0 +1,314 @@
+# TripSitter Beat Sync GUI - Feature Roadmap
+
+## Overview
+
+This roadmap outlines the integration of advanced open-source AI algorithms for beat detection, audio separation, video effects, and audio-reactive visuals.
+
+---
+
+## Phase 1: Enhanced Beat Detection
+
+### 1.1 Integrate Essentia (C++ Native)
+**Priority: HIGH** | **Complexity: Medium**
+
+Essentia is a C++ library that can replace/supplement the current AudioAnalyzer.
+
+**Tasks:**
+- [ ] Add Essentia as a dependency (vcpkg or manual build)
+- [ ] Create `EssentiaAnalyzer` class wrapping Essentia's beat tracking
+- [ ] Implement onset detection using Essentia's `OnsetDetection` algorithm
+- [ ] Add BPM estimation with `RhythmExtractor2013`
+- [ ] Compare accuracy vs current implementation
+- [ ] Add UI toggle to select analyzer backend
+
+**Files to modify:**
+- `CMakeLists.txt` - Add Essentia dependency
+- `src/audio/EssentiaAnalyzer.cpp` (new)
+- `src/audio/EssentiaAnalyzer.h` (new)
+- `src/GUI/MainWindow.cpp` - Add analyzer selection
+
+**Resources:**
+- https://essentia.upf.edu/
+- https://github.com/MTG/essentia
+
+---
+
+### 1.2 Add BeatNet Integration (Python Bridge)
+**Priority: Medium** | **Complexity: High**
+
+BeatNet offers state-of-the-art neural network beat tracking.
+
+**Tasks:**
+- [ ] Create Python subprocess wrapper for BeatNet
+- [ ] Implement JSON-based IPC for beat data exchange
+- [ ] Add fallback to Essentia/current analyzer if Python unavailable
+- [ ] Cache beat analysis results to avoid re-processing
+- [ ] Add progress reporting from Python to GUI
+
+**Files to create:**
+- `scripts/beatnet_analyze.py` - Python beat analysis script
+- `src/audio/BeatNetBridge.cpp` - C++ subprocess wrapper
+- `src/audio/BeatNetBridge.h`
+
+**Resources:**
+- https://github.com/mjhydri/BeatNet
+
+---
+
+## Phase 2: Audio Stem Separation
+
+### 2.1 Demucs Integration
+**Priority: HIGH** | **Complexity: Medium**
+
+Separate drums/bass/vocals for cleaner beat detection on isolated stems.
+
+**Tasks:**
+- [ ] Create Python wrapper for Demucs v4
+- [ ] Add "Separate Stems" button to GUI
+- [ ] Store separated stems in temp directory
+- [ ] Option to run beat detection on drums-only stem
+- [ ] Display stem separation progress
+- [ ] Add stem preview/playback in GUI
+
+**New UI Elements:**
+- Checkbox: "Use drum stem for beat detection"
+- Button: "Separate Stems"
+- Progress indicator for separation
+
+**Files to create:**
+- `scripts/demucs_separate.py`
+- `src/audio/StemSeparator.cpp`
+- `src/audio/StemSeparator.h`
+
+**Resources:**
+- https://github.com/facebookresearch/demucs
+
+---
+
+## Phase 3: Advanced Video Transitions
+
+### 3.1 GLSL Transition Library
+**Priority: HIGH** | **Complexity: Medium**
+
+Add OpenGL shader-based transitions synced to beats.
+
+**Tasks:**
+- [ ] Integrate gl-transitions library (100+ transitions)
+- [ ] Create FFmpeg filter graph with xfade + custom GLSL
+- [ ] Add transition selector dropdown in GUI
+- [ ] Preview transitions in VideoPreview panel
+- [ ] Map transition types to beat intensity
+
+**Transition Categories:**
+- Geometric: wipe, slide, circle, radial
+- Blend: dissolve, fade, crossfade
+- Distortion: pixelize, blur, squeeze
+- Psychedelic: kaleidoscope, fractal, morph
+
+**Files to modify:**
+- `src/video/VideoWriter.cpp` - Add GLSL transition support
+- `src/video/TransitionLibrary.cpp` (new)
+- `src/GUI/MainWindow.cpp` - Transition selector UI
+
+**Resources:**
+- https://github.com/transitive-bullshit/ffmpeg-gl-transition
+- https://gl-transitions.com/
+
+---
+
+### 3.2 Beat-Synced Transition Timing
+**Priority: Medium** | **Complexity: Low**
+
+Intelligent transition placement based on beat structure.
+
+**Tasks:**
+- [ ] Detect downbeats vs regular beats
+- [ ] Use stronger transitions on downbeats
+- [ ] Add "transition on every Nth beat" option
+- [ ] Randomize transition types per beat (optional)
+- [ ] Add manual transition override points
+
+---
+
+## Phase 4: Audio-Reactive Effects
+
+### 4.1 FFT-Driven Visual Effects
+**Priority: Medium** | **Complexity: High**
+
+Real-time audio analysis driving visual parameters.
+
+**Tasks:**
+- [ ] Extract FFT data during playback
+- [ ] Map frequency bands to effect parameters:
+  - Bass (20-200Hz) → Zoom intensity
+  - Mids (200-2kHz) → Color saturation
+  - Highs (2k-20kHz) → Brightness/flash
+- [ ] Create `AudioReactiveProcessor` class
+- [ ] Add FFmpeg filters driven by audio envelope
+
+**New Effects:**
+- [ ] Bass-triggered zoom pulse
+- [ ] Frequency-based color grading
+- [ ] Audio envelope brightness modulation
+- [ ] Spectrum-driven vignette intensity
+
+**Files to create:**
+- `src/audio/FFTAnalyzer.cpp`
+- `src/video/AudioReactiveEffects.cpp`
+
+---
+
+### 4.2 Shader-Based Visualizer Layer
+**Priority: Low** | **Complexity: High**
+
+Optional overlay of audio-reactive shader graphics.
+
+**Tasks:**
+- [ ] Integrate OpenGL shader rendering pipeline
+- [ ] Port ShaderToy-style audio visualizers
+- [ ] Blend shader output with video content
+- [ ] Add visualizer style selector
+- [ ] Export as overlay or full-screen option
+
+**Visualizer Styles:**
+- Waveform
+- Spectrum bars
+- Circular spectrum
+- Fractal/kaleidoscope
+- Particle systems
+
+---
+
+## Phase 5: AI Video Generation (Future)
+
+### 5.1 HunyuanVideo/Allegro Integration
+**Priority: Low** | **Complexity: Very High**
+
+AI-generated video clips synced to music.
+
+**Tasks:**
+- [ ] Research local inference requirements (GPU VRAM)
+- [ ] Create prompt templates for psychedelic content
+- [ ] Implement batch generation pipeline
+- [ ] Sync generated clips to beat timestamps
+- [ ] Add style transfer options
+
+**Hardware Requirements:**
+- Minimum: RTX 3080 (10GB VRAM)
+- Recommended: RTX 4090 (24GB VRAM)
+
+---
+
+## Implementation Priority Order
+
+```
+HIGH PRIORITY (Phase 1-3.1)
+├── 1.1 Essentia Integration
+├── 2.1 Demucs Stem Separation
+└── 3.1 GLSL Transition Library
+
+MEDIUM PRIORITY (Phase 3.2-4.1)
+├── 1.2 BeatNet Integration
+├── 3.2 Beat-Synced Transitions
+└── 4.1 FFT-Driven Effects
+
+LOW PRIORITY (Phase 4.2-5)
+├── 4.2 Shader Visualizers
+└── 5.1 AI Video Generation
+```
+
+---
+
+## Technical Dependencies
+
+### New Libraries Required
+
+| Library | Version | Purpose | Install Method |
+|---------|---------|---------|----------------|
+| Essentia | 2.1+ | Beat/onset detection | vcpkg or source |
+| Python 3.10+ | - | BeatNet/Demucs bridge | System |
+| PyTorch | 2.0+ | Neural network inference | pip |
+| Demucs | 4.0+ | Stem separation | pip |
+| BeatNet | latest | Beat tracking | pip |
+| gl-transitions | latest | GLSL transitions | git submodule |
+
+### Python Environment Setup
+
+```bash
+# Create virtual environment for AI tools
+python3 -m venv ~/.tripsitter-env
+source ~/.tripsitter-env/bin/activate
+
+# Install dependencies
+pip install torch torchaudio demucs beatnet librosa
+```
+
+---
+
+## File Structure (Proposed)
+
+```
+src/
+├── audio/
+│   ├── AudioAnalyzer.cpp      (existing)
+│   ├── EssentiaAnalyzer.cpp   (new)
+│   ├── BeatNetBridge.cpp      (new)
+│   ├── StemSeparator.cpp      (new)
+│   └── FFTAnalyzer.cpp        (new)
+├── video/
+│   ├── VideoWriter.cpp        (existing)
+│   ├── TransitionLibrary.cpp  (new)
+│   └── AudioReactiveEffects.cpp (new)
+└── GUI/
+    └── MainWindow.cpp         (modify)
+
+scripts/
+├── beatnet_analyze.py         (new)
+├── demucs_separate.py         (new)
+└── requirements.txt           (new)
+
+assets/
+└── transitions/               (new - GLSL shaders)
+```
+
+---
+
+## Milestones
+
+### v0.2.0 - Enhanced Audio Analysis
+- Essentia integration
+- Improved beat detection accuracy
+- Onset detection for transients
+
+### v0.3.0 - Stem Separation
+- Demucs integration
+- Drums-only beat detection option
+- Stem preview
+
+### v0.4.0 - Advanced Transitions
+- GLSL transition library
+- Beat-synced transition selection
+- Transition preview
+
+### v0.5.0 - Audio-Reactive Effects
+- FFT analysis pipeline
+- Frequency-driven effects
+- Real-time audio visualization
+
+### v1.0.0 - Production Release
+- All core features stable
+- Performance optimized
+- Full documentation
+
+---
+
+## Notes
+
+- All Python components should be optional with graceful fallback
+- Consider bundling Python environment with app for easier distribution
+- GPU acceleration preferred but CPU fallback required
+- Test on both Apple Silicon and Intel Macs
+
+---
+
+*Last Updated: January 6, 2026*
