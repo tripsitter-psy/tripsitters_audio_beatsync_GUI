@@ -8,6 +8,7 @@
 #include <wx/scrolwin.h>
 #include <memory>
 #include <thread>
+#include <atomic>
 
 class BeatVisualizer;
 class VideoPreview;

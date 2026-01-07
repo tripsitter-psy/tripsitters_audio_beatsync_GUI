@@ -1317,7 +1317,8 @@ void MainWindow::CreateLayout() {
             m_mainPanel, wxID_ANY, wxDefaultPosition, m_headerBitmap.GetSize(),
             wxBORDER_NONE | wxTRANSPARENT_WINDOW);
         headerPanel->SetMinSize(m_headerBitmap.GetSize());
-        headerPanel->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+        // Use PAINT style instead of TRANSPARENT so we can safely set it after Create()
+        headerPanel->SetBackgroundStyle(wxBG_STYLE_PAINT);
         headerPanel->Bind(wxEVT_ERASE_BACKGROUND, [](wxEraseEvent&){ /* no-op to let parent show through */ });
         headerPanel->Bind(wxEVT_PAINT, [this](wxPaintEvent& evt){
             wxPaintDC dc(static_cast<wxWindow*>(evt.GetEventObject()));
@@ -2555,7 +2556,8 @@ void MainWindow::SetAllChildrenTransparent(wxWindow* parent) {
         wxWindow* child = *it;
 
         // CRITICAL: Tell children NOT to paint their own backgrounds
-        child->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+        // Use PAINT style to avoid setting TRANSPARENT after Create(), which can assert
+        child->SetBackgroundStyle(wxBG_STYLE_PAINT);
 
         // Set foreground color to ensure text is visible
         child->SetForegroundColour(wxColour(200, 220, 255));

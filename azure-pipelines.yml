@@ -4,53 +4,82 @@ trigger:
 pr:
 - main
 
-pool:
-  vmImage: 'macOS-13'
+jobs:
+- job: macOS
+  displayName: macOS build and tests
+  pool:
+    vmImage: 'macOS-13'
 
-variables:
-  buildType: 'Release'
-  cmakeGenerator: 'Ninja'
-  osxArchitectures: 'arm64'
+  variables:
+    buildType: 'Release'
+    cmakeGenerator: 'Ninja'
+    osxArchitectures: 'arm64'
 
-steps:
-- checkout: self
-  clean: true
+  steps:
+  - checkout: self
+    clean: true
 
-- script: |
-    set -euo pipefail
-    brew update
-    brew install cmake ninja wxwidgets ffmpeg
-  displayName: Install Homebrew dependencies
+  - script: |
+      set -euo pipefail
+      brew update
+      brew install cmake ninja wxwidgets ffmpeg
+    displayName: Install Homebrew dependencies
 
-- script: |
-    set -euo pipefail
-    FFMPEG_PREFIX=$(brew --prefix ffmpeg)
-    WXCONFIG=$(brew --prefix wxwidgets)/bin/wx-config
-    cmake -S . -B build -G "${CMAKE_GENERATOR}" \
-      -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
-      -DBUILD_TESTS=ON \
-      -DFFMPEG_ROOT="${FFMPEG_PREFIX}" \
-      -DwxWidgets_CONFIG_EXECUTABLE="${WXCONFIG}" \
-      -DCMAKE_OSX_ARCHITECTURES="${OSX_ARCHES}"
-  env:
-    BUILD_TYPE: $(buildType)
-    CMAKE_GENERATOR: $(cmakeGenerator)
-    OSX_ARCHES: $(osxArchitectures)
-  displayName: Configure CMake (arm build)
+  - script: |
+      set -euo pipefail
+      FFMPEG_PREFIX=$(brew --prefix ffmpeg)
+      WXCONFIG=$(brew --prefix wxwidgets)/bin/wx-config
+      cmake -S . -B build -G "${CMAKE_GENERATOR}" \
+        -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+        -DBUILD_TESTS=ON \
+        -DFFMPEG_ROOT="${FFMPEG_PREFIX}" \
+        -DwxWidgets_CONFIG_EXECUTABLE="${WXCONFIG}" \
+        -DCMAKE_OSX_ARCHITECTURES="${OSX_ARCHES}"
+    env:
+      BUILD_TYPE: $(buildType)
+      CMAKE_GENERATOR: $(cmakeGenerator)
+      OSX_ARCHES: $(osxArchitectures)
+    displayName: Configure CMake (arm build)
 
-- script: |
-    set -euo pipefail
-    cmake --build build --config ${BUILD_TYPE}
-  env:
-    BUILD_TYPE: $(buildType)
-  displayName: Build
+  - script: |
+      set -euo pipefail
+      cmake --build build --config ${BUILD_TYPE}
+    env:
+      BUILD_TYPE: $(buildType)
+    displayName: Build
 
-- script: |
-    set -euo pipefail
-    ctest --test-dir build -C ${BUILD_TYPE} --output-on-failure
-  env:
-    BUILD_TYPE: $(buildType)
-  displayName: Run tests
+  - script: |
+      set -euo pipefail
+      ctest --test-dir build -C ${BUILD_TYPE} --output-on-failure
+    env:
+      BUILD_TYPE: $(buildType)
+    displayName: Run tests
+
+- job: Linux
+  displayName: Linux build and GUI tests (headless)
+  pool:
+    vmImage: 'ubuntu-latest'
+  steps:
+  - checkout: self
+    clean: true
+
+  - script: |
+      set -euo pipefail
+      sudo apt-get update
+      sudo apt-get install -y build-essential cmake pkg-config git libwxgtk3.2-dev libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libswscale-dev libavfilter-dev libavdevice-dev libfftw3-dev xvfb
+    displayName: Install APT dependencies
+
+  - script: |
+      set -euo pipefail
+      # Start Xvfb in background and expose DISPLAY
+      Xvfb :99 -screen 0 1280x800x24 &
+      export DISPLAY=:99
+      # Configure and build
+      cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
+      cmake --build build -- -j $(nproc)
+      # Run tests under Xvfb so GUI painting tests can run headless
+      xvfb-run -a ctest --test-dir build --output-on-failure
+    displayName: Configure, Build and Run tests (headless)
 
 - script: |
     set -euo pipefail

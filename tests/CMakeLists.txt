@@ -43,6 +43,18 @@ target_include_directories(test_transition_library PRIVATE ${CMAKE_SOURCE_DIR}/s
 target_link_libraries(test_transition_library PRIVATE Catch2::Catch2)
 add_test(NAME transition_library COMMAND test_transition_library)
 
+# Header paint integration test
+add_executable(test_header_paint
+    catch_main.cpp
+    test_header_paint.cpp
+)
+
+target_include_directories(test_header_paint PRIVATE ${CMAKE_SOURCE_DIR}/src)
+# Link against wxWidgets so we can create windows and run a minimal paint
+target_link_libraries(test_header_paint PRIVATE Catch2::Catch2 ${wxWidgets_LIBRARIES})
+# Run the test under Xvfb in environments where a display is not available
+add_test(NAME header_paint COMMAND xvfb-run -s "-screen 0 1280x800x24" $<TARGET_FILE:test_header_paint>)
+
 # Transition chaining tests
 add_executable(test_transition_chaining
     catch_main.cpp
