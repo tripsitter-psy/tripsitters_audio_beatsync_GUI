@@ -1335,6 +1335,7 @@ void MainWindow::OnStartProcessing(wxCommandEvent& event) {
     config.transitionDuration = m_transitionDurationCtrl->GetValue();
 
     UpdateUIState(true);
+    m_startAnimation->Play();
     StartProcessing(config);
 }
 
@@ -1796,6 +1797,7 @@ void MainWindow::UpdateProgress(int percent, const wxString& status, const wxStr
 
 void MainWindow::OnProcessingComplete(bool success, const wxString& message) {
     UpdateUIState(false);
+    m_startAnimation->Stop();
     
     if (m_processingThread && m_processingThread->joinable()) {
         m_processingThread->join();
