@@ -5,6 +5,7 @@
 #include <wx/choice.h>
 #include <wx/gauge.h>
 #include <wx/animate.h>
+#include <wx/timer.h>
 #include <wx/scrolwin.h>
 #include <memory>
 #include <thread>
@@ -26,7 +27,6 @@ public:
 private:
     // UI Components
     wxScrolledWindow* m_mainPanel;
-    wxStaticBitmap* m_titleImage;
     wxFilePickerCtrl* m_audioFilePicker;
     wxDirPickerCtrl* m_videoFolderPicker;
     wxFilePickerCtrl* m_singleVideoPicker;
@@ -68,9 +68,18 @@ private:
     BeatVisualizer* m_beatVisualizer;
     VideoPreview* m_videoPreview;
     
-    // Animation for start button
+    // Animation for start button (wxAnimationCtrl fallback)
     wxAnimationCtrl* m_startAnimation;
-    
+
+    // Manual start animation (scaled frames) and timer
+    wxStaticBitmap* m_startBitmap;
+    std::vector<wxBitmap> m_startFrames;
+    std::vector<int> m_startFrameDelays;
+    wxTimer* m_startAnimTimer;
+    int m_startAnimIndex{0};
+    bool m_startAnimPlaying{false};
+    wxSize m_startAnimSize{40,10};
+
     // Backend
     std::unique_ptr<SettingsManager> m_settingsManager;
     std::unique_ptr<std::thread> m_processingThread;
@@ -80,6 +89,7 @@ private:
     wxPanel* m_backgroundPanel;
     wxBitmap m_backgroundBitmap;
     wxBitmap m_headerBitmap;
+    wxBitmap m_titleBitmap;
     wxFont m_titleFont;
     wxFont m_labelFont;
     
@@ -90,6 +100,7 @@ private:
     void OnCancelProcessing(wxCommandEvent& event);
     void OnPreviewFrame(wxCommandEvent& event);
     void OnPreviewTransition(wxCommandEvent& event);
+    void OnStartAnimTimer(wxTimerEvent& event);
     void OnClose(wxCloseEvent& event);
     void OnPaint(wxPaintEvent& event);
     

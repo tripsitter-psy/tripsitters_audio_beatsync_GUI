@@ -1,0 +1,15 @@
+C:\Users\samue\Desktop\BeatSyncEditor\src\GUI_main.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\TripSitter.dir\Release\GUI_main.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\audio\AudioAnalyzer.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\TripSitter.dir\Release\AudioAnalyzer.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\audio\BeatGrid.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\TripSitter.dir\Release\BeatGrid.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\video\VideoProcessor.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\TripSitter.dir\Release\VideoProcessor.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\video\VideoWriter.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\TripSitter.dir\Release\VideoWriter.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\GUI\MainWindow.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\TripSitter.dir\Release\MainWindow.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\GUI\BeatVisualizer.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\TripSitter.dir\Release\BeatVisualizer.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\GUI\VideoPreview.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\TripSitter.dir\Release\VideoPreview.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\GUI\ProcessingThread.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\TripSitter.dir\Release\ProcessingThread.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\GUI\SettingsManager.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\TripSitter.dir\Release\SettingsManager.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\GUI\PsychedelicTheme.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\TripSitter.dir\Release\PsychedelicTheme.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\utils\LogArchiver.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\TripSitter.dir\Release\LogArchiver.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\audio\BeatNetBridge.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\TripSitter.dir\Release\BeatNetBridge.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\audio\StemSeparator.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\TripSitter.dir\Release\StemSeparator.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\video\TransitionLibrary.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\TripSitter.dir\Release\TransitionLibrary.obj

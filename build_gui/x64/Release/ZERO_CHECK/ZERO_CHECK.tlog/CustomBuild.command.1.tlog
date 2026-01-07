@@ -1,0 +1,10 @@
+^C:\USERS\SAMUE\DESKTOP\BEATSYNCEDITOR\BUILD_GUI\CMAKEFILES\0B46FFA946957ACBA1C9C65C004E9FD9\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -SC:/Users/samue/Desktop/BeatSyncEditor -BC:/Users/samue/Desktop/BeatSyncEditor/build_gui --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Users/samue/Desktop/BeatSyncEditor/build_gui/TripSitterBeatSync.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

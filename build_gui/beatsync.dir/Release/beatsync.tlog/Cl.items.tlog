@@ -1,0 +1,8 @@
+C:\Users\samue\Desktop\BeatSyncEditor\src\main.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\beatsync.dir\Release\main.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\audio\AudioAnalyzer.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\beatsync.dir\Release\AudioAnalyzer.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\audio\BeatGrid.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\beatsync.dir\Release\BeatGrid.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\video\VideoProcessor.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\beatsync.dir\Release\VideoProcessor.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\video\VideoWriter.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\beatsync.dir\Release\VideoWriter.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\audio\BeatNetBridge.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\beatsync.dir\Release\BeatNetBridge.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\audio\StemSeparator.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\beatsync.dir\Release\StemSeparator.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\video\TransitionLibrary.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_gui\beatsync.dir\Release\TransitionLibrary.obj

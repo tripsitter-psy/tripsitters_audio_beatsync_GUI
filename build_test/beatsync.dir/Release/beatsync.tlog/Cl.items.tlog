@@ -1,0 +1,6 @@
+C:\Users\samue\Desktop\BeatSyncEditor\src\main.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_test\beatsync.dir\Release\main.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\audio\AudioAnalyzer.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_test\beatsync.dir\Release\AudioAnalyzer.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\audio\BeatGrid.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_test\beatsync.dir\Release\BeatGrid.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\video\VideoProcessor.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_test\beatsync.dir\Release\VideoProcessor.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\video\VideoWriter.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_test\beatsync.dir\Release\VideoWriter.obj
+C:\Users\samue\Desktop\BeatSyncEditor\src\utils\ProcessUtils.cpp;C:\Users\samue\Desktop\BeatSyncEditor\build_test\beatsync.dir\Release\ProcessUtils.obj

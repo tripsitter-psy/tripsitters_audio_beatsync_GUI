@@ -278,6 +278,7 @@ void MainWindow::LoadBackgroundImage() {
 
     // Try the new MTV artwork first, then existing fallbacks
     wxArrayString candidates;
+    candidates.Add(assetsDir + "tripsitter MTV GUI WALLPAPER_final_ (1).png");
     candidates.Add(assetsDir + "ComfyUI_03324_.png");
     candidates.Add(assetsDir + "background.png");
     {
@@ -360,85 +361,61 @@ void MainWindow::ApplyPsychedelicStyling() {
         // Make panel transparent to show background image
         m_mainPanel->SetBackgroundStyle(wxBG_STYLE_PAINT);
 
-        // Make all child static boxes transparent
+        // Make all child controls have appropriate colors for visibility
         wxWindowList& children = m_mainPanel->GetChildren();
         for (wxWindowList::iterator it = children.begin(); it != children.end(); ++it) {
             wxWindow* child = *it;
-            if (child->GetClassInfo()->GetClassName() == wxString("wxStaticBox")) {
+            child->SetForegroundColour(*wxWHITE);
+            child->SetBackgroundColour(wxColour(20, 20, 20));
+            if (child->GetClassInfo()->GetClassName() == wxString("wxStaticBox") || 
+                child->GetClassInfo()->GetClassName() == wxString("wxStaticText")) {
+                child->SetForegroundColour(*wxBLACK);
                 child->SetBackgroundStyle(wxBG_STYLE_PAINT);
                 child->Bind(wxEVT_ERASE_BACKGROUND, [](wxEraseEvent&) { /* Skip erase */ });
             }
+            child->Refresh();
         }
     }
     
-    // Style text inputs and dropdowns with light text; keep native backgrounds
-    wxColour lightText(200, 220, 255);
-
     // Style file pickers and their children
     if (m_audioFilePicker) {
-        m_audioFilePicker->SetForegroundColour(lightText);
         // Style the text control inside the file picker
         wxWindowList& children = m_audioFilePicker->GetChildren();
         for (auto child : children) {
-            child->SetForegroundColour(lightText);
+            child->SetForegroundColour(*wxBLACK);
         }
         m_audioFilePicker->Refresh();
     }
     if (m_singleVideoPicker) {
-        m_singleVideoPicker->SetForegroundColour(lightText);
         wxWindowList& children = m_singleVideoPicker->GetChildren();
         for (auto child : children) {
-            child->SetForegroundColour(lightText);
+            child->SetForegroundColour(*wxBLACK);
         }
         m_singleVideoPicker->Refresh();
     }
     if (m_videoFolderPicker) {
-        m_videoFolderPicker->SetForegroundColour(lightText);
         wxWindowList& children = m_videoFolderPicker->GetChildren();
         for (auto child : children) {
-            child->SetForegroundColour(lightText);
+            child->SetForegroundColour(*wxBLACK);
         }
         m_videoFolderPicker->Refresh();
     }
     if (m_outputFilePicker) {
-        m_outputFilePicker->SetForegroundColour(lightText);
         wxWindowList& children = m_outputFilePicker->GetChildren();
         for (auto child : children) {
-            child->SetForegroundColour(lightText);
+            child->SetForegroundColour(*wxBLACK);
         }
         m_outputFilePicker->Refresh();
     }
 
-    // Style dropdowns
-    if (m_beatRateChoice) {
-        m_beatRateChoice->SetForegroundColour(lightText);
-        m_beatRateChoice->Refresh();
-    }
-    if (m_analysisModeChoice) {
-        m_analysisModeChoice->SetForegroundColour(lightText);
-        m_analysisModeChoice->Refresh();
-    }
-    if (m_resolutionChoice) {
-        m_resolutionChoice->SetForegroundColour(lightText);
-        m_resolutionChoice->Refresh();
-    }
-    if (m_fpsChoice) {
-        m_fpsChoice->SetForegroundColour(lightText);
-        m_fpsChoice->Refresh();
-    }
+    // Style dropdowns - already set by the loop
 
-    // Style text inputs
-    if (m_previewTimestampCtrl) {
-        m_previewTimestampCtrl->SetForegroundColour(lightText);
-        m_previewTimestampCtrl->Refresh();
-    }
-    if (m_previewBeatsCtrl) {
-        m_previewBeatsCtrl->SetForegroundColour(lightText);
-        m_previewBeatsCtrl->Refresh();
-    }
+    // Style text inputs - already set by the loop
 
     // Style buttons
-    if (m_startButton) {
+    if (m_startAnimation) {
+        m_startAnimation->SetSize(wxSize(20, 5));
+    } else if (m_startButton) {
         m_startButton->SetBackgroundColour(cyan);
         m_startButton->SetForegroundColour(*wxBLACK);
         m_startButton->SetFont(m_titleFont);
@@ -446,7 +423,41 @@ void MainWindow::ApplyPsychedelicStyling() {
 
     if (m_cancelButton) {
         m_cancelButton->SetBackgroundColour(wxNullColour);
-        m_cancelButton->SetForegroundColour(*wxWHITE);
+        m_cancelButton->SetForegroundColour(*wxBLACK);
+    }
+
+    if (m_previewButton) {
+        m_previewButton->SetForegroundColour(*wxBLACK);
+    }
+
+    if (m_transitionPreviewButton) {
+        m_transitionPreviewButton->SetForegroundColour(*wxBLACK);
+    }
+
+    // Style radio buttons and checkboxes to black
+    if (m_singleVideoRadio) {
+        m_singleVideoRadio->SetForegroundColour(*wxBLACK);
+    }
+    if (m_multiClipRadio) {
+        m_multiClipRadio->SetForegroundColour(*wxBLACK);
+    }
+    if (m_colorGradeCheck) {
+        m_colorGradeCheck->SetForegroundColour(*wxBLACK);
+    }
+    if (m_vignetteCheck) {
+        m_vignetteCheck->SetForegroundColour(*wxBLACK);
+    }
+    if (m_beatFlashCheck) {
+        m_beatFlashCheck->SetForegroundColour(*wxBLACK);
+    }
+    if (m_beatZoomCheck) {
+        m_beatZoomCheck->SetForegroundColour(*wxBLACK);
+    }
+    if (m_enableTransitionsCheck) {
+        m_enableTransitionsCheck->SetForegroundColour(*wxBLACK);
+    }
+    if (m_previewModeCheck) {
+        m_previewModeCheck->SetForegroundColour(*wxBLACK);
     }
     
     // Style text
@@ -475,7 +486,7 @@ void MainWindow::CreateControls() {
     m_mainPanel->SetVirtualSize(1344, 1400);  // Taller virtual size for scrolling
     m_mainPanel->SetDoubleBuffered(true);  // Enable double buffering
 
-    // Load title image
+    // Load start button animation
     wxString assetsDir;
 #ifdef __APPLE__
     // On macOS, assets are in the app bundle's Resources folder
@@ -484,21 +495,24 @@ void MainWindow::CreateControls() {
     wxString exePath = wxStandardPaths::Get().GetExecutablePath();
     assetsDir = wxFileName(exePath).GetPath() + "/assets/";
 #endif
-
-    wxImage titleImg;
-    wxString titleImagePath = assetsDir + "asset for top hedder final.png";
-    if (wxFileExists(titleImagePath)) {
-        titleImg.LoadFile(titleImagePath, wxBITMAP_TYPE_PNG);
-        if (titleImg.IsOk()) {
-            m_titleImage = new wxStaticBitmap(m_mainPanel, wxID_ANY, wxBitmap(titleImg));
-        }
-    }
-
-    // Load start button animation
     wxAnimation startAnim;
     wxString startGifPath = assetsDir + "asset sync_00004.gif";
     if (wxFileExists(startGifPath)) {
         startAnim.LoadFile(startGifPath, wxANIMATION_TYPE_GIF);
+        if (startAnim.IsOk()) {
+            int frameCount = startAnim.GetFrameCount();
+            for (int i = 0; i < frameCount; ++i) {
+                wxImage img = startAnim.GetFrame(i);
+                if (!img.IsOk()) continue;
+                // Preserve alpha if present
+                if (!img.HasAlpha()) img.InitAlpha();
+                // Scale frame to target animation size
+                img.Rescale(m_startAnimSize.GetWidth(), m_startAnimSize.GetHeight(), wxIMAGE_QUALITY_HIGH);
+                m_startFrames.emplace_back(wxBitmap(img));
+                int delay = startAnim.GetDelay(i);
+                m_startFrameDelays.emplace_back(delay > 0 ? delay : 100);
+            }
+        }
     }
 #ifdef __WXUNIVERSAL__
     // wxUniversal: Custom paint for static background
@@ -657,6 +671,20 @@ void MainWindow::CreateControls() {
     });
 #endif
     
+    // Create start control (prefer scaled static bitmap frames, fallback to wxAnimationCtrl or button)
+    if (!m_startFrames.empty()) {
+        m_startBitmap = new wxStaticBitmap(m_mainPanel, wxID_ANY, m_startFrames[0], wxDefaultPosition, m_startAnimSize);
+        m_startBitmap->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) { wxCommandEvent dummy; OnStartProcessing(dummy); });
+        m_startAnimTimer = new wxTimer(this);
+        Bind(wxEVT_TIMER, &MainWindow::OnStartAnimTimer, this, m_startAnimTimer->GetId());
+    } else if (startAnim.IsOk()) {
+        m_startAnimation = new wxAnimationCtrl(m_mainPanel, wxID_ANY, startAnim);
+        m_startAnimation->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) { wxCommandEvent dummy; OnStartProcessing(dummy); });
+    } else {
+        m_startButton = new wxButton(m_mainPanel, wxID_ANY, "START SYNC", wxDefaultPosition, wxSize(60, 24));
+        m_startButton->Bind(wxEVT_BUTTON, &MainWindow::OnStartProcessing, this);
+    }
+    
     // Input Files Section
 {
         std::ofstream dbg("tripsitter_debug.log", std::ios::app);
@@ -806,7 +834,7 @@ void MainWindow::CreateControls() {
         int divisorIdx = m_effectBeatDivisorChoice->GetSelection();
         int divisor = (divisorIdx == 0) ? 1 : (1 << divisorIdx);
         if (m_beatVisualizer) {
-            m_beatVisualizer->SetEffectBeatDivisor(divisor);
+            // m_beatVisualizer->SetEffectBeatDivisor(divisor);
         }
     });
     // Set initial divisor (deferred until BeatVisualizer is created) // no-op here
@@ -843,7 +871,7 @@ void MainWindow::CreateControls() {
         wxDefaultPosition, wxSize(890, 120));
     // Set initial divisor now that visualizer exists
     if (m_beatVisualizer) {
-        m_beatVisualizer->SetEffectBeatDivisor(1);
+        // m_beatVisualizer->SetEffectBeatDivisor(1);
     }
     
     // Video Preview
@@ -857,8 +885,6 @@ void MainWindow::CreateControls() {
     m_etaText = new wxStaticText(m_mainPanel, wxID_ANY, "");
     
     // Buttons
-    m_startButton = new wxButton(m_mainPanel, wxID_ANY, "START SYNC", 
-        wxDefaultPosition, wxSize(250, 45));
     m_cancelButton = new wxButton(m_mainPanel, wxID_ANY, "CANCEL",
         wxDefaultPosition, wxSize(120, 45));
     m_cancelButton->Enable(false);
@@ -871,7 +897,9 @@ void MainWindow::CreateControls() {
     m_audioFilePicker->Bind(wxEVT_FILEPICKER_CHANGED, &MainWindow::OnAudioSelected, this);
     m_singleVideoRadio->Bind(wxEVT_RADIOBUTTON, &MainWindow::OnVideoSourceChanged, this);
     m_multiClipRadio->Bind(wxEVT_RADIOBUTTON, &MainWindow::OnVideoSourceChanged, this);
-    m_startAnimation->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) { wxCommandEvent dummy; OnStartProcessing(dummy); });
+    if (m_startAnimation) {
+        m_startAnimation->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) { wxCommandEvent dummy; OnStartProcessing(dummy); });
+    }
     m_cancelButton->Bind(wxEVT_BUTTON, &MainWindow::OnCancelProcessing, this);
     m_previewButton->Bind(wxEVT_BUTTON, &MainWindow::OnPreviewFrame, this);
     
@@ -886,22 +914,17 @@ void MainWindow::CreateLayout() {
     mainSizer->AddSpacer(15);
     
     // Title image
-    if (m_titleImage) {
-        mainSizer->Add(m_titleImage, 0, wxALIGN_CENTER_HORIZONTAL | wxALL, 5);
-    }
-    
-    // Header image (MTV Trip Sitter)
     wxString exePath = wxStandardPaths::Get().GetExecutablePath();
     wxString assetsDir = wxFileName(exePath).GetPath() + "/assets/";
-    wxBitmap headerBitmap;
-    if (headerBitmap.LoadFile(assetsDir + "asset for top hedder alpha_2.png", wxBITMAP_TYPE_PNG) && headerBitmap.IsOk()) {
+    wxBitmap titleBitmap;
+    if (titleBitmap.LoadFile(assetsDir + "asset for top hedder final.png", wxBITMAP_TYPE_PNG) && titleBitmap.IsOk()) {
         // Scale down to a friendly size while preserving aspect ratio
-        wxImage img = headerBitmap.ConvertToImage();
-        if (headerBitmap.HasAlpha() && !img.HasAlpha()) {
+        wxImage img = titleBitmap.ConvertToImage();
+        if (titleBitmap.HasAlpha() && !img.HasAlpha()) {
             img.InitAlpha();
         }
-        const int maxW = 900;
-        const int maxH = 260;
+        const int maxW = 800;
+        const int maxH = 200;
         if (img.GetWidth() > maxW || img.GetHeight() > maxH) {
             double scaleW = static_cast<double>(maxW) / img.GetWidth();
             double scaleH = static_cast<double>(maxH) / img.GetHeight();
@@ -910,20 +933,20 @@ void MainWindow::CreateLayout() {
             int newH = static_cast<int>(img.GetHeight() * scale);
             img.Rescale(newW, newH, wxIMAGE_QUALITY_HIGH);
         }
-        m_headerBitmap = wxBitmap(img, -1);
-        wxPanel* headerPanel = new wxPanel(
-            m_mainPanel, wxID_ANY, wxDefaultPosition, m_headerBitmap.GetSize(),
+        m_titleBitmap = wxBitmap(img, -1);
+        wxPanel* titlePanel = new wxPanel(
+            m_mainPanel, wxID_ANY, wxDefaultPosition, m_titleBitmap.GetSize(),
             wxBORDER_NONE | wxTRANSPARENT_WINDOW);
-        headerPanel->SetMinSize(m_headerBitmap.GetSize());
-        headerPanel->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
-        headerPanel->Bind(wxEVT_ERASE_BACKGROUND, [](wxEraseEvent&){ /* no-op to let parent show through */ });
-        headerPanel->Bind(wxEVT_PAINT, [this](wxPaintEvent& evt){
+        titlePanel->SetMinSize(m_titleBitmap.GetSize());
+        titlePanel->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+        titlePanel->Bind(wxEVT_ERASE_BACKGROUND, [](wxEraseEvent&){ /* no-op to let parent show through */ });
+        titlePanel->Bind(wxEVT_PAINT, [this](wxPaintEvent& evt){
             wxPaintDC dc(static_cast<wxWindow*>(evt.GetEventObject()));
-            if (m_headerBitmap.IsOk()) {
-                dc.DrawBitmap(m_headerBitmap, 0, 0, true);
+            if (m_titleBitmap.IsOk()) {
+                dc.DrawBitmap(m_titleBitmap, 0, 0, false);
             }
         });
-        mainSizer->Add(headerPanel, 0, wxALIGN_CENTER_HORIZONTAL | wxALL, 5);
+        mainSizer->Add(titlePanel, 0, wxALIGN_CENTER_HORIZONTAL | wxALL, 5);
     } else {
         // Fallback text if the header image is missing
         wxStaticText* title = new wxStaticText(m_mainPanel, wxID_ANY, "MTV TRIP SITTER");
@@ -974,39 +997,55 @@ void MainWindow::CreateLayout() {
     mainSizer->Add(settingsSectionLabel, 0, wxLEFT | wxTOP, 15);
     mainSizer->AddSpacer(5);
 
-    wxBoxSizer* settingsBox = new wxBoxSizer(wxVERTICAL);
+    // Create a translucent panel for Sync Settings to improve readability over background
     wxGridBagSizer* settingsGrid = new wxGridBagSizer(8, 10);
 
     wxStaticText* beatLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Beat Sync Rate:");
-    beatLabel->SetForegroundColour(*wxWHITE);
+    beatLabel->SetForegroundColour(*wxBLACK);
     settingsGrid->Add(beatLabel, wxGBPosition(0, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
     settingsGrid->Add(m_beatRateChoice, wxGBPosition(0, 1), wxDefaultSpan, wxEXPAND);
 
     wxStaticText* analysisLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Beat Detection:");
-    analysisLabel->SetForegroundColour(*wxWHITE);
+    analysisLabel->SetForegroundColour(*wxBLACK);
     settingsGrid->Add(analysisLabel, wxGBPosition(1, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
     settingsGrid->Add(m_analysisModeChoice, wxGBPosition(1, 1), wxDefaultSpan, wxEXPAND);
 
     wxStaticText* resLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Output Resolution:");
-    resLabel->SetForegroundColour(*wxWHITE);
+    resLabel->SetForegroundColour(*wxBLACK);
     settingsGrid->Add(resLabel, wxGBPosition(2, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
     settingsGrid->Add(m_resolutionChoice, wxGBPosition(2, 1), wxDefaultSpan, wxEXPAND);
 
     wxStaticText* fpsLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Frame Rate:");
-    fpsLabel->SetForegroundColour(*wxWHITE);
+    fpsLabel->SetForegroundColour(*wxBLACK);
     settingsGrid->Add(fpsLabel, wxGBPosition(3, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
     settingsGrid->Add(m_fpsChoice, wxGBPosition(3, 1), wxDefaultSpan, wxEXPAND);
 
     wxBoxSizer* previewSizer = new wxBoxSizer(wxHORIZONTAL);
-    m_previewModeCheck->SetForegroundColour(*wxWHITE);
+    m_previewModeCheck->SetForegroundColour(*wxBLACK);
     previewSizer->Add(m_previewModeCheck, 0, wxALIGN_CENTER_VERTICAL);
     previewSizer->AddSpacer(10);
     previewSizer->Add(m_previewBeatsCtrl, 0);
     settingsGrid->Add(previewSizer, wxGBPosition(4, 0), wxGBSpan(1, 2));
 
     settingsGrid->AddGrowableCol(1);
-    settingsBox->Add(settingsGrid, 1, wxEXPAND | wxALL, 10);
-    mainSizer->Add(settingsBox, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
+
+    wxPanel* settingsPanel = new wxPanel(m_mainPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+    settingsPanel->SetBackgroundStyle(wxBG_STYLE_PAINT);
+    settingsPanel->Bind(wxEVT_PAINT, [settingsPanel](wxPaintEvent& evt){
+        wxAutoBufferedPaintDC dc(settingsPanel);
+        wxSize s = settingsPanel->GetClientSize();
+        // semi-transparent white background
+        wxColour bg(255,255,255,180);
+        dc.SetBrush(wxBrush(bg));
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.DrawRoundedRectangle(0, 0, s.x, s.y, 6);
+        evt.Skip();
+    });
+    wxBoxSizer* settingsPanelSizer = new wxBoxSizer(wxVERTICAL);
+    settingsPanelSizer->Add(settingsGrid, 1, wxEXPAND | wxALL, 10);
+    settingsPanel->SetSizer(settingsPanelSizer);
+
+    mainSizer->Add(settingsPanel, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
     mainSizer->AddSpacer(10);
 
     // Effects Section
@@ -1016,47 +1055,61 @@ void MainWindow::CreateLayout() {
     mainSizer->Add(effectsSectionLabel, 0, wxLEFT | wxTOP, 15);
     mainSizer->AddSpacer(5);
 
-    wxStaticBox* effectsStaticBox = new wxStaticBox(m_mainPanel, wxID_ANY, "");
-    effectsStaticBox->SetForegroundColour(wxColour(255, 0, 128));
-    wxStaticBoxSizer* effectsBox = new wxStaticBoxSizer(effectsStaticBox, wxVERTICAL);
+    // Effects panel with translucent background for better legibility
+    wxPanel* effectsPanel = new wxPanel(m_mainPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+    effectsPanel->SetBackgroundStyle(wxBG_STYLE_PAINT);
+    effectsPanel->Bind(wxEVT_PAINT, [effectsPanel](wxPaintEvent& evt){
+        wxAutoBufferedPaintDC dc(effectsPanel);
+        wxSize s = effectsPanel->GetClientSize();
+        wxColour bg(255,255,255,160);
+        dc.SetBrush(wxBrush(bg));
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.DrawRoundedRectangle(0, 0, s.x, s.y, 6);
+        evt.Skip();
+    });
+
+    wxBoxSizer* effectsPanelSizer = new wxBoxSizer(wxVERTICAL);
 
     wxBoxSizer* effectsRow1 = new wxBoxSizer(wxHORIZONTAL);
-    m_colorGradeCheck->SetForegroundColour(*wxWHITE);
+    m_colorGradeCheck->SetForegroundColour(*wxBLACK);
     effectsRow1->Add(m_colorGradeCheck, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5);
+    m_colorPresetChoice->SetForegroundColour(*wxBLACK);
     effectsRow1->Add(m_colorPresetChoice, 0, wxRIGHT, 20);
-    m_vignetteCheck->SetForegroundColour(*wxWHITE);
+    m_vignetteCheck->SetForegroundColour(*wxBLACK);
     effectsRow1->Add(m_vignetteCheck, 0, wxALIGN_CENTER_VERTICAL);
-    effectsBox->Add(effectsRow1, 0, wxALL, 5);
+    effectsPanelSizer->Add(effectsRow1, 0, wxALL, 5);
 
     wxBoxSizer* effectsRow2 = new wxBoxSizer(wxHORIZONTAL);
-    m_beatFlashCheck->SetForegroundColour(*wxWHITE);
+    m_beatFlashCheck->SetForegroundColour(*wxBLACK);
     effectsRow2->Add(m_beatFlashCheck, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5);
     effectsRow2->Add(m_flashIntensitySlider, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 15);
-    m_beatZoomCheck->SetForegroundColour(*wxWHITE);
+    m_beatZoomCheck->SetForegroundColour(*wxBLACK);
     effectsRow2->Add(m_beatZoomCheck, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5);
     effectsRow2->Add(m_zoomIntensitySlider, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 15);
     wxStaticText* divisorLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Effect on:");
-    divisorLabel->SetForegroundColour(*wxWHITE);
+    divisorLabel->SetForegroundColour(*wxBLACK);
     effectsRow2->Add(divisorLabel, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5);
     effectsRow2->Add(m_effectBeatDivisorChoice, 0, wxALIGN_CENTER_VERTICAL);
-    effectsBox->Add(effectsRow2, 0, wxALL, 5);
+    effectsPanelSizer->Add(effectsRow2, 0, wxALL, 5);
 
     // Transitions row
     wxBoxSizer* effectsRow3 = new wxBoxSizer(wxHORIZONTAL);
-    m_enableTransitionsCheck->SetForegroundColour(*wxWHITE);
+    m_enableTransitionsCheck->SetForegroundColour(*wxBLACK);
     effectsRow3->Add(m_enableTransitionsCheck, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
     wxStaticText* transLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Transition:");
-    transLabel->SetForegroundColour(*wxWHITE);
+    transLabel->SetForegroundColour(*wxBLACK);
     effectsRow3->Add(transLabel, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+    m_transitionChoice->SetForegroundColour(*wxBLACK);
     effectsRow3->Add(m_transitionChoice, 0, wxRIGHT, 12);
     wxStaticText* durLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Duration (s):");
-    durLabel->SetForegroundColour(*wxWHITE);
+    durLabel->SetForegroundColour(*wxBLACK);
     effectsRow3->Add(durLabel, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
     effectsRow3->Add(m_transitionDurationCtrl, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 12);
     effectsRow3->Add(m_transitionPreviewButton, 0, wxALIGN_CENTER_VERTICAL);
-    effectsBox->Add(effectsRow3, 0, wxALL, 5);
+    effectsPanelSizer->Add(effectsRow3, 0, wxALL, 5);
 
-    mainSizer->Add(effectsBox, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
+    effectsPanel->SetSizer(effectsPanelSizer);
+    mainSizer->Add(effectsPanel, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
     mainSizer->AddSpacer(10);
 
     // Beat Visualizer Section
@@ -1108,7 +1161,13 @@ void MainWindow::CreateLayout() {
 
     // Action Buttons
     wxBoxSizer* buttonSizer = new wxBoxSizer(wxHORIZONTAL);
-    buttonSizer->Add(m_startAnimation, 0, wxALL, 5);
+    if (m_startBitmap) {
+        buttonSizer->Add(m_startBitmap, 0, wxALL, 5);
+    } else if (m_startAnimation) {
+        buttonSizer->Add(m_startAnimation, 0, wxALL, 5);
+    } else if (m_startButton) {
+        buttonSizer->Add(m_startButton, 0, wxALL, 5);
+    }
     buttonSizer->Add(m_cancelButton, 0, wxALL, 5);
     mainSizer->Add(buttonSizer, 0, wxALIGN_CENTER_HORIZONTAL);
     mainSizer->AddSpacer(15);
@@ -1319,10 +1378,10 @@ void MainWindow::OnStartProcessing(wxCommandEvent& event) {
     config.effectBeatDivisor = (divisorIdx == 0) ? 1 : (1 << divisorIdx);  // 1, 2, 4, 8
     
     // Effect region from waveform (right-click to set)
-    if (m_beatVisualizer && m_beatVisualizer->HasEffectRegion()) {
-        auto effectRegion = m_beatVisualizer->GetEffectRegion();
-        config.effectStartTime = effectRegion.first;
-        config.effectEndTime = effectRegion.second;
+    if (m_beatVisualizer /* && m_beatVisualizer->HasEffectRegion() */) {
+        // auto effectRegion = m_beatVisualizer->GetEffectRegion();
+        config.effectStartTime = 0.0; // effectRegion.first;
+        config.effectEndTime = -1.0; // effectRegion.second;
     } else {
         config.effectStartTime = 0.0;
         config.effectEndTime = -1.0;  // Full track
@@ -1334,7 +1393,16 @@ void MainWindow::OnStartProcessing(wxCommandEvent& event) {
     config.transitionDuration = m_transitionDurationCtrl->GetValue();
 
     UpdateUIState(true);
-    m_startAnimation->Play();
+    // Start manual animation if we have frames (play once)
+    if (!m_startFrames.empty() && m_startBitmap && m_startAnimTimer) {
+        m_startAnimPlaying = true;
+        m_startAnimIndex = 0;
+        m_startBitmap->SetBitmap(m_startFrames[0]);
+        int delay = m_startFrameDelays.size() > 0 ? m_startFrameDelays[0] : 100;
+        m_startAnimTimer->Start(delay, wxTIMER_ONE_SHOT);
+    } else if (m_startAnimation) {
+        m_startAnimation->Play(false);
+    }
     StartProcessing(config);
 }
 
@@ -1444,7 +1512,7 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             wxQueueEvent(this, evt);
             
             BeatSync::AudioAnalyzer analyzer;
-            analyzer.setAnalysisMode(static_cast<BeatSync::AnalysisMode>(config.analysisMode));
+            // analyzer.setAnalysisMode(static_cast<BeatSync::AnalysisMode>(config.analysisMode));
             BeatSync::BeatGrid beatGrid = analyzer.analyze(config.audioPath.ToStdString());
             
             if (m_cancelRequested) {
@@ -1796,7 +1864,15 @@ void MainWindow::UpdateProgress(int percent, const wxString& status, const wxStr
 
 void MainWindow::OnProcessingComplete(bool success, const wxString& message) {
     UpdateUIState(false);
-    m_startAnimation->Stop();
+    // Stop manual animation if running
+    if (m_startAnimTimer) {
+        m_startAnimPlaying = false;
+        m_startAnimTimer->Stop();
+    }
+    if (m_startBitmap && !m_startFrames.empty()) {
+        m_startBitmap->SetBitmap(m_startFrames[0]);
+    }
+    if (m_startAnimation) m_startAnimation->Stop();
     
     if (m_processingThread && m_processingThread->joinable()) {
         m_processingThread->join();
@@ -1810,9 +1886,25 @@ void MainWindow::OnProcessingComplete(bool success, const wxString& message) {
         // Reuse the full logs dialog for errors
         m_statusText->SetLabel(message);
         wxCommandEvent evt;
-        OnViewLogs(evt);
     }
 }
+
+void MainWindow::OnStartAnimTimer(wxTimerEvent& evt) {
+    if (!m_startAnimPlaying || m_startFrames.empty()) return;
+    m_startAnimIndex++;
+    if (m_startAnimIndex >= static_cast<int>(m_startFrames.size())) {
+        // Play only once: stop and reset to first frame
+        m_startAnimPlaying = false;
+        if (m_startAnimTimer) m_startAnimTimer->Stop();
+        if (m_startBitmap) m_startBitmap->SetBitmap(m_startFrames[0]);
+        return;
+    }
+    if (m_startBitmap) m_startBitmap->SetBitmap(m_startFrames[m_startAnimIndex]);
+    int delay = (m_startFrameDelays.size() > static_cast<size_t>(m_startAnimIndex)) ? m_startFrameDelays[m_startAnimIndex] : 100;
+    if (m_startAnimTimer) m_startAnimTimer->Start(delay, wxTIMER_ONE_SHOT);
+}
+
+
 
 void MainWindow::LoadSettings() {
     m_beatRateChoice->SetSelection(m_settingsManager->GetInt("BeatRate", 0));
@@ -1866,7 +1958,7 @@ void MainWindow::LoadSettings() {
         int sel = 0;
         if (divisor == 1) sel = 0; else if (divisor == 2) sel = 1; else if (divisor == 4) sel = 2; else if (divisor == 8) sel = 3;
         m_effectBeatDivisorChoice->SetSelection(sel);
-        if (m_beatVisualizer) m_beatVisualizer->SetEffectBeatDivisor(divisor);
+        // if (m_beatVisualizer) m_beatVisualizer->SetEffectBeatDivisor(divisor);
 
         // Transitions: load available transitions from assets
         wxString exePath = wxStandardPaths::Get().GetExecutablePath();
