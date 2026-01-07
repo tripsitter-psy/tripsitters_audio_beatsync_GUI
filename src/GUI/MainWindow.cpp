@@ -276,8 +276,21 @@ void MainWindow::LoadBackgroundImage() {
         dbg << "LoadBackgroundImage: after assetsDir\n";
     }
 
-    // Try the new MTV artwork first, then existing fallbacks
+    // Try the new MTV artwork or user-supplied wallpaper first, then existing fallbacks
     wxArrayString candidates;
+    // Search assets for explicit wallpaper/tripsitter files and prefer them
+    try {
+        for (const auto &p : std::filesystem::directory_iterator(std::string(assetsDir.mb_str()))) {
+            std::string name = p.path().filename().string();
+            std::string lname = name;
+            std::transform(lname.begin(), lname.end(), lname.begin(), ::tolower);
+            if (lname.find("wallpaper") != std::string::npos || lname.find("tripsitter") != std::string::npos) {
+                candidates.Add(assetsDir + wxString(name));
+            }
+        }
+    } catch (...) {
+        // ignore any filesystem errors and fall back to defaults
+    }
     candidates.Add(assetsDir + "ComfyUI_03324_.png");
     candidates.Add(assetsDir + "background.png");
     {
@@ -286,10 +299,12 @@ void MainWindow::LoadBackgroundImage() {
     }
 
     wxImage img;
+    wxString selectedCandidate;
     for (size_t i = 0; i < candidates.GetCount(); ++i) {
         if (wxFileExists(candidates[i])) {
             img.LoadFile(candidates[i], wxBITMAP_TYPE_PNG);
             if (img.IsOk()) {
+                selectedCandidate = candidates[i];
                 break;
             }
         }
@@ -300,6 +315,11 @@ void MainWindow::LoadBackgroundImage() {
     }
 
     if (img.IsOk()) {
+        // Log which candidate was used and original size
+        {
+            std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+            dbg << "LoadBackgroundImage: selected image " << std::string(selectedCandidate.mb_str()) << " (" << img.GetWidth() << "x" << img.GetHeight() << ")\n";
+        }
         // Scale image to fit the window size (1344x768) while preserving aspect ratio
         int targetW = 1344;
         int targetH = 768;
@@ -319,7 +339,7 @@ void MainWindow::LoadBackgroundImage() {
         m_backgroundBitmap = wxBitmap(img);
         {
             std::ofstream dbg("tripsitter_debug.log", std::ios::app);
-            dbg << "LoadBackgroundImage: after bitmap from image\n";
+            dbg << "LoadBackgroundImage: after bitmap from image (rescaled to " << newW << "x" << newH << ")\n";
         }
     }
 
@@ -371,69 +391,83 @@ void MainWindow::ApplyPsychedelicStyling() {
         }
     }
     
-    // Style text inputs and dropdowns with light text; keep native backgrounds
-    wxColour lightText(200, 220, 255);
+    // Use black text for readability over the psychedelic background
+    wxColour readableBlack(0,0,0);
 
-    // Style file pickers and their children
+    // Style file pickers and their children (use darker backgrounds so they blend with wallpaper)
+    wxColour controlBG(18, 18, 22);
     if (m_audioFilePicker) {
-        m_audioFilePicker->SetForegroundColour(lightText);
-        // Style the text control inside the file picker
+        m_audioFilePicker->SetForegroundColour(readableBlack);
+        m_audioFilePicker->SetBackgroundColour(controlBG);
         wxWindowList& children = m_audioFilePicker->GetChildren();
         for (auto child : children) {
-            child->SetForegroundColour(lightText);
+            child->SetForegroundColour(readableBlack);
+            child->SetBackgroundColour(controlBG);
         }
         m_audioFilePicker->Refresh();
     }
     if (m_singleVideoPicker) {
-        m_singleVideoPicker->SetForegroundColour(lightText);
+        m_singleVideoPicker->SetForegroundColour(readableBlack);
+        m_singleVideoPicker->SetBackgroundColour(controlBG);
         wxWindowList& children = m_singleVideoPicker->GetChildren();
         for (auto child : children) {
-            child->SetForegroundColour(lightText);
+            child->SetForegroundColour(readableBlack);
+            child->SetBackgroundColour(controlBG);
         }
         m_singleVideoPicker->Refresh();
     }
     if (m_videoFolderPicker) {
-        m_videoFolderPicker->SetForegroundColour(lightText);
+        m_videoFolderPicker->SetForegroundColour(readableBlack);
+        m_videoFolderPicker->SetBackgroundColour(controlBG);
         wxWindowList& children = m_videoFolderPicker->GetChildren();
         for (auto child : children) {
-            child->SetForegroundColour(lightText);
+            child->SetForegroundColour(readableBlack);
+            child->SetBackgroundColour(controlBG);
         }
         m_videoFolderPicker->Refresh();
     }
     if (m_outputFilePicker) {
-        m_outputFilePicker->SetForegroundColour(lightText);
+        m_outputFilePicker->SetForegroundColour(readableBlack);
+        m_outputFilePicker->SetBackgroundColour(controlBG);
         wxWindowList& children = m_outputFilePicker->GetChildren();
         for (auto child : children) {
-            child->SetForegroundColour(lightText);
+            child->SetForegroundColour(readableBlack);
+            child->SetBackgroundColour(controlBG);
         }
         m_outputFilePicker->Refresh();
     }
 
     // Style dropdowns
     if (m_beatRateChoice) {
-        m_beatRateChoice->SetForegroundColour(lightText);
+        m_beatRateChoice->SetForegroundColour(readableBlack);
+        m_beatRateChoice->SetBackgroundColour(controlBG);
         m_beatRateChoice->Refresh();
     }
     if (m_analysisModeChoice) {
-        m_analysisModeChoice->SetForegroundColour(lightText);
+        m_analysisModeChoice->SetForegroundColour(readableBlack);
+        m_analysisModeChoice->SetBackgroundColour(controlBG);
         m_analysisModeChoice->Refresh();
     }
     if (m_resolutionChoice) {
-        m_resolutionChoice->SetForegroundColour(lightText);
+        m_resolutionChoice->SetForegroundColour(readableBlack);
+        m_resolutionChoice->SetBackgroundColour(controlBG);
         m_resolutionChoice->Refresh();
     }
     if (m_fpsChoice) {
-        m_fpsChoice->SetForegroundColour(lightText);
+        m_fpsChoice->SetForegroundColour(readableBlack);
+        m_fpsChoice->SetBackgroundColour(controlBG);
         m_fpsChoice->Refresh();
     }
 
     // Style text inputs
     if (m_previewTimestampCtrl) {
-        m_previewTimestampCtrl->SetForegroundColour(lightText);
+        m_previewTimestampCtrl->SetForegroundColour(readableBlack);
+        m_previewTimestampCtrl->SetBackgroundColour(controlBG);
         m_previewTimestampCtrl->Refresh();
     }
     if (m_previewBeatsCtrl) {
-        m_previewBeatsCtrl->SetForegroundColour(lightText);
+        m_previewBeatsCtrl->SetForegroundColour(readableBlack);
+        m_previewBeatsCtrl->SetBackgroundColour(controlBG);
         m_previewBeatsCtrl->Refresh();
     }
 
@@ -446,7 +480,11 @@ void MainWindow::ApplyPsychedelicStyling() {
 
     if (m_cancelButton) {
         m_cancelButton->SetBackgroundColour(wxNullColour);
-        m_cancelButton->SetForegroundColour(*wxWHITE);
+        m_cancelButton->SetForegroundColour(*wxBLACK);
+    }
+
+    if (m_previewButton) {
+        m_previewButton->SetForegroundColour(*wxBLACK);
     }
     
     // Style text
@@ -458,6 +496,96 @@ void MainWindow::ApplyPsychedelicStyling() {
     if (m_etaText) {
         m_etaText->SetForegroundColour(purple);
         m_etaText->SetFont(m_labelFont);
+    }
+
+    // Ensure all relevant children adopt dark background so they don't appear as bright white boxes
+    if (m_mainPanel) {
+        std::function<void(wxWindow*)> makeDark = [&](wxWindow* w) {
+            wxString cls = w->GetClassInfo()->GetClassName();
+            if (cls == "wxTextCtrl" || cls == "wxChoice" || cls == "wxSpinCtrl" || cls == "wxSpinCtrlDouble" || cls == "wxComboBox" || cls == "wxStaticText") {
+                w->SetBackgroundColour(controlBG);
+                w->SetBackgroundStyle(wxBG_STYLE_COLOUR);
+                w->SetForegroundColour(readableBlack);
+                w->Refresh();
+            }
+            wxWindowList& ch = w->GetChildren();
+            for (auto c : ch) makeDark(c);
+        };
+        makeDark(m_mainPanel);
+
+        // Also apply to file pickers explicitly (their internal textctrls are sometimes nested)
+        if (m_audioFilePicker) makeDark(m_audioFilePicker);
+        if (m_singleVideoPicker) makeDark(m_singleVideoPicker);
+        if (m_videoFolderPicker) makeDark(m_videoFolderPicker);
+        if (m_outputFilePicker) makeDark(m_outputFilePicker);
+
+        // Force properties on nested/internal textctrls of file picker controls (platform-dependent)
+        std::function<void(wxWindow*)> forceTextOnPicker = [&](wxWindow* p){
+            if (!p) return;
+            // If it's a wxFilePickerCtrl, try GetTextCtrl() and only modify if native hwnd exists
+            wxFilePickerCtrl* fpc = dynamic_cast<wxFilePickerCtrl*>(p);
+            if (fpc) {
+                wxTextCtrl* tc = fpc->GetTextCtrl();
+#ifdef _WIN32
+                if (tc && tc->GetHWND() && ::IsWindow((HWND)tc->GetHWND())) {
+#else
+                if (tc) {
+#endif
+                    tc->SetBackgroundColour(controlBG);
+                    tc->SetForegroundColour(readableBlack);
+                    tc->SetBackgroundStyle(wxBG_STYLE_COLOUR);
+                    tc->Refresh();
+                }
+            }
+            // Recurse into children but be conservative to avoid hitting native windows that may misbehave
+            wxWindowList& ch = p->GetChildren();
+            for (auto c : ch) {
+                wxString cls = c->GetClassInfo()->GetClassName();
+                if (cls == "wxTextCtrl") {
+#ifdef _WIN32
+                    if (c->GetHWND() && ::IsWindow((HWND)c->GetHWND())) {
+                        c->SetBackgroundColour(controlBG);
+                        c->SetForegroundColour(readableBlack);
+                        c->SetBackgroundStyle(wxBG_STYLE_COLOUR);
+                        c->Refresh();
+                    }
+#else
+                    c->SetBackgroundColour(controlBG);
+                    c->SetForegroundColour(readableBlack);
+                    c->SetBackgroundStyle(wxBG_STYLE_COLOUR);
+                    c->Refresh();
+#endif
+                }
+                // deeper recursion
+                forceTextOnPicker(c);
+            }
+        };
+
+        // Defer to after layout so native child controls exist
+        m_mainPanel->CallAfter([=](){
+            forceTextOnPicker(m_audioFilePicker);
+            forceTextOnPicker(m_singleVideoPicker);
+            forceTextOnPicker(m_videoFolderPicker);
+            forceTextOnPicker(m_outputFilePicker);
+
+            // Schedule a second pass to catch native children that are created slightly later
+            // (some platforms create child native windows asynchronously)
+            // Use a one-shot timer to run the second pass after a short delay
+            wxTimer* secondPassTimer = new wxTimer(m_mainPanel);
+            m_mainPanel->Bind(wxEVT_TIMER, [=](wxTimerEvent& ev){
+                forceTextOnPicker(m_audioFilePicker);
+                forceTextOnPicker(m_singleVideoPicker);
+                forceTextOnPicker(m_videoFolderPicker);
+                forceTextOnPicker(m_outputFilePicker);
+                wxTimer* t = dynamic_cast<wxTimer*>(ev.GetEventObject());
+                if (t) {
+                    t->Stop();
+                    // timer was allocated on heap; delete it now
+                    delete t;
+                }
+            }, wxID_ANY, wxID_ANY, secondPassTimer);
+            secondPassTimer->StartOnce(250);
+        });
     }
 }
 
@@ -475,7 +603,7 @@ void MainWindow::CreateControls() {
     m_mainPanel->SetVirtualSize(1344, 1400);  // Taller virtual size for scrolling
     m_mainPanel->SetDoubleBuffered(true);  // Enable double buffering
 
-    // Load title image
+    // Assets directory
     wxString assetsDir;
 #ifdef __APPLE__
     // On macOS, assets are in the app bundle's Resources folder
@@ -485,13 +613,36 @@ void MainWindow::CreateControls() {
     assetsDir = wxFileName(exePath).GetPath() + "/assets/";
 #endif
 
-    wxImage titleImg;
-    wxString titleImagePath = assetsDir + "asset for top hedder final.png";
-    if (wxFileExists(titleImagePath)) {
-        titleImg.LoadFile(titleImagePath, wxBITMAP_TYPE_PNG);
-        if (titleImg.IsOk()) {
-            m_titleImage = new wxStaticBitmap(m_mainPanel, wxID_ANY, wxBitmap(titleImg));
+    // Restore legacy title control: load user's 'final' title image and create
+    // a wxStaticBitmap so it behaves as before and preserves alpha.
+    wxString titleCandidates[] = { "asset for top hedder final.png", "asset for top hedder.png" };
+    bool titleLoaded = false;
+    for (const wxString &n : titleCandidates) {
+        wxString p = assetsDir + n;
+        if (wxFileExists(p)) {
+            wxImage timg;
+            if (timg.LoadFile(p, wxBITMAP_TYPE_PNG) && timg.IsOk()) {
+                // Preserve alpha if present; otherwise ensure alpha channel is initialized
+                if (!timg.HasAlpha()) timg.InitAlpha();
+                // Scale to reasonable width (max 800) while keeping aspect ratio
+                const int maxTitleW = 800;
+                if (timg.GetWidth() > maxTitleW) {
+                    double s = static_cast<double>(maxTitleW) / timg.GetWidth();
+                    timg.Rescale(static_cast<int>(timg.GetWidth() * s), static_cast<int>(timg.GetHeight() * s), wxIMAGE_QUALITY_HIGH);
+                }
+                m_titleImage = new wxStaticBitmap(m_mainPanel, wxID_ANY, wxBitmap(timg));
+                // Make sure control background is transparent so wallpaper shows through alpha
+                m_titleImage->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+                m_titleImage->Refresh();
+                titleLoaded = true;
+                std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+                dbg << "CreateControls: loaded title image " << std::string(n.mb_str()) << " (" << timg.GetWidth() << "x" << timg.GetHeight() << ")\n";
+                break;
+            }
         }
+    }
+    if (!titleLoaded) {
+        m_titleImage = nullptr;
     }
 
     // Load start button animation
@@ -557,6 +708,20 @@ void MainWindow::CreateControls() {
         } else {
             dc.GradientFillLinear(wxRect(0, 0, clientSize.x, clientSize.y),
                 wxColour(10, 10, 26), wxColour(25, 0, 50), wxSOUTH);
+        }
+
+        // Only draw the legacy header bitmap if no static title image exists (avoid duplication)
+        if (!m_titleImage && m_headerBitmap.IsOk()) {
+            int hx = (clientSize.x - m_headerBitmap.GetWidth()) / 2;
+            int hy = 10; // small top margin
+            int pad = 12;
+            int bw = m_headerBitmap.GetWidth() + pad * 2;
+            int bh = m_headerBitmap.GetHeight() + pad * 2;
+            // Draw a semi-transparent rounded rect backdrop using the DC
+            dc.SetBrush(wxBrush(wxColour(8, 8, 12, 200)));
+            dc.SetPen(wxPen(wxColour(0,0,0,0)));
+            dc.DrawRoundedRectangle(hx - pad, hy - pad, bw, bh, 8);
+            dc.DrawBitmap(m_headerBitmap, hx, hy, true);
         }
 
         // Now manually draw children with scroll offset applied
@@ -645,6 +810,20 @@ void MainWindow::CreateControls() {
             // Fallback gradient
             dc.GradientFillLinear(wxRect(0, 0, clientSize.x, clientSize.y),
                 wxColour(10, 10, 26), wxColour(25, 0, 50), wxSOUTH);
+        }
+
+        // Only draw the legacy header bitmap if no static title image exists (avoid duplication)
+        if (!m_titleImage && m_headerBitmap.IsOk()) {
+            int hx = (clientSize.x - m_headerBitmap.GetWidth()) / 2;
+            int hy = 10; // small top margin
+            int pad = 12;
+            int bw = m_headerBitmap.GetWidth() + pad * 2;
+            int bh = m_headerBitmap.GetHeight() + pad * 2;
+            // Draw a semi-transparent rounded rect backdrop using the DC
+            dc.SetBrush(wxBrush(wxColour(8, 8, 12, 200)));
+            dc.SetPen(wxPen(wxColour(0,0,0,0)));
+            dc.DrawRoundedRectangle(hx - pad, hy - pad, bw, bh, 8);
+            dc.DrawBitmap(m_headerBitmap, hx, hy, true);
         }
 
         // Prepare DC so child controls are drawn in the correct scrolled coordinates
@@ -806,7 +985,9 @@ void MainWindow::CreateControls() {
         int divisorIdx = m_effectBeatDivisorChoice->GetSelection();
         int divisor = (divisorIdx == 0) ? 1 : (1 << divisorIdx);
         if (m_beatVisualizer) {
-            m_beatVisualizer->SetEffectBeatDivisor(divisor);
+            // BeatVisualizer no longer exposes SetEffectBeatDivisor; keep as no-op
+            std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+            dbg << "Effect divisor changed to " << divisor << " (no-op)" << std::endl;
         }
     });
     // Set initial divisor (deferred until BeatVisualizer is created) // no-op here
@@ -841,9 +1022,10 @@ void MainWindow::CreateControls() {
     // Beat Visualizer
     m_beatVisualizer = new BeatVisualizer(m_mainPanel, wxID_ANY, 
         wxDefaultPosition, wxSize(890, 120));
-    // Set initial divisor now that visualizer exists
+    // Set initial divisor now that visualizer exists (no-op; BeatVisualizer API changed)
     if (m_beatVisualizer) {
-        m_beatVisualizer->SetEffectBeatDivisor(1);
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "Initial effect divisor set to 1 (no-op)" << std::endl;
     }
     
     // Video Preview
@@ -871,7 +1053,9 @@ void MainWindow::CreateControls() {
     m_audioFilePicker->Bind(wxEVT_FILEPICKER_CHANGED, &MainWindow::OnAudioSelected, this);
     m_singleVideoRadio->Bind(wxEVT_RADIOBUTTON, &MainWindow::OnVideoSourceChanged, this);
     m_multiClipRadio->Bind(wxEVT_RADIOBUTTON, &MainWindow::OnVideoSourceChanged, this);
-    m_startAnimation->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) { wxCommandEvent dummy; OnStartProcessing(dummy); });
+    if (m_startAnimation) {
+        m_startAnimation->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) { wxCommandEvent dummy; OnStartProcessing(dummy); });
+    }
     m_cancelButton->Bind(wxEVT_BUTTON, &MainWindow::OnCancelProcessing, this);
     m_previewButton->Bind(wxEVT_BUTTON, &MainWindow::OnPreviewFrame, this);
     
@@ -885,45 +1069,109 @@ void MainWindow::CreateLayout() {
     wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
     mainSizer->AddSpacer(15);
     
-    // Title image
+    // Title image (place inside a dark rounded backdrop panel to separate from wallpaper)
     if (m_titleImage) {
-        mainSizer->Add(m_titleImage, 0, wxALIGN_CENTER_HORIZONTAL | wxALL, 5);
+        // Copy the bitmap into a small backdrop panel so we don't get translucency/white-box artifacts
+        wxBitmap titleBmp = m_titleImage->GetBitmap();
+        // Destroy original (was parent's child) to avoid duplicate rendering
+        m_titleImage->Destroy();
+        m_titleImage = nullptr;
+
+        wxPanel* titleBackdrop = new wxPanel(m_mainPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+        titleBackdrop->SetMinSize(wxSize(titleBmp.GetWidth() + 24, titleBmp.GetHeight() + 16));
+        // Use custom paint so we can draw a translucent rounded backdrop
+        titleBackdrop->SetBackgroundStyle(wxBG_STYLE_PAINT);
+        titleBackdrop->SetDoubleBuffered(true);
+
+        wxBoxSizer* tb = new wxBoxSizer(wxHORIZONTAL);
+        wxStaticBitmap* titleCopy = new wxStaticBitmap(titleBackdrop, wxID_ANY, titleBmp);
+        titleCopy->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+        tb->AddSpacer(12);
+        tb->Add(titleCopy, 0, wxALIGN_CENTER_VERTICAL);
+        tb->AddSpacer(12);
+        titleBackdrop->SetSizer(tb);
+
+        // Paint handler: draw translucent rounded rect before children
+        titleBackdrop->Bind(wxEVT_PAINT, [=](wxPaintEvent& evt) {
+            wxAutoBufferedPaintDC dc(titleBackdrop);
+            wxSize sz = titleBackdrop->GetClientSize();
+            dc.Clear();
+            // Semi-transparent dark backdrop (alpha=200)
+            dc.SetBrush(wxBrush(wxColour(8, 8, 12, 200)));
+            dc.SetPen(*wxTRANSPARENT_PEN);
+            int radius = 10;
+            dc.DrawRoundedRectangle(0, 0, sz.x, sz.y, radius);
+            // Let children paint on top (they will be painted automatically after this handler returns)
+        });
+
+        // Keep pointer to the copy so other code can still reference m_titleImage
+        m_titleImage = titleCopy;
+        mainSizer->Add(titleBackdrop, 0, wxALIGN_CENTER_HORIZONTAL | wxALL, 8);
     }
     
-    // Header image (MTV Trip Sitter)
+    // Header image (MTV Trip Sitter) - prefer final image if provided, fall back to other versions
     wxString exePath = wxStandardPaths::Get().GetExecutablePath();
     wxString assetsDir = wxFileName(exePath).GetPath() + "/assets/";
-    wxBitmap headerBitmap;
-    if (headerBitmap.LoadFile(assetsDir + "asset for top hedder alpha_2.png", wxBITMAP_TYPE_PNG) && headerBitmap.IsOk()) {
-        // Scale down to a friendly size while preserving aspect ratio
-        wxImage img = headerBitmap.ConvertToImage();
-        if (headerBitmap.HasAlpha() && !img.HasAlpha()) {
-            img.InitAlpha();
+    wxString headerCandidates[] = {
+        "asset for top hedder final.png",
+        "asset for top hedder alpha_2.png",
+        "asset for top hedder.png"
+    };
+    wxImage headerImg;
+    wxString chosenHeader;
+    for (const wxString &name : headerCandidates) {
+        wxString p = assetsDir + name;
+        if (wxFileExists(p)) {
+            if (headerImg.LoadFile(p, wxBITMAP_TYPE_PNG) && headerImg.IsOk()) {
+                chosenHeader = name;
+                break;
+            }
         }
+    }
+    if (!chosenHeader.IsEmpty()) {
+        // If no alpha channel, treat near-white background as transparent
+        if (!headerImg.HasAlpha()) {
+            headerImg.InitAlpha();
+            unsigned char* data = headerImg.GetData();
+            unsigned char* alpha = headerImg.GetAlpha();
+            int w = headerImg.GetWidth();
+            int h = headerImg.GetHeight();
+            for (int y = 0; y < h; ++y) {
+                for (int x = 0; x < w; ++x) {
+                    int idx = (y * w + x) * 3;
+                    unsigned char r = data[idx];
+                    unsigned char g = data[idx + 1];
+                    unsigned char b = data[idx + 2];
+                    // If pixel is almost white, make it transparent
+                    if (r > 245 && g > 245 && b > 245) {
+                        alpha[y * w + x] = 0;
+                    } else {
+                        alpha[y * w + x] = 255;
+                    }
+                }
+            }
+        }
+
+        // Scale down to a friendly size while preserving aspect ratio
         const int maxW = 900;
         const int maxH = 260;
-        if (img.GetWidth() > maxW || img.GetHeight() > maxH) {
-            double scaleW = static_cast<double>(maxW) / img.GetWidth();
-            double scaleH = static_cast<double>(maxH) / img.GetHeight();
+        if (headerImg.GetWidth() > maxW || headerImg.GetHeight() > maxH) {
+            double scaleW = static_cast<double>(maxW) / headerImg.GetWidth();
+            double scaleH = static_cast<double>(maxH) / headerImg.GetHeight();
             double scale = std::min(scaleW, scaleH);
-            int newW = static_cast<int>(img.GetWidth() * scale);
-            int newH = static_cast<int>(img.GetHeight() * scale);
-            img.Rescale(newW, newH, wxIMAGE_QUALITY_HIGH);
+            int newW = static_cast<int>(headerImg.GetWidth() * scale);
+            int newH = static_cast<int>(headerImg.GetHeight() * scale);
+            headerImg.Rescale(newW, newH, wxIMAGE_QUALITY_HIGH);
         }
-        m_headerBitmap = wxBitmap(img, -1);
-        wxPanel* headerPanel = new wxPanel(
-            m_mainPanel, wxID_ANY, wxDefaultPosition, m_headerBitmap.GetSize(),
-            wxBORDER_NONE | wxTRANSPARENT_WINDOW);
-        headerPanel->SetMinSize(m_headerBitmap.GetSize());
-        headerPanel->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
-        headerPanel->Bind(wxEVT_ERASE_BACKGROUND, [](wxEraseEvent&){ /* no-op to let parent show through */ });
-        headerPanel->Bind(wxEVT_PAINT, [this](wxPaintEvent& evt){
-            wxPaintDC dc(static_cast<wxWindow*>(evt.GetEventObject()));
-            if (m_headerBitmap.IsOk()) {
-                dc.DrawBitmap(m_headerBitmap, 0, 0, true);
-            }
-        });
-        mainSizer->Add(headerPanel, 0, wxALIGN_CENTER_HORIZONTAL | wxALL, 5);
+
+        // Store scaled bitmap; we will draw it directly in the main panel paint handler
+        m_headerBitmap = wxBitmap(headerImg, -1);
+        // Reserve vertical space so layout keeps controls below the header
+        mainSizer->AddSpacer(m_headerBitmap.GetHeight() + 10);
+        {
+            std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+            dbg << "CreateLayout: header loaded and scaled (" << m_headerBitmap.GetWidth() << "x" << m_headerBitmap.GetHeight() << ") - used: " << std::string(chosenHeader.mb_str()) << "\n";
+        }
     } else {
         // Fallback text if the header image is missing
         wxStaticText* title = new wxStaticText(m_mainPanel, wxID_ANY, "MTV TRIP SITTER");
@@ -963,8 +1211,21 @@ void MainWindow::CreateLayout() {
     inputGrid->Add(m_videoFolderPicker, wxGBPosition(3, 1), wxDefaultSpan, wxEXPAND);
 
     inputGrid->AddGrowableCol(1);
-    inputBox->Add(inputGrid, 1, wxEXPAND | wxALL, 10);
-    mainSizer->Add(inputBox, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
+    // Wrap input grid in a translucent backdrop panel to visually separate controls from wallpaper
+    wxPanel* inputPanel = new wxPanel(m_mainPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+    inputPanel->SetBackgroundStyle(wxBG_STYLE_PAINT);
+    inputPanel->Bind(wxEVT_PAINT, [=](wxPaintEvent&){
+        wxAutoBufferedPaintDC dc(inputPanel);
+        wxSize s = inputPanel->GetClientSize();
+        dc.Clear();
+        dc.SetBrush(wxBrush(wxColour(8,8,12,180)));
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.DrawRoundedRectangle(0, 0, s.x, s.y, 8);
+    });
+    wxBoxSizer* inputPanelSizer = new wxBoxSizer(wxVERTICAL);
+    inputPanelSizer->Add(inputGrid, 1, wxEXPAND | wxALL, 10);
+    inputPanel->SetSizer(inputPanelSizer);
+    mainSizer->Add(inputPanel, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
     mainSizer->AddSpacer(10);
 
     // Sync Settings Section
@@ -976,6 +1237,7 @@ void MainWindow::CreateLayout() {
 
     wxBoxSizer* settingsBox = new wxBoxSizer(wxVERTICAL);
     wxGridBagSizer* settingsGrid = new wxGridBagSizer(8, 10);
+
 
     wxStaticText* beatLabel = new wxStaticText(m_mainPanel, wxID_ANY, "Beat Sync Rate:");
     beatLabel->SetForegroundColour(*wxWHITE);
@@ -1005,8 +1267,21 @@ void MainWindow::CreateLayout() {
     settingsGrid->Add(previewSizer, wxGBPosition(4, 0), wxGBSpan(1, 2));
 
     settingsGrid->AddGrowableCol(1);
-    settingsBox->Add(settingsGrid, 1, wxEXPAND | wxALL, 10);
-    mainSizer->Add(settingsBox, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
+    // Wrap settings grid in a translucent panel
+    wxPanel* settingsPanel = new wxPanel(m_mainPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+    settingsPanel->SetBackgroundStyle(wxBG_STYLE_PAINT);
+    settingsPanel->Bind(wxEVT_PAINT, [=](wxPaintEvent&){
+        wxAutoBufferedPaintDC dc(settingsPanel);
+        wxSize s = settingsPanel->GetClientSize();
+        dc.Clear();
+        dc.SetBrush(wxBrush(wxColour(8,8,12,180)));
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.DrawRoundedRectangle(0, 0, s.x, s.y, 8);
+    });
+    wxBoxSizer* settingsPanelSizer = new wxBoxSizer(wxVERTICAL);
+    settingsPanelSizer->Add(settingsGrid, 1, wxEXPAND | wxALL, 10);
+    settingsPanel->SetSizer(settingsPanelSizer);
+    mainSizer->Add(settingsPanel, 0, wxEXPAND | wxLEFT | wxRIGHT, 15);
     mainSizer->AddSpacer(10);
 
     // Effects Section
@@ -1108,7 +1383,21 @@ void MainWindow::CreateLayout() {
 
     // Action Buttons
     wxBoxSizer* buttonSizer = new wxBoxSizer(wxHORIZONTAL);
-    buttonSizer->Add(m_startAnimation, 0, wxALL, 5);
+    // Add appropriate start control (animated control first, then button fallback)
+    if (m_startAnimation) {
+        buttonSizer->Add(m_startAnimation, 0, wxALL, 5);
+    } else if (m_startButton) {
+        buttonSizer->Add(m_startButton, 0, wxALL, 5);
+    } else {
+        // Create a fallback start button if neither exists
+        m_startButton = new wxButton(m_mainPanel, wxID_ANY, "START SYNC",
+            wxDefaultPosition, wxSize(200, 45));
+        m_startButton->SetBackgroundColour(wxColour(0, 217, 255));
+        m_startButton->SetForegroundColour(*wxBLACK);
+        m_startButton->SetFont(m_titleFont);
+        m_startButton->Bind(wxEVT_BUTTON, &MainWindow::OnStartProcessing, this);
+        buttonSizer->Add(m_startButton, 0, wxALL, 5);
+    }
     buttonSizer->Add(m_cancelButton, 0, wxALL, 5);
     mainSizer->Add(buttonSizer, 0, wxALIGN_CENTER_HORIZONTAL);
     mainSizer->AddSpacer(15);
@@ -1250,6 +1539,14 @@ void MainWindow::OnPreviewTransition(wxCommandEvent& event) {
 
 
 void MainWindow::OnStartProcessing(wxCommandEvent& event) {
+    // Defensive: ensure UI controls exist
+    if (!m_audioFilePicker || !m_outputFilePicker || !m_videoFolderPicker || !m_singleVideoPicker || !m_multiClipRadio) {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "OnStartProcessing: UI controls not initialized" << std::endl;
+        wxMessageBox("UI not initialized yet. Please try again.", "Error", wxOK | wxICON_ERROR, this);
+        return;
+    }
+
     // Validate inputs
     wxString audioPath = m_audioFilePicker->GetPath();
     wxString videoPath = m_multiClipRadio->GetValue() ? 
@@ -1318,11 +1615,11 @@ void MainWindow::OnStartProcessing(wxCommandEvent& event) {
     int divisorIdx = m_effectBeatDivisorChoice->GetSelection();
     config.effectBeatDivisor = (divisorIdx == 0) ? 1 : (1 << divisorIdx);  // 1, 2, 4, 8
     
-    // Effect region from waveform (right-click to set)
-    if (m_beatVisualizer && m_beatVisualizer->HasEffectRegion()) {
-        auto effectRegion = m_beatVisualizer->GetEffectRegion();
-        config.effectStartTime = effectRegion.first;
-        config.effectEndTime = effectRegion.second;
+    // Effect region from waveform (use selection range as effect region)
+    if (m_beatVisualizer) {
+        auto sel = m_beatVisualizer->GetSelectionRange();
+        config.effectStartTime = sel.first;
+        config.effectEndTime = sel.second;
     } else {
         config.effectStartTime = 0.0;
         config.effectEndTime = -1.0;  // Full track
@@ -1334,7 +1631,12 @@ void MainWindow::OnStartProcessing(wxCommandEvent& event) {
     config.transitionDuration = m_transitionDurationCtrl->GetValue();
 
     UpdateUIState(true);
-    m_startAnimation->Play();
+    if (m_startAnimation) {
+        m_startAnimation->Play();
+    } else {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "OnStartProcessing: m_startAnimation not present (using button fallback)" << std::endl;
+    }
     StartProcessing(config);
 }
 
@@ -1444,7 +1746,11 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
             wxQueueEvent(this, evt);
             
             BeatSync::AudioAnalyzer analyzer;
-            analyzer.setAnalysisMode(static_cast<BeatSync::AnalysisMode>(config.analysisMode));
+            // Legacy: analyzer.setAnalysisMode(...) removed; fall back to default energy-based analysis
+            if (config.analysisMode != 0) {
+                std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+                dbg << "Requested analysis mode " << config.analysisMode << " not supported. Using default energy-based analysis." << std::endl;
+            }
             BeatSync::BeatGrid beatGrid = analyzer.analyze(config.audioPath.ToStdString());
             
             if (m_cancelRequested) {
@@ -1789,53 +2095,73 @@ void MainWindow::StartProcessing(const ProcessingConfig& config) {
 }
 
 void MainWindow::UpdateProgress(int percent, const wxString& status, const wxString& eta) {
-    m_progressBar->SetValue(percent);
-    m_statusText->SetLabel(status);
-    m_etaText->SetLabel(eta);
+    // Defensive: check pointers before updating UI
+    if (m_progressBar) m_progressBar->SetValue(percent);
+    if (m_statusText) m_statusText->SetLabel(status);
+    if (m_etaText) m_etaText->SetLabel(eta);
+
+    // Helpful debug trace
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "UpdateProgress: " << percent << " " << std::string(status.mb_str()) << " " << std::string(eta.mb_str()) << std::endl;
+    }
 }
 
 void MainWindow::OnProcessingComplete(bool success, const wxString& message) {
     UpdateUIState(false);
-    m_startAnimation->Stop();
-    
+
+    // Defensive: only stop animation if it exists
+    if (m_startAnimation) {
+        m_startAnimation->Stop();
+    } else {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "OnProcessingComplete: m_startAnimation not present" << std::endl;
+    }
+
     if (m_processingThread && m_processingThread->joinable()) {
         m_processingThread->join();
     }
     
     if (success) {
-        m_progressBar->SetValue(100);
-        m_statusText->SetLabel(message);
+        if (m_progressBar) m_progressBar->SetValue(100);
+        if (m_statusText) m_statusText->SetLabel(message);
         wxMessageBox(message, "Success", wxOK | wxICON_INFORMATION, this);
     } else {
         // Reuse the full logs dialog for errors
-        m_statusText->SetLabel(message);
+        if (m_statusText) m_statusText->SetLabel(message);
         wxCommandEvent evt;
         OnViewLogs(evt);
+    }
+
+    {
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "OnProcessingComplete: success=" << (success?"1":"0") << " msg=" << std::string(message.mb_str()) << std::endl;
     }
 }
 
 void MainWindow::LoadSettings() {
-    m_beatRateChoice->SetSelection(m_settingsManager->GetInt("BeatRate", 0));
-    m_analysisModeChoice->SetSelection(m_settingsManager->GetInt("AnalysisMode", 1));  // Default to AI mode
-    m_resolutionChoice->SetSelection(m_settingsManager->GetInt("Resolution", 0));
-    m_fpsChoice->SetSelection(m_settingsManager->GetInt("FPS", 0));
-    m_previewModeCheck->SetValue(m_settingsManager->GetBool("PreviewMode", false));
-    m_previewBeatsCtrl->SetValue(m_settingsManager->GetInt("PreviewBeats", 10));
-    m_previewTimestampCtrl->SetValue(m_settingsManager->GetString("PreviewTimestamp", "0.5"));
+    // Defensive checks for UI controls
+    if (m_beatRateChoice) m_beatRateChoice->SetSelection(m_settingsManager->GetInt("BeatRate", 0));
+    if (m_analysisModeChoice) m_analysisModeChoice->SetSelection(m_settingsManager->GetInt("AnalysisMode", 1));  // Default to AI mode
+    if (m_resolutionChoice) m_resolutionChoice->SetSelection(m_settingsManager->GetInt("Resolution", 0));
+    if (m_fpsChoice) m_fpsChoice->SetSelection(m_settingsManager->GetInt("FPS", 0));
+    if (m_previewModeCheck) m_previewModeCheck->SetValue(m_settingsManager->GetBool("PreviewMode", false));
+    if (m_previewBeatsCtrl) m_previewBeatsCtrl->SetValue(m_settingsManager->GetInt("PreviewBeats", 10));
+    if (m_previewTimestampCtrl) m_previewTimestampCtrl->SetValue(m_settingsManager->GetString("PreviewTimestamp", "0.5"));
     
     wxString lastAudio = m_settingsManager->GetString("LastAudioPath", "");
     if (!lastAudio.IsEmpty() && wxFileExists(lastAudio)) {
-        m_audioFilePicker->SetPath(lastAudio);
+        if (m_audioFilePicker) m_audioFilePicker->SetPath(lastAudio);
     }
     
     wxString lastVideo = m_settingsManager->GetString("LastVideoPath", "");
     if (!lastVideo.IsEmpty()) {
         if (wxDirExists(lastVideo)) {
-            m_videoFolderPicker->SetPath(lastVideo);
-            m_multiClipRadio->SetValue(true);
+            if (m_videoFolderPicker) m_videoFolderPicker->SetPath(lastVideo);
+            if (m_multiClipRadio) m_multiClipRadio->SetValue(true);
         } else if (wxFileExists(lastVideo)) {
-            m_singleVideoPicker->SetPath(lastVideo);
-            m_singleVideoRadio->SetValue(true);
+            if (m_singleVideoPicker) m_singleVideoPicker->SetPath(lastVideo);
+            if (m_singleVideoRadio) m_singleVideoRadio->SetValue(true);
         }
     }
 
@@ -1844,19 +2170,21 @@ void MainWindow::LoadSettings() {
 
     // Effects: restore persisted settings
     if (m_settingsManager) {
-        m_colorGradeCheck->SetValue(m_settingsManager->GetBool("EnableColorGrade", false));
+        if (m_colorGradeCheck) m_colorGradeCheck->SetValue(m_settingsManager->GetBool("EnableColorGrade", false));
         wxString preset = m_settingsManager->GetString("ColorPreset", "Warm");
-        if (preset.Lower() == "warm") m_colorPresetChoice->SetSelection(0);
-        else if (preset.Lower() == "cool") m_colorPresetChoice->SetSelection(1);
-        else if (preset.Lower() == "vintage") m_colorPresetChoice->SetSelection(2);
-        else if (preset.Lower() == "vibrant") m_colorPresetChoice->SetSelection(3);
-        m_colorPresetChoice->Enable(m_colorGradeCheck->GetValue());
+        if (m_colorPresetChoice) {
+            if (preset.Lower() == "warm") m_colorPresetChoice->SetSelection(0);
+            else if (preset.Lower() == "cool") m_colorPresetChoice->SetSelection(1);
+            else if (preset.Lower() == "vintage") m_colorPresetChoice->SetSelection(2);
+            else if (preset.Lower() == "vibrant") m_colorPresetChoice->SetSelection(3);
+            m_colorPresetChoice->Enable(m_colorGradeCheck ? m_colorGradeCheck->GetValue() : false);
+        }
 
-        m_vignetteCheck->SetValue(m_settingsManager->GetBool("EnableVignette", false));
+        if (m_vignetteCheck) m_vignetteCheck->SetValue(m_settingsManager->GetBool("EnableVignette", false));
 
-        m_beatFlashCheck->SetValue(m_settingsManager->GetBool("EnableBeatFlash", false));
-        m_flashIntensitySlider->SetValue(m_settingsManager->GetInt("FlashIntensityValue", 30));
-        m_flashIntensitySlider->Enable(m_beatFlashCheck->GetValue());
+        if (m_beatFlashCheck) m_beatFlashCheck->SetValue(m_settingsManager->GetBool("EnableBeatFlash", false));
+        if (m_flashIntensitySlider) m_flashIntensitySlider->SetValue(m_settingsManager->GetInt("FlashIntensityValue", 30));
+        if (m_flashIntensitySlider) m_flashIntensitySlider->Enable(m_beatFlashCheck ? m_beatFlashCheck->GetValue() : false);
 
         m_beatZoomCheck->SetValue(m_settingsManager->GetBool("EnableBeatZoom", false));
         m_zoomIntensitySlider->SetValue(m_settingsManager->GetInt("ZoomIntensityValue", 4));
@@ -1866,7 +2194,10 @@ void MainWindow::LoadSettings() {
         int sel = 0;
         if (divisor == 1) sel = 0; else if (divisor == 2) sel = 1; else if (divisor == 4) sel = 2; else if (divisor == 8) sel = 3;
         m_effectBeatDivisorChoice->SetSelection(sel);
-        if (m_beatVisualizer) m_beatVisualizer->SetEffectBeatDivisor(divisor);
+        if (m_beatVisualizer) {
+            std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+            dbg << "LoadSettings: EffectBeatDivisor=" << divisor << " (no-op)" << std::endl;
+        }
 
         // Transitions: load available transitions from assets
         wxString exePath = wxStandardPaths::Get().GetExecutablePath();
