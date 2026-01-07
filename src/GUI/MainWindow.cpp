@@ -278,7 +278,6 @@ void MainWindow::LoadBackgroundImage() {
 
     // Try the new MTV artwork first, then existing fallbacks
     wxArrayString candidates;
-    candidates.Add(assetsDir + "asset - this one.png");
     candidates.Add(assetsDir + "ComfyUI_03324_.png");
     candidates.Add(assetsDir + "background.png");
     {
