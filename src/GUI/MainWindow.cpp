@@ -439,8 +439,8 @@ void MainWindow::ApplyPsychedelicStyling() {
 
     // Style buttons
     if (m_startButton) {
-        m_startButton->SetBackgroundColour(wxNullColour);
-        m_startButton->SetForegroundColour(*wxWHITE);
+        m_startButton->SetBackgroundColour(cyan);
+        m_startButton->SetForegroundColour(*wxBLACK);
         m_startButton->SetFont(m_titleFont);
     }
 
