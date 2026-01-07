@@ -26,6 +26,7 @@ public:
 private:
     // UI Components
     wxScrolledWindow* m_mainPanel;
+    wxStaticBitmap* m_titleImage;
     wxFilePickerCtrl* m_audioFilePicker;
     wxDirPickerCtrl* m_videoFolderPicker;
     wxFilePickerCtrl* m_singleVideoPicker;
@@ -66,6 +67,9 @@ private:
     
     BeatVisualizer* m_beatVisualizer;
     VideoPreview* m_videoPreview;
+    
+    // Animation for start button
+    wxAnimationCtrl* m_startAnimation;
     
     // Backend
     std::unique_ptr<SettingsManager> m_settingsManager;

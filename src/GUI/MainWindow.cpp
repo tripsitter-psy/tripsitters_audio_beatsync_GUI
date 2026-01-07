@@ -278,7 +278,6 @@ void MainWindow::LoadBackgroundImage() {
 
     // Try the new MTV artwork first, then existing fallbacks
     wxArrayString candidates;
-    candidates.Add(assetsDir + "asset - this one.png");
     candidates.Add(assetsDir + "ComfyUI_03324_.png");
     candidates.Add(assetsDir + "background.png");
     {
@@ -440,8 +439,8 @@ void MainWindow::ApplyPsychedelicStyling() {
 
     // Style buttons
     if (m_startButton) {
-        m_startButton->SetBackgroundColour(wxNullColour);
-        m_startButton->SetForegroundColour(*wxWHITE);
+        m_startButton->SetBackgroundColour(cyan);
+        m_startButton->SetForegroundColour(*wxBLACK);
         m_startButton->SetFont(m_titleFont);
     }
 
@@ -476,6 +475,31 @@ void MainWindow::CreateControls() {
     m_mainPanel->SetVirtualSize(1344, 1400);  // Taller virtual size for scrolling
     m_mainPanel->SetDoubleBuffered(true);  // Enable double buffering
 
+    // Load title image
+    wxString assetsDir;
+#ifdef __APPLE__
+    // On macOS, assets are in the app bundle's Resources folder
+    assetsDir = wxStandardPaths::Get().GetResourcesDir() + "/assets/";
+#else
+    wxString exePath = wxStandardPaths::Get().GetExecutablePath();
+    assetsDir = wxFileName(exePath).GetPath() + "/assets/";
+#endif
+
+    wxImage titleImg;
+    wxString titleImagePath = assetsDir + "asset for top hedder final.png";
+    if (wxFileExists(titleImagePath)) {
+        titleImg.LoadFile(titleImagePath, wxBITMAP_TYPE_PNG);
+        if (titleImg.IsOk()) {
+            m_titleImage = new wxStaticBitmap(m_mainPanel, wxID_ANY, wxBitmap(titleImg));
+        }
+    }
+
+    // Load start button animation
+    wxAnimation startAnim;
+    wxString startGifPath = assetsDir + "asset sync_00004.gif";
+    if (wxFileExists(startGifPath)) {
+        startAnim.LoadFile(startGifPath, wxANIMATION_TYPE_GIF);
+    }
 #ifdef __WXUNIVERSAL__
     // wxUniversal: Custom paint for static background
     m_mainPanel->SetBackgroundStyle(wxBG_STYLE_PAINT);
@@ -835,19 +859,6 @@ void MainWindow::CreateControls() {
     // Buttons
     m_startButton = new wxButton(m_mainPanel, wxID_ANY, "START SYNC", 
         wxDefaultPosition, wxSize(250, 45));
-
-    // Apply custom start-button artwork when available
-    {
-        wxString exePath = wxStandardPaths::Get().GetExecutablePath();
-        wxString assetsDir = wxFileName(exePath).GetPath() + "/assets/";
-        wxBitmap startBmp;
-        if (startBmp.LoadFile(assetsDir + "button asset alpha.png", wxBITMAP_TYPE_PNG) && startBmp.IsOk()) {
-            m_startButton->SetBitmap(startBmp);
-            m_startButton->SetLabel(""); // image-only when asset exists
-            m_startButton->SetMinSize(startBmp.GetSize());
-        }
-    }
-
     m_cancelButton = new wxButton(m_mainPanel, wxID_ANY, "CANCEL",
         wxDefaultPosition, wxSize(120, 45));
     m_cancelButton->Enable(false);
@@ -860,7 +871,7 @@ void MainWindow::CreateControls() {
     m_audioFilePicker->Bind(wxEVT_FILEPICKER_CHANGED, &MainWindow::OnAudioSelected, this);
     m_singleVideoRadio->Bind(wxEVT_RADIOBUTTON, &MainWindow::OnVideoSourceChanged, this);
     m_multiClipRadio->Bind(wxEVT_RADIOBUTTON, &MainWindow::OnVideoSourceChanged, this);
-    m_startButton->Bind(wxEVT_BUTTON, &MainWindow::OnStartProcessing, this);
+    m_startAnimation->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) { wxCommandEvent dummy; OnStartProcessing(dummy); });
     m_cancelButton->Bind(wxEVT_BUTTON, &MainWindow::OnCancelProcessing, this);
     m_previewButton->Bind(wxEVT_BUTTON, &MainWindow::OnPreviewFrame, this);
     
@@ -873,6 +884,11 @@ void MainWindow::CreateControls() {
 void MainWindow::CreateLayout() {
     wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
     mainSizer->AddSpacer(15);
+    
+    // Title image
+    if (m_titleImage) {
+        mainSizer->Add(m_titleImage, 0, wxALIGN_CENTER_HORIZONTAL | wxALL, 5);
+    }
     
     // Header image (MTV Trip Sitter)
     wxString exePath = wxStandardPaths::Get().GetExecutablePath();
@@ -1092,7 +1108,7 @@ void MainWindow::CreateLayout() {
 
     // Action Buttons
     wxBoxSizer* buttonSizer = new wxBoxSizer(wxHORIZONTAL);
-    buttonSizer->Add(m_startButton, 0, wxALL, 5);
+    buttonSizer->Add(m_startAnimation, 0, wxALL, 5);
     buttonSizer->Add(m_cancelButton, 0, wxALL, 5);
     mainSizer->Add(buttonSizer, 0, wxALIGN_CENTER_HORIZONTAL);
     mainSizer->AddSpacer(15);
@@ -1318,6 +1334,7 @@ void MainWindow::OnStartProcessing(wxCommandEvent& event) {
     config.transitionDuration = m_transitionDurationCtrl->GetValue();
 
     UpdateUIState(true);
+    m_startAnimation->Play();
     StartProcessing(config);
 }
 
@@ -1779,6 +1796,7 @@ void MainWindow::UpdateProgress(int percent, const wxString& status, const wxStr
 
 void MainWindow::OnProcessingComplete(bool success, const wxString& message) {
     UpdateUIState(false);
+    m_startAnimation->Stop();
     
     if (m_processingThread && m_processingThread->joinable()) {
         m_processingThread->join();
