@@ -1,6 +1,5 @@
 #include "VideoPreview.h"
 #include <wx/dcbuffer.h>
-#include <vector>
 
 // FFmpeg
 extern "C" {
@@ -63,29 +62,21 @@ void VideoPreview::LoadFrame(const wxString& videoPath, double timestamp) {
 
     int rgbLinesize = 3 * srcW;
     int rgbBufSize = av_image_get_buffer_size(AV_PIX_FMT_RGB24, srcW, srcH, 1);
-    
-    // Allocate a RAII buffer and copy into wxImage (wxImage will take a copy of the data)
-    std::vector<unsigned char> rgbBuf(rgbBufSize);
-    if (rgbBuf.empty()) {
-        sws_freeContext(swsCtx);
-        m_frameBitmap = wxBitmap();
-        Refresh();
-        return;
-    }
-
-    unsigned char* dstData[4] = { rgbBuf.data(), nullptr, nullptr, nullptr };
+    unsigned char* rgbBuf = static_cast<unsigned char*>(av_malloc(rgbBufSize));
+    unsigned char* dstData[4] = { rgbBuf, nullptr, nullptr, nullptr };
     int dstLinesize[4] = { rgbLinesize, 0, 0, 0 };
 
     sws_scale(swsCtx, frame->data, frame->linesize, 0, srcH, dstData, dstLinesize);
 
-    // Create wxImage - pass true for static_data so wxImage makes a copy of our buffer
-    wxImage img(srcW, srcH, rgbBuf.data(), true);  // true = static_data, wxImage will copy
+    // Create wxImage (wxImage will take ownership of the buffer if we pass false for static_data)
+    wxImage img(srcW, srcH, rgbBuf, false);
 
     // Convert to bitmap and store
     m_frameBitmap = wxBitmap(img);
 
     // Cleanup
     sws_freeContext(swsCtx);
+    // Note: wxImage took ownership of rgbBuf and will free it; do not free here.
 
     Refresh();
 }

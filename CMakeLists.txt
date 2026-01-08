@@ -46,10 +46,43 @@ set(CORE_SOURCES
     src/audio/BeatGrid.cpp
     src/video/VideoProcessor.cpp
     src/video/VideoWriter.cpp
-    src/utils/ProcessUtils.cpp
-    src/tracing/Tracing.cpp
 )
 
+# Backend library target (wrap core sources into a reusable library and expose a C API)
+option(BEATSYNC_BUILD_SHARED "Build beatsync backend as shared library" ON)
+
+# Always provide a static backend for linking by internal targets (TripSitter, beatsync, tests)
+add_library(beatsync_backend_static STATIC ${CORE_SOURCES} ${OPTIONAL_SOURCES})
+target_include_directories(beatsync_backend_static PUBLIC ${CMAKE_SOURCE_DIR}/src)
+set_target_properties(beatsync_backend_static PROPERTIES PUBLIC_HEADER "${CMAKE_SOURCE_DIR}/src/backend/beatsync_capi.h")
+
+target_link_libraries(beatsync_backend_static PRIVATE avformat avcodec avutil swresample swscale avfilter)
+
+# Provide a canonical target name 'beatsync_backend' that aliases the static backend for internal linking convenience
+add_library(beatsync_backend ALIAS beatsync_backend_static)
+
+# Optionally also build a shared library for external consumers (Unreal plugin)
+if(BEATSYNC_BUILD_SHARED AND (WIN32 OR APPLE OR UNIX))
+    add_library(beatsync_backend_shared SHARED ${CORE_SOURCES} ${OPTIONAL_SOURCES} src/backend/beatsync_capi.cpp)
+    # Export C API symbols when building a shared library (Windows uses dllexport; Unix uses visibility attribute)
+    target_compile_definitions(beatsync_backend_shared PRIVATE BEATSYNC_CAPI_EXPORT)
+    target_include_directories(beatsync_backend_shared PUBLIC ${CMAKE_SOURCE_DIR}/src)
+    set_target_properties(beatsync_backend_shared PROPERTIES PUBLIC_HEADER "${CMAKE_SOURCE_DIR}/src/backend/beatsync_capi.h")
+    target_link_libraries(beatsync_backend_shared PRIVATE avformat avcodec avutil swresample swscale avfilter)
+
+    # Copy built shared library and headers to unreal-prototype/ThirdParty for Unreal plugin consumption
+    add_custom_command(TARGET beatsync_backend_shared POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/include"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/src/backend/beatsync_capi.h" "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/include/"
+        # Platform-specific copy destinations
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:beatsync_backend_shared>" "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64/"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_LINKER_FILE:beatsync_backend_shared>" "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64/"
+        # macOS destination
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/Mac"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:beatsync_backend_shared>" "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/Mac/"
+    )
+endif()
 # Optional feature sources (always compiled as stubs; actual libs wired via flags)
 set(OPTIONAL_SOURCES)
 
@@ -96,6 +129,11 @@ if(USE_AUDIOREACTIVE)
     add_definitions(-DUSE_AUDIOREACTIVE)
 endif()
 
+# Ensure optional sources are added to the backend library target
+if(TARGET beatsync_backend_static)
+    target_sources(beatsync_backend_static PRIVATE ${OPTIONAL_SOURCES})
+endif()
+
 set(GUI_SOURCES
     src/GUI/MainWindow.cpp
     src/GUI/BeatVisualizer.cpp
@@ -107,12 +145,14 @@ set(GUI_SOURCES
 )
 
 # CLI executable (existing)
-add_executable(beatsync src/main.cpp ${CORE_SOURCES} ${OPTIONAL_SOURCES})
-target_link_libraries(beatsync
+add_executable(beatsync src/main.cpp)
+# Link against the backend library and required FFmpeg libs
+target_link_libraries(beatsync PRIVATE
+    beatsync_backend_static
     avformat avcodec avutil swresample swscale avfilter
 )
 if(USE_ONNX AND onnxruntime_FOUND)
-    target_link_libraries(beatsync onnxruntime::onnxruntime)
+    target_link_libraries(beatsync PRIVATE onnxruntime::onnxruntime)
 endif()
 
 # GUI executable (NEW)
@@ -121,20 +161,22 @@ if(WIN32)
     # or no icon is present in the assets directory.
     if(EXISTS "${CMAKE_SOURCE_DIR}/assets/icon.rc")
         set(GUI_ICON_RC "${CMAKE_SOURCE_DIR}/assets/icon.rc")
-        add_executable(TripSitter WIN32 src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${OPTIONAL_SOURCES} ${GUI_ICON_RC})
+        add_executable(TripSitter WIN32 src/GUI_main.cpp ${GUI_SOURCES} ${GUI_ICON_RC})
     else()
-        add_executable(TripSitter WIN32 src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${OPTIONAL_SOURCES})
+        add_executable(TripSitter WIN32 src/GUI_main.cpp ${GUI_SOURCES})
     endif()
 else()
-    add_executable(TripSitter src/GUI_main.cpp ${CORE_SOURCES} ${GUI_SOURCES} ${OPTIONAL_SOURCES})
+    add_executable(TripSitter src/GUI_main.cpp ${GUI_SOURCES})
 endif()
 
-target_link_libraries(TripSitter
+# Link GUI executable against backend and required libs
+target_link_libraries(TripSitter PRIVATE
+    beatsync_backend_static
     ${wxWidgets_LIBRARIES}
     avformat avcodec avutil swresample swscale avfilter
 )
 if(USE_ONNX AND onnxruntime_FOUND)
-    target_link_libraries(TripSitter onnxruntime::onnxruntime)
+    target_link_libraries(TripSitter PRIVATE onnxruntime::onnxruntime)
 endif()
 
 # Optional: link Essentia if requested and available
@@ -183,6 +225,34 @@ else()
     )
 endif()
 
+# Ensure a specific wallpaper.png is copied and installed when present. This helps packaging
+# and guarantees the file is present even if the assets directory is pruned by downstream tooling.
+if(EXISTS "${CMAKE_SOURCE_DIR}/assets/wallpaper.png")
+    if(APPLE)
+        add_custom_command(TARGET TripSitter POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/assets"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/assets/wallpaper.png
+            $<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/assets/wallpaper.png
+        )
+    else()
+        add_custom_command(TARGET TripSitter POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/assets/wallpaper.png
+            ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets/wallpaper.png
+        )
+    endif()
+    # Also ensure CPack includes the wallpaper explicitly
+    install(FILES ${CMAKE_SOURCE_DIR}/assets/wallpaper.png DESTINATION . OPTIONAL)
+endif()
+
+# Backend smoke test executable (quick runtime check)
+add_executable(backend_smoke src/tools/backend_smoke.cpp)
+target_include_directories(backend_smoke PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(backend_smoke PRIVATE beatsync_backend_static avformat avcodec avutil swresample swscale avfilter)
+set_target_properties(backend_smoke PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
+
 # Copy FFmpeg DLLs to output directory (Windows only)
 if(WIN32)
     file(GLOB FFMPEG_DLLS "${FFMPEG_ROOT}/bin/*.dll")
@@ -191,13 +261,6 @@ if(WIN32)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${DLL}
             $<TARGET_FILE_DIR:TripSitter>
-        )
-        # Also copy FFmpeg DLLs into the tests output directory so test executables can find them at runtime
-        add_custom_command(TARGET TripSitter POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/tests/$<CONFIG>
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${DLL}
-            ${CMAKE_BINARY_DIR}/tests/$<CONFIG>
         )
     endforeach()
 
@@ -221,6 +284,7 @@ endif()
 if(EXISTS "${CMAKE_SOURCE_DIR}/scripts/dist/demucs_separate.exe")
     install(PROGRAMS "${CMAKE_SOURCE_DIR}/scripts/dist/demucs_separate.exe" DESTINATION ai_tools)
 endif()
+
 
 # Install ONNX models if they exist (preferred method - no Python needed)
 if(EXISTS "${CMAKE_SOURCE_DIR}/models")
@@ -260,7 +324,7 @@ else()
 endif()
 
 # Tests (disabled by default). Enable with -DBUILD_TESTS=ON
-option(BUILD_TESTS "Build unit tests" OFF)
+option(BUILD_TESTS "Build unit tests" ON)
 if(BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)

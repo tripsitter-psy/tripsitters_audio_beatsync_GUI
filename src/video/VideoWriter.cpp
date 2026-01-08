@@ -1,6 +1,5 @@
 #include "VideoWriter.h"
 #include "TransitionLibrary.h"
-#include "../tracing/Tracing.h"
 #include <iostream>
 #include <sstream>
 #include <iomanip>
@@ -10,11 +9,9 @@
 #include <chrono>
 #include <ctime>
 #include <cstring>
-#include <algorithm>
 #include <filesystem>
 
 // Cross-platform popen/pclose
-#ifndef popen_compat
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -23,14 +20,99 @@
 #include <vector>
 #define popen_compat _popen
 #define pclose_compat _pclose
+
+// Run a command hidden (no console window) and capture output.
+// Returns exit code; output is appended to 'output'.
+static int runHiddenCommand(const std::string& cmdLine, std::string& output) {
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    sa.lpSecurityDescriptor = NULL;
+
+    HANDLE hReadPipe, hWritePipe;
+    if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) {
+        return -1;
+    }
+    SetHandleInformation(hReadPipe, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOA si = {0};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
+    si.wShowWindow = SW_HIDE;
+    si.hStdOutput = hWritePipe;
+    si.hStdError = hWritePipe;
+
+    PROCESS_INFORMATION pi = {0};
+
+    // Parse out the executable path from the command line
+    // Command format is: "path\to\exe.exe" args... OR path\to\exe.exe args...
+    std::string exePath;
+    std::string args;
+    
+    if (!cmdLine.empty() && cmdLine[0] == '"') {
+        // Quoted executable path
+        size_t endQuote = cmdLine.find('"', 1);
+        if (endQuote != std::string::npos) {
+            exePath = cmdLine.substr(1, endQuote - 1);
+            args = cmdLine.substr(endQuote + 1);
+        }
+    } else {
+        // Unquoted - find first space
+        size_t space = cmdLine.find(' ');
+        if (space != std::string::npos) {
+            exePath = cmdLine.substr(0, space);
+            args = cmdLine.substr(space);
+        } else {
+            exePath = cmdLine;
+        }
+    }
+    
+    // Build command line: "exe" args (CreateProcess expects exe in quotes if it has spaces)
+    std::string fullCmdLine = "\"" + exePath + "\"" + args;
+    
+    // CreateProcess needs a mutable buffer
+    std::vector<char> cmdBuf(fullCmdLine.begin(), fullCmdLine.end());
+    cmdBuf.push_back('\0');
+
+    // Use lpApplicationName to specify the executable directly
+    BOOL ok = CreateProcessA(
+        exePath.c_str(),  // Application name - handles paths with spaces correctly
+        cmdBuf.data(),    // Command line
+        NULL, NULL, TRUE,
+        CREATE_NO_WINDOW,
+        NULL, NULL,
+        &si, &pi
+    );
+
+    CloseHandle(hWritePipe);
+
+    if (!ok) {
+        CloseHandle(hReadPipe);
+        return -1;
+    }
+
+    // Read output
+    char buf[512];
+    DWORD bytesRead;
+    while (ReadFile(hReadPipe, buf, sizeof(buf) - 1, &bytesRead, NULL) && bytesRead > 0) {
+        buf[bytesRead] = '\0';
+        output += buf;
+    }
+    CloseHandle(hReadPipe);
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exitCode = 0;
+    GetExitCodeProcess(pi.hProcess, &exitCode);
+
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    return static_cast<int>(exitCode);
+}
 #else
 #define popen_compat popen
 #define pclose_compat pclose
 #endif
-#endif
-
-// Use shared ProcessUtils helper for running hidden commands
-#include "../utils/ProcessUtils.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -97,80 +179,6 @@ void appendFfmpegLog(const std::string& logFile,
     }
 
     fclose(log);
-}
-
-// Probe inputs for whether they contain audio streams and their durations.
-// Populates hasAudio and durations vectors to match inputVideos size.
-static void probeInputsForAudioAndDuration(const std::vector<std::string>& inputVideos,
-                                           const std::string& ffmpegPath,
-                                           std::vector<bool>& hasAudio,
-                                           std::vector<double>& durations) {
-    hasAudio.assign(inputVideos.size(), false);
-    durations.assign(inputVideos.size(), 0.0);
-
-    for (size_t i = 0; i < inputVideos.size(); ++i) {
-        std::string probeOut;
-                    int probeRc = -1;
-#ifdef _WIN32
-                    std::ostringstream probeCmd;
-                    probeCmd << "\"" << ffmpegPath << "\" -v error -select_streams a -show_entries stream=index -of csv=p=0 \"" << inputVideos[i] << "\"";
-                    probeRc = runHiddenCommand(probeCmd.str(), probeOut);
-#else
-                    std::ostringstream probeCmd;
-                    probeCmd << ffmpegPath << " -v error -select_streams a -show_entries stream=index -of csv=p=0 \"" << inputVideos[i] << "\" 2>&1";
-                    FILE* p = popen_compat(probeCmd.str().c_str(), "r");
-                    if (p) {
-                        char buf[256];
-                        while (fgets(buf, sizeof(buf), p) != nullptr) probeOut += buf;
-                        probeRc = pclose_compat(p);
-                    }
-#endif
-                    if (probeRc == 0) {
-                        if (!probeOut.empty()) hasAudio[i] = true;
-                    } else {
-                        // Probe failed - log and fall back to local check
-                        appendFfmpegLog(getTempDir() + "beatsync_ffmpeg_concat.log", "probe_audio_failed", probeCmd.str(), probeRc, probeOut, "file=" + inputVideos[i]);
-                        BeatSync::VideoProcessor vp;
-                        if (vp.open(inputVideos[i])) {
-                            hasAudio[i] = vp.hasAudio();
-                            durations[i] = vp.getInfo().duration;
-                            vp.close();
-                        }
-                    }
-        std::string durOut;
-        int durRc = -1;
-        std::string durCmdStr;
-#ifdef _WIN32
-        std::ostringstream durCmd;
-        durCmd << "\"" << ffmpegPath << "\" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"" << inputVideos[i] << "\"";
-        durCmdStr = durCmd.str();
-        durRc = runHiddenCommand(durCmdStr, durOut);
-#else
-        std::ostringstream durCmd;
-        durCmd << ffmpegPath << " -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"" << inputVideos[i] << "\" 2>&1";
-        durCmdStr = durCmd.str();
-        FILE* p2 = popen_compat(durCmdStr.c_str(), "r");
-        if (p2) {
-            char buf2[256];
-            while (fgets(buf2, sizeof(buf2), p2) != nullptr) durOut += buf2;
-            durRc = pclose_compat(p2);
-        }
-#endif
-        if (durRc == 0) {
-            if (!durOut.empty()) {
-                try { durations[i] = std::stod(durOut); } catch (const std::invalid_argument&) { durations[i] = 0.0; } catch (const std::out_of_range&) { durations[i] = 0.0; }
-            }
-        } else {
-            appendFfmpegLog(getTempDir() + "beatsync_ffmpeg_concat.log", "probe_duration_failed", durCmdStr, durRc, durOut, "file=" + inputVideos[i]);
-            if (durations[i] <= 0.0) {
-                BeatSync::VideoProcessor vp2;
-                if (vp2.open(inputVideos[i])) {
-                    durations[i] = vp2.getInfo().duration;
-                    vp2.close();
-                }
-            }
-        }
-    }
 }
 } // namespace
 
@@ -406,12 +414,6 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
                                    double startTime,
                                    double duration,
                                    const std::string& outputVideo) {
-    Tracing::Span span("copySegmentFast");
-    span.addAttribute("input", inputVideo);
-    span.addAttribute("output", outputVideo);
-    span.addAttribute("start", std::to_string(startTime));
-    span.addAttribute("duration", std::to_string(duration));
-
     std::cout << "Extracting segment: " << inputVideo << " @ " << startTime << "s for " << duration << "s -> " << outputVideo << "\n";
 
     // Use FFmpeg command-line for reliable segment extraction
@@ -513,12 +515,6 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
                                      double startTime,
                                      double duration,
                                      const std::string& outputVideo) {
-    Tracing::Span span("copySegmentPrecise");
-    span.addAttribute("input", inputVideo);
-    span.addAttribute("output", outputVideo);
-    span.addAttribute("start", std::to_string(startTime));
-    span.addAttribute("duration", std::to_string(duration));
-
     // Use FFmpeg with re-encoding for frame-accurate extraction
     // This is slower but more precise than stream copy
     //
@@ -592,9 +588,6 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
 
 bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
                                    const std::string& outputVideo) {
-    Tracing::Span span("concatenateVideos");
-    span.addAttribute("output", outputVideo);
-
     if (inputVideos.empty()) {
         m_lastError = "No input videos to concatenate";
         return false;
@@ -620,25 +613,18 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 
     int missingCount = 0;
     for (const auto& video : inputVideos) {
-        std::filesystem::path p(video);
-        p = std::filesystem::absolute(p);
-        std::string videoPath = p.string();
-#ifdef _WIN32
-        // Use forward slashes in concat file to avoid escaping issues
-        std::replace(videoPath.begin(), videoPath.end(), '\\', '/');
-#endif
-        fprintf(f, "file '%s'\n", videoPath.c_str());
-        std::cout << "  - " << videoPath;
+        fprintf(f, "file '%s'\n", video.c_str());
+        std::cout << "  - " << video;
 
         // Check if file exists
-        FILE* check = fopen(videoPath.c_str(), "rb");
+        FILE* check = fopen(video.c_str(), "rb");
         if (!check) {
             std::cout << " [MISSING!]\n";
             missingCount++;
 
             debugLog = fopen((getTempDir() + "tripsitter_debug.log").c_str(), "a");
             if (debugLog) {
-                fprintf(debugLog, "  - %s [MISSING!]\n", videoPath.c_str());
+                fprintf(debugLog, "  - %s [MISSING!]\n", video.c_str());
                 fclose(debugLog);
             }
         } else {
@@ -650,7 +636,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 
             debugLog = fopen((getTempDir() + "tripsitter_debug.log").c_str(), "a");
             if (debugLog) {
-                fprintf(debugLog, "  - %s [OK, %ld bytes]\n", videoPath.c_str(), size);
+                fprintf(debugLog, "  - %s [OK, %ld bytes]\n", video.c_str(), size);
                 fclose(debugLog);
             }
         }
@@ -710,15 +696,8 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
             }
 
             if (t) {
-                // Build a chained filter_complex for N inputs using TransitionLibrary helper
-                std::string filterComplex;
-                TransitionLibrary loaded;
-                if (loaded.loadFromDirectory(transitionsDir)) {
-                    filterComplex = loaded.buildChainedGlTransitionFilter(inputVideos.size(), t->name, m_effects.transitionDuration);
-                } else {
-                    // fallback to previous method
-                    filterComplex = buildGlTransitionFilterComplex(inputVideos.size(), t->name, m_effects.transitionDuration);
-                }
+                // Build a chained filter_complex for N inputs
+                std::string filterComplex = buildGlTransitionFilterComplex(inputVideos.size(), t->name, m_effects.transitionDuration);
 
                 // Build ffmpeg command with all inputs
                 std::ostringstream cmd;
@@ -743,61 +722,50 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
                 // Final map: video final label is [t{N-1}], audio is [aout]
                 std::string finalVideoLabel = "[t" + std::to_string(inputVideos.size()-1) + "]";
 
-                // Safety: ensure the generated filter_complex is not empty before using it
-                std::string fcStr = fcEsc.str();
-                if (fcStr.empty()) {
-                    FILE* logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
-                    if (logf) {
-                        fprintf(logf, "Empty filter_complex generated for transition chain - falling back to standard concat\n");
-                        fclose(logf);
-                    }
-                    // Fall through to standard concat below
+                cmd << " -filter_complex \"" << fcEsc.str() << "\" -map \"" << finalVideoLabel << "\"";
+                // Map audio if we built [aout], otherwise fall back to first input audio
+                if (inputVideos.size() >= 1) {
+                    cmd << " -map \"[aout]\"";
                 } else {
-                    cmd << " -filter_complex \"" << fcStr << "\" -map \"" << finalVideoLabel << "\"";
-                    // Map audio if we built [aout], otherwise fall back to first input audio
-                    if (inputVideos.size() >= 1) {
-                        cmd << " -map \"[aout]\"";
-                    } else {
-                        cmd << " -map 0:a?";
-                    }
+                    cmd << " -map 0:a?";
+                }
 
-                    cmd << " -c:v libx264 -preset fast -crf 18 -c:a aac -b:a 192k -y \"" << outputVideo << "\"";
+                cmd << " -c:v libx264 -preset fast -crf 18 -c:a aac -b:a 192k -y \"" << outputVideo << "\"";
 
-                    // Execute the command
-                    std::string ffmpegOutput;
-                    int exitCode;
-    #ifdef _WIN32
-                    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
-    #else
-                    std::string fullCmd = cmd.str() + " 2>&1";
-                    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
-                    if (!pipe) {
-                        m_lastError = "Failed to execute FFmpeg for transition";
-                        std::remove(listFile.c_str());
-                        return false;
-                    }
-                    char buffer[512];
-                    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-                        ffmpegOutput += buffer;
-                    }
-                    exitCode = pclose_compat(pipe);
-    #endif
-
-                    // Persist log
-                    FILE* logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
-                    if (logf) {
-                        fprintf(logf, "\n--- FFmpeg transition run (chained) ---\ncmd: %s\nexit: %d\noutput:\n%s\n", cmd.str().c_str(), exitCode, ffmpegOutput.c_str());
-                        fclose(logf);
-                    }
-
+                // Execute the command
+                std::string ffmpegOutput;
+                int exitCode;
+#ifdef _WIN32
+                exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
+#else
+                std::string fullCmd = cmd.str() + " 2>&1";
+                FILE* pipe = popen_compat(fullCmd.c_str(), "r");
+                if (!pipe) {
+                    m_lastError = "Failed to execute FFmpeg for transition";
                     std::remove(listFile.c_str());
+                    return false;
+                }
+                char buffer[512];
+                while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+                    ffmpegOutput += buffer;
+                }
+                exitCode = pclose_compat(pipe);
+#endif
 
-                    if (exitCode != 0) {
-                        m_lastError = "FFmpeg transition chain failed: " + ffmpegOutput.substr(0, 200);
-                        // Fall back to standard concat below
-                    } else {
-                        return true;
-                    }
+                // Persist log
+                FILE* logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
+                if (logf) {
+                    fprintf(logf, "\n--- FFmpeg transition run (chained) ---\ncmd: %s\nexit: %d\noutput:\n%s\n", cmd.str().c_str(), exitCode, ffmpegOutput.c_str());
+                    fclose(logf);
+                }
+
+                std::remove(listFile.c_str());
+
+                if (exitCode != 0) {
+                    m_lastError = "FFmpeg transition chain failed: " + ffmpegOutput.substr(0, 200);
+                    // Fall back to standard concat below
+                } else {
+                    return true;
                 }
             }
         }
@@ -924,14 +892,6 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
                                  bool trimToShortest,
                                  double audioStart,
                                  double audioEnd) {
-    Tracing::Span span("addAudioTrack");
-    span.addAttribute("video", inputVideo);
-    span.addAttribute("audio", audioFile);
-    span.addAttribute("output", outputVideo);
-    span.addAttribute("trimToShortest", trimToShortest ? "true" : "false");
-    span.addAttribute("audioStart", std::to_string(audioStart));
-    span.addAttribute("audioEnd", std::to_string(audioEnd));
-
     m_lastError.clear();
 
     std::string ffmpegPath = getFFmpegPath();
@@ -1110,66 +1070,7 @@ std::string VideoWriter::buildGlTransitionFilterComplex(size_t numInputs, const 
     return fc.str();
 }
 
-std::string VideoWriter::buildChainedAudioFilterFromFlags(const std::vector<bool>& hasAudio, double transitionDuration) const {
-    size_t n = hasAudio.size();
-    if (n == 0) return "";
-    std::ostringstream fc;
-
-    // Prepare per-input audio streams labeled [a0],[a1],...
-    for (size_t i = 0; i < n; ++i) {
-        if (hasAudio[i]) {
-            fc << "[" << i << ":a]aresample=44100,apad[a" << i << "]";
-        } else {
-            // anullsrc supplies stereo 44.1kHz silence for long duration
-            fc << "anullsrc=channel_layout=stereo:sample_rate=44100:d=3600[a" << i << "]";
-        }
-        if (i + 1 < n) fc << ";";
-    }
-
-    // Chain acrossfade: [a0][a1]acrossfade=d=duration[a1f]; [a1f][a2]acrossfade=d=duration[a2f]; ... final label [aout]
-    if (n == 1) {
-        // Pass-through - alias [a0] to [aout]
-        fc << ";[a0]anull[aout]";
-        return fc.str();
-    }
-
-    // Build first acrossfade
-    for (size_t i = 0; i < n - 1; ++i) {
-        std::string left = (i == 0) ? (std::string("[a0]")) : (std::string("[af") + std::to_string(i) + "]");
-        std::string right = std::string("[a") + std::to_string(i+1) + "]";
-        std::string out = std::string("[af") + std::to_string(i+1) + "]";
-        fc << ";" << left << right << "acrossfade=d=" << std::fixed << std::setprecision(3) << transitionDuration << ":curve1=tri:curve2=tri" << out;
-    }
-
-    // Final output label is [af{n-1}]
-    // Append a final alias to [aout]
-    fc << ";[af" << (n - 1) << "]anull[aout]";
-
-    return fc.str();
-}
-
-std::string VideoWriter::buildChainedAudioFilter(const std::vector<std::string>& inputVideos, double transitionDuration) const {
-    // Probe files for audio presence
-    std::vector<bool> flags;
-    for (auto const &v : inputVideos) {
-        BeatSync::VideoProcessor vp;
-        if (vp.open(v)) {
-            flags.push_back(vp.hasAudio());
-            vp.close();
-        } else {
-            // If we cannot open, assume no audio
-            flags.push_back(false);
-        }
-    }
-
-    return buildChainedAudioFilterFromFlags(flags, transitionDuration);
-}
-
 bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string& outputVideo) {
-    Tracing::Span span("applyEffects");
-    span.addAttribute("input", inputVideo);
-    span.addAttribute("output", outputVideo);
-
     std::string filterChain = buildEffectsFilterChain();
 
     // Filter beat times by divisor (using original beat index) and region

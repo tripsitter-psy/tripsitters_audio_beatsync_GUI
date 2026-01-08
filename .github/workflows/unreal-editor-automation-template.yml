@@ -1,0 +1,51 @@
+# TEMPLATE: Run Unreal Editor Automation on a self-hosted runner
+# IMPORTANT: This job requires a self-hosted Windows runner with Unreal Engine 5.3
+# installed and Visual Studio + required toolchains available. Do NOT run on
+# GitHub-hosted runners since they don't provide UE.
+# Copy this file to `.github/workflows/unreal-editor-automation.yml` and adjust
+# the `runs-on` label to match your self-hosted runner.
+name: Unreal Editor Automation (template)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  unreal-automation:
+    # Replace with your self-hosted runner label that has UE installed
+    runs-on: [self-hosted, windows, ue5-5.3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up environment variables (example)
+        run: |
+          echo "UE5_ROOT=C:\\Program Files\\Epic Games\\UE_5.3" >> $GITHUB_ENV
+
+      - name: Run Editor Automation
+        # This runs the helper script included in the repository; ensure runner
+        # has PowerShell and UE5 installed.
+        run: |
+          powershell -ExecutionPolicy Bypass -File unreal-prototype\scripts\run-unreal-automation.ps1 -Project "${{ github.workspace }}\path\to\YourProject.uproject"
+
+# Notes:
+# - The job above is a commented template to show the required steps. You must
+#   configure a self-hosted runner with UE5 and provide the correct project
+#   path and runner labels. For CI, ensure the runner has permission and
+#   licensing to run UE builds.
+# - Diagnostics & artifacts: the separate `runner-smoke.yml` workflow (used by
+#   the provisioning helpers) uploads artifacts such as `runner-smoke` (which
+#   includes `smoke.txt`), `wallpaper_check.txt`, `provision-result.json`, and
+#   `provision-artifacts.txt`. Inspect the workflow run artifacts in the
+#   GitHub Actions web UI for troubleshooting.
+# - Optional: If you want this job to download the smoke artifacts (for
+#   example to include in further reporting), you can add a step like the
+#   following (uncomment and adapt):
+#
+#      - name: Download runner-smoke artifacts
+#        uses: actions/download-artifact@v4
+#        with:
+#          name: runner-smoke
+#          path: artifacts/runner-smoke
+#
+#   Then inspect `artifacts/runner-smoke` for `wallpaper_check.txt` and
+#   other files.

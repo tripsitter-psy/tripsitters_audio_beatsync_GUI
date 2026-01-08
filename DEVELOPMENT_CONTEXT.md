@@ -255,15 +255,9 @@ cmake --build build --config Release
   - Wrap audio mux FFmpeg calls with `cmd /C` and log mux output to `beatsync_ffmpeg_concat.log` for diagnostics.
 - **Status:** ✅ Tested — audio and video now end together for partial selections.
 
-### Tracing: lightweight instrumentation added 🔍
-- **Change:** Added a minimal tracing shim that writes spans to `traces.jsonl` (JSONL) to capture operation timing and attributes.
-- **Files:** `src/tracing/Tracing.h`, `src/tracing/Tracing.cpp`.
-- **Instrumentation:** Key operations are instrumented with spans (start/stop) including `copySegmentFast`, `concatenateVideos`, `addAudioTrack`, `applyEffects`, and top-level processing in the GUI (`StartProcessing`).
-- **Notes:** This is an extensible shim; future work is to swap to OpenTelemetry/OTLP exporter for full visualization.
-
 ### Files Modified (2026-01-04):
-- `src/GUI/MainWindow.cpp` — Multiple scroll/paint handling improvements for static background; added tracing spans for processing
-- `src/video/VideoWriter.cpp` — Added stderr redirect (`2>&1`) to all 7 FFmpeg `_popen()` calls; added audio mux trimming and logging; command wrapping with `cmd /C`; added tracing spans
+- `src/GUI/MainWindow.cpp` — Multiple scroll/paint handling improvements for static background
+- `src/video/VideoWriter.cpp` — Added stderr redirect (`2>&1`) to all 7 FFmpeg `_popen()` calls; added audio mux trimming and logging; command wrapping with `cmd /C`
 
 ---
 

@@ -117,10 +117,6 @@ VideoInfo VideoProcessor::getInfo() const {
     return m_info;
 }
 
-bool VideoProcessor::hasAudio() const {
-    return m_audioStreamIndex >= 0;
-}
-
 std::string VideoProcessor::getFilePath() const {
     return m_filePath;
 }

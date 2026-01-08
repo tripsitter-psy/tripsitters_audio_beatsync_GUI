@@ -8,7 +8,6 @@
 #include <wx/scrolwin.h>
 #include <memory>
 #include <thread>
-#include <atomic>
 
 class BeatVisualizer;
 class VideoPreview;
@@ -24,50 +23,56 @@ public:
         ID_VIEW_LOGS = wxID_HIGHEST + 1
     };
 
+    // Inspection helper for tests and automation: returns whether a background image was loaded
+    bool HasWallpaper() const { return m_backgroundBitmap.IsOk(); }
+
 private:
     // UI Components
-    wxScrolledWindow* m_mainPanel;
-    wxFilePickerCtrl* m_audioFilePicker;
-    wxDirPickerCtrl* m_videoFolderPicker;
-    wxFilePickerCtrl* m_singleVideoPicker;
-    wxRadioButton* m_singleVideoRadio;
-    wxRadioButton* m_multiClipRadio;
-    wxFilePickerCtrl* m_outputFilePicker;
+    wxScrolledWindow* m_mainPanel = nullptr;
+    wxStaticBitmap* m_titleImage = nullptr;
+    wxFilePickerCtrl* m_audioFilePicker = nullptr;
+    wxDirPickerCtrl* m_videoFolderPicker = nullptr;
+    wxFilePickerCtrl* m_singleVideoPicker = nullptr;
+    wxRadioButton* m_singleVideoRadio = nullptr;
+    wxRadioButton* m_multiClipRadio = nullptr;
+    wxFilePickerCtrl* m_outputFilePicker = nullptr;
     
-    wxChoice* m_beatRateChoice;
-    wxChoice* m_analysisModeChoice;  // Energy / BeatNet / Demucs+BeatNet
-    wxChoice* m_resolutionChoice;
-    wxChoice* m_fpsChoice;
-    wxSpinCtrl* m_previewBeatsCtrl;
-    wxCheckBox* m_previewModeCheck;
+    wxChoice* m_beatRateChoice = nullptr;
+    wxChoice* m_analysisModeChoice = nullptr;  // Energy / BeatNet / Demucs+BeatNet
+    wxChoice* m_resolutionChoice = nullptr;
+    wxChoice* m_fpsChoice = nullptr;
+    wxSpinCtrl* m_previewBeatsCtrl = nullptr;
+    wxCheckBox* m_previewModeCheck = nullptr;
 
     // Effects controls
-    wxCheckBox* m_colorGradeCheck;
-    wxChoice* m_colorPresetChoice;
-    wxCheckBox* m_vignetteCheck;
-    wxCheckBox* m_beatFlashCheck;
-    wxSlider* m_flashIntensitySlider;
-    wxCheckBox* m_beatZoomCheck;
-    wxSlider* m_zoomIntensitySlider;
-    wxChoice* m_effectBeatDivisorChoice;
+    wxCheckBox* m_colorGradeCheck = nullptr;
+    wxChoice* m_colorPresetChoice = nullptr;
+    wxCheckBox* m_vignetteCheck = nullptr;
+    wxCheckBox* m_beatFlashCheck = nullptr;
+    wxSlider* m_flashIntensitySlider = nullptr;
+    wxCheckBox* m_beatZoomCheck = nullptr;
+    wxSlider* m_zoomIntensitySlider = nullptr;
+    wxChoice* m_effectBeatDivisorChoice = nullptr;
 
     // Transitions UI
-    wxCheckBox* m_enableTransitionsCheck;
-    wxChoice* m_transitionChoice;
-    wxSpinCtrlDouble* m_transitionDurationCtrl;
-    wxButton* m_transitionPreviewButton;
+    wxCheckBox* m_enableTransitionsCheck = nullptr;
+    wxChoice* m_transitionChoice = nullptr;
+    wxSpinCtrlDouble* m_transitionDurationCtrl = nullptr;
+    wxButton* m_transitionPreviewButton = nullptr;
 
-    wxGauge* m_progressBar;
-    wxStaticText* m_statusText;
-    wxStaticText* m_etaText;
-    wxButton* m_startButton;
-    wxButton* m_cancelButton;
-    wxButton* m_previewButton; // Trigger a preview frame
-    wxTextCtrl* m_previewTimestampCtrl; // Preview timestamp in seconds
-    wxCheckBox* m_plainControlsCheck; // Toggle plain dark controls mode
+    wxGauge* m_progressBar = nullptr;
+    wxStaticText* m_statusText = nullptr;
+    wxStaticText* m_etaText = nullptr;
+    wxButton* m_startButton = nullptr;
+    wxButton* m_cancelButton = nullptr;
+    wxButton* m_previewButton = nullptr; // Trigger a preview frame
+    wxTextCtrl* m_previewTimestampCtrl = nullptr; // Preview timestamp in seconds
     
     BeatVisualizer* m_beatVisualizer;
     VideoPreview* m_videoPreview;
+    
+    // Animation for start button
+    wxAnimationCtrl* m_startAnimation;
     
     // Backend
     std::unique_ptr<SettingsManager> m_settingsManager;
@@ -78,6 +83,7 @@ private:
     wxPanel* m_backgroundPanel;
     wxBitmap m_backgroundBitmap;
     wxBitmap m_headerBitmap;
+    wxStaticBitmap* m_headerCtrl = nullptr;
     wxFont m_titleFont;
     wxFont m_labelFont;
     
@@ -100,8 +106,6 @@ private:
     void LoadBackgroundImage();
     void SetupFonts();
     void ApplyPsychedelicStyling();
-    void ApplyPlainControls(bool enable);
-    void OnPlainControlsToggled(wxCommandEvent& evt);
     
     // Processing
     void StartProcessing(const ProcessingConfig& config);
