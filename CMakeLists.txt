@@ -217,6 +217,19 @@ if(APPLE)
         ${CMAKE_SOURCE_DIR}/assets
         $<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/assets
     )
+
+    # Optionally copy FFmpeg dylibs into the app bundle when FFMPEG_ROOT is provided
+    if(FFMPEG_ROOT)
+        file(GLOB FFMPEG_DYLIBS "${FFMPEG_ROOT}/lib/*.dylib" )
+        if(FFMPEG_DYLIBS)
+            add_custom_command(TARGET TripSitter POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/Frameworks"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FFMPEG_DYLIBS} "$<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/Frameworks/"
+            )
+            # Also install dylibs so cpack packages them
+            install(FILES ${FFMPEG_DYLIBS} DESTINATION Frameworks OPTIONAL)
+        endif()
+    endif()
 else()
     add_custom_command(TARGET TripSitter POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
