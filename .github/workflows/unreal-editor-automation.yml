@@ -1,0 +1,133 @@
+name: Unreal Editor Automation (self-hosted ready)
+
+# IMPORTANT: This workflow is intended for self-hosted runners only.
+# Do NOT enable on public/shared runners unless you control the runner environment.
+# Use 'workflow_dispatch' to run it manually and supply the path to your .uproject.
+
+on:
+  workflow_dispatch:
+    inputs:
+      uproject_path:
+        description: 'Relative path to the .uproject file inside the workspace (e.g. unreal-prototype/YourProject.uproject)'
+        required: true
+        default: 'unreal-prototype/YourProject.uproject'
+      ue_root:
+        description: 'Optional: UE5 installation root (if not set as runner env UE5_ROOT)'
+        required: false
+
+jobs:
+  run-automation-windows:
+    name: Run Editor Automation (Windows UE5)
+    runs-on: [self-hosted, windows, ue5-5.3]
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare environment
+        if: ${{ inputs.ue_root != '' }}
+        run: |
+          echo "UE5_ROOT=${{ inputs.ue_root }}" >> $GITHUB_ENV
+
+      - name: Run Unreal Editor automation (Windows)
+        shell: pwsh
+        run: |
+          $project = Join-Path $GITHUB_WORKSPACE ${{ github.event.inputs.uproject_path }}
+          Write-Host "Running automation on project: $project"
+          powershell -NoProfile -ExecutionPolicy Bypass -File unreal-prototype\scripts\run-unreal-automation.ps1 -Project "$project" -UEPath "$env:UE5_ROOT"
+
+      - name: Collect provisioning artifacts (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $paths = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:RUNNER_WORKSPACE, "C:\actions-runner", "$env:USERPROFILE\actions-runner")
+          foreach ($p in $paths) {
+            if (-not [string]::IsNullOrEmpty($p)) {
+              $candidates = @('provision-artifacts.txt','provision-result.json','provision-gist-url.txt','wallpaper_check.txt')
+              foreach ($f in $candidates) {
+                $src = Join-Path $p $f
+                if (Test-Path $src) {
+                  Copy-Item $src -Destination $env:GITHUB_WORKSPACE -Force
+                  Write-Host "Copied $src to $env:GITHUB_WORKSPACE"
+                }
+              }
+            }
+          }
+
+      - name: Print provisioning artifacts (if present)
+        run: |
+          if (Test-Path provision-artifacts.txt) { Get-Content provision-artifacts.txt | ForEach-Object { Write-Host "ARTIFACT: $_" } } else { Write-Host "No provision-artifacts.txt in workspace" }
+
+      - name: Upload automation logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: beatsync-automation-logs-windows
+          path: |
+            BeatsyncAutomation.log
+            *.log
+            wallpaper_check.txt
+            provision-result.json
+            provision-gist-url.txt
+            provision-artifacts.txt
+
+  run-automation-macos:
+    name: Run Editor Automation (macOS UE5)
+    runs-on: [self-hosted, macos, ue5-5.3]
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare environment
+        if: ${{ inputs.ue_root != '' }}
+        run: |
+          echo "UE5_ROOT=${{ inputs.ue_root }}" >> $GITHUB_ENV
+
+      - name: Run Unreal Editor automation (macOS)
+        shell: bash
+        run: |
+          PROJECT_PATH="$GITHUB_WORKSPACE/${{ github.event.inputs.uproject_path }}"
+          UE_CMD="${UE5_ROOT:-/Applications/Epic Games/UE_5.3}/Engine/Binaries/Mac/UE5Editor-Cmd.app/Contents/MacOS/UE5Editor-Cmd"
+          echo "Running: $UE_CMD $PROJECT_PATH"
+          "$UE_CMD" "$PROJECT_PATH" -ExecCmds="Automation RunTests TripSitter.Beatsync.EditorSmoke; Quit" -unattended -nopause -nullrhi -abslog="BeatsyncAutomation.log"
+
+      - name: Collect provisioning artifacts (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          paths=("$GITHUB_WORKSPACE" "$RUNNER_TEMP" "$RUNNER_WORKSPACE" "/opt/actions-runner" "$HOME/actions-runner")
+          for p in "${paths[@]}"; do
+            if [ -d "$p" ]; then
+              for f in provision-artifacts.txt provision-result.json provision-gist-url.txt wallpaper_check.txt; do
+                if [ -f "$p/$f" ]; then
+                  cp "$p/$f" "$GITHUB_WORKSPACE/"
+                  echo "Copied $p/$f to $GITHUB_WORKSPACE/"
+                fi
+              done
+            fi
+          done
+
+      - name: Print provisioning artifacts (if present)
+        run: |
+          if [ -f provision-artifacts.txt ]; then
+            echo "--- provision-artifacts.txt ---"
+            cat provision-artifacts.txt
+            echo "--- end provision-artifacts.txt ---"
+          else
+            echo "No provision-artifacts.txt in workspace"
+          fi
+
+      - name: Upload automation logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: beatsync-automation-logs-macos
+          path: |
+            BeatsyncAutomation.log
+            *.log
+            wallpaper_check.txt
+            provision-result.json
+            provision-gist-url.txt
+            provision-artifacts.txt
+
+# Security notes:
+# - This workflow must be used only on self-hosted runners you trust and maintain.
+# - Do NOT run untrusted PRs on these runners unless you are willing to accept the risk of arbitrary code execution.
+# - Consider using dedicated runner labels (e.g., "ue5-5.3") and restrict repo/organization permissions for those runners.

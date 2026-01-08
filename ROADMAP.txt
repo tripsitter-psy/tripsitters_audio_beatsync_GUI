@@ -313,9 +313,4 @@ assets/
 
 ---
 
-## Tracing & Observability (new)
-- **Priority:** Medium | **Complexity:** Low
-- **Change:** Add lightweight tracing and diagnostics to capture span timing for key operations (segment extraction, concat, mux, effects application). Implement a simple JSONL tracer (`traces.jsonl`) and add spans in `VideoWriter` and GUI processing flow.
-- **Future work:** Replace or augment with OpenTelemetry + OTLP exporter for end-to-end visualization and use a collector (otelcol) in CI to capture traces.
-
-*Last Updated: January 7, 2026*
+*Last Updated: January 6, 2026*

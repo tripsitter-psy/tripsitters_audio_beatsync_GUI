@@ -168,20 +168,6 @@ public:
      */
     bool applyEffects(const std::string& inputVideo, const std::string& outputVideo);
 
-    // Exposed for testing: build chained gltransition filter_complex for N inputs
-    std::string buildGlTransitionFilterComplex(size_t numInputs, const std::string& transitionName, double duration) const;
-
-    // Build chained audio filter for inputs; wrapper probes files then calls flags-based helper
-    std::string buildChainedAudioFilter(const std::vector<std::string>& inputVideos, double transitionDuration) const;
-
-    // Test helper: build chained audio filter from boolean hasAudio flags (no IO)
-    std::string buildChainedAudioFilterFromFlags(const std::vector<bool>& hasAudio, double transitionDuration) const;
-
-    // Probe inputs for audio presence and duration (fills durations and hasAudio vectors)
-    bool probeInputsAudioAndDuration(const std::vector<std::string>& inputVideos,
-                                     std::vector<double>& durations,
-                                     std::vector<bool>& hasAudio) const;
-
 private:
     std::string m_lastError;
     std::function<void(double)> m_progressCallback;
@@ -199,6 +185,10 @@ private:
      * @return Filter chain string for -vf parameter
      */
     std::string buildEffectsFilterChain() const;
+
+    // Build a chained gltransition filter_complex string for N inputs.
+    // Example for N=3 returns something that contains: "[0:v][1:v]gltransition=... [t1];[t1][2:v]gltransition=... [t2]"
+    std::string buildGlTransitionFilterComplex(size_t numInputs, const std::string& transitionName, double duration) const;
 
     /**
      * @brief Get color grade filter for preset

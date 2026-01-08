@@ -42,55 +42,42 @@ add_executable(test_transition_library
 target_include_directories(test_transition_library PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_transition_library PRIVATE Catch2::Catch2)
 add_test(NAME transition_library COMMAND test_transition_library)
-
-# Header paint integration test
-add_executable(test_header_paint
-    catch_main.cpp
-    test_header_paint.cpp
-)
-
-target_include_directories(test_header_paint PRIVATE ${CMAKE_SOURCE_DIR}/src)
-# Link against wxWidgets so we can create windows and run a minimal paint
-target_link_libraries(test_header_paint PRIVATE Catch2::Catch2 ${wxWidgets_LIBRARIES})
-# Run the test under Xvfb in environments where a display is not available
-add_test(NAME header_paint COMMAND xvfb-run -s "-screen 0 1280x800x24" $<TARGET_FILE:test_header_paint>)
+set_tests_properties(transition_library PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
 # Transition chaining tests
 add_executable(test_transition_chaining
     catch_main.cpp
     test_transition_chaining.cpp
-    ../src/video/TransitionLibrary.cpp
     ../src/video/VideoWriter.cpp
-    ../src/video/VideoProcessor.cpp
-    ../src/audio/BeatGrid.cpp
-    ../src/audio/AudioAnalyzer.cpp
-    ../src/audio/BeatNetBridge.cpp
-    ../src/audio/StemSeparator.cpp
-    ../src/tracing/Tracing.cpp
-    ../src/utils/ProcessUtils.cpp
+    ../src/video/TransitionLibrary.cpp
 )
 
 target_include_directories(test_transition_chaining PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(test_transition_chaining PRIVATE Catch2::Catch2 avformat avcodec avutil swresample swscale avfilter)
+target_link_libraries(test_transition_chaining PRIVATE Catch2::Catch2)
 add_test(NAME transition_chaining COMMAND test_transition_chaining)
+set_tests_properties(transition_chaining PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
-# Audio transition filter tests
-if(EXISTS "${CMAKE_SOURCE_DIR}/tests/test_audio_transition_filter.cpp")
-    add_executable(test_audio_transition_filter
-        catch_main.cpp
-        test_audio_transition_filter.cpp
-        ../src/video/VideoWriter.cpp
-        ../src/video/VideoProcessor.cpp
-        ../src/video/TransitionLibrary.cpp
-        ../src/audio/BeatGrid.cpp
-        ../src/audio/AudioAnalyzer.cpp
-        ../src/audio/BeatNetBridge.cpp
-        ../src/audio/StemSeparator.cpp
-    )
+# Backend API smoke test
+add_executable(test_backend_api
+    catch_main.cpp
+    test_backend_api.cpp
+)
 
-    target_include_directories(test_audio_transition_filter PRIVATE ${CMAKE_SOURCE_DIR}/src)
-    target_link_libraries(test_audio_transition_filter PRIVATE Catch2::Catch2 avformat avcodec avutil swresample swscale avfilter)
-    add_test(NAME audio_transition_filter COMMAND test_audio_transition_filter)
-else()
-    message(STATUS "Skipping test_audio_transition_filter - source not present")
-endif()
+target_include_directories(test_backend_api PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/backend)
+target_link_libraries(test_backend_api PRIVATE Catch2::Catch2 beatsync_backend_static avformat avcodec avutil swresample swscale avfilter)
+add_test(NAME backend_api COMMAND test_backend_api)
+set_tests_properties(backend_api PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+# Verify wallpaper is packaged into build outputs or app bundle
+add_executable(test_wallpaper_installed
+    test_wallpaper_installed.cpp
+)
+
+target_link_libraries(test_wallpaper_installed PRIVATE Catch2::Catch2)
+# Pass two candidate locations: non-mac build assets path and macOS bundle assets path
+add_test(NAME wallpaper_installed COMMAND test_wallpaper_installed "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets/wallpaper.png" "$<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/assets/wallpaper.png")
+set_tests_properties(wallpaper_installed PROPERTIES WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
+
+# Runtime check: launch the GUI executable with --check-wallpaper and assert success when wallpaper found
+add_test(NAME wallpaper_runtime_check COMMAND $<TARGET_FILE:TripSitter> --check-wallpaper)
+set_tests_properties(wallpaper_runtime_check PROPERTIES WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")

@@ -1,0 +1,74 @@
+name: Runner Smoke Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_runner_name:
+        description: 'Optional: expected runner name to verify the runner identity'
+        required: false
+        default: ''
+
+jobs:
+  smoke:
+    runs-on: self-hosted
+    steps:
+      - name: Print runner info
+        run: |
+          echo "Runner name: $RUNNER_NAME"
+          echo "Runner OS: $RUNNER_OS"
+          uname -a || echo "uname not available"
+          echo "Smoke OK" > smoke.txt
+
+      - name: Collect provisioning artifacts (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $paths = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:RUNNER_WORKSPACE, "C:\actions-runner", "$env:USERPROFILE\actions-runner")
+          foreach ($p in $paths) {
+            if (-not [string]::IsNullOrEmpty($p)) {
+              $candidates = @('provision-artifacts.txt','provision-result.json','provision-gist-url.txt','wallpaper_check.txt')
+              foreach ($f in $candidates) {
+                $src = Join-Path $p $f
+                if (Test-Path $src) {
+                  Copy-Item $src -Destination $env:GITHUB_WORKSPACE -Force
+                  Write-Host "Copied $src to $env:GITHUB_WORKSPACE"
+                }
+              }
+            }
+          }
+
+      - name: Collect provisioning artifacts (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          paths=("$GITHUB_WORKSPACE" "$RUNNER_TEMP" "$RUNNER_WORKSPACE" "/opt/actions-runner" "$HOME/actions-runner")
+          for p in "${paths[@]}"; do
+            if [ -d "$p" ]; then
+              for f in provision-artifacts.txt provision-result.json provision-gist-url.txt wallpaper_check.txt; do
+                if [ -f "$p/$f" ]; then
+                  cp "$p/$f" "$GITHUB_WORKSPACE/"
+                  echo "Copied $p/$f to $GITHUB_WORKSPACE/"
+                fi
+              done
+            fi
+          done
+
+      - name: Print provisioning artifacts (if present)
+        run: |
+          if [ -f provision-artifacts.txt ]; then
+            echo "--- provision-artifacts.txt ---"
+            cat provision-artifacts.txt
+            echo "--- end provision-artifacts.txt ---"
+          else
+            echo "No provision-artifacts.txt in workspace"
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: runner-smoke
+          path: |
+            smoke.txt
+            wallpaper_check.txt
+            provision-result.json
+            provision-gist-url.txt
+            provision-artifacts.txt
+

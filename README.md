@@ -35,6 +35,10 @@ To prep for the roadmap’s AI features, a minimal scaffold is included:
 - **Configurable Sensitivity**: Adjust beat detection sensitivity (0.0-1.0)
 - **Detailed Output**: Beat timestamps, BPM, and analysis statistics
 
+Unreal prototype (UE5.3) — automation tests
+
+- There is a small Unreal prototype under `unreal-prototype/` that includes an Editor automation smoke test `TripSitter.Beatsync.EditorSmoke`. See `unreal-prototype/README.md` for instructions on running the test locally and for a CI job template that can run the test on a self-hosted Windows runner with UE5 installed.
+
 ## Architecture
 
 ```
@@ -192,7 +196,8 @@ The current implementation uses an energy-based beat detection algorithm:
 ### GUI Assets
 To customize the GUI appearance, place image files into the `assets/` directory at the project root:
 
-- `background.png` — Recommended: 1920x1080 PNG for the main background
+- `wallpaper.png` — The main application wallpaper (recommended to commit as `assets/wallpaper.png`). The app prefers `wallpaper.png` if present and scales it to fit the window while preserving aspect ratio and alpha.
+- `background.png` — Alternative: 1920x1080 PNG for the main background
 - `icon.ico` — Windows application icon (used when building the GUI executable)
 
 A helper script is provided to import assets from another location (for example `C:\Users\samue\Downloads\assets for GUI aesthetics`):

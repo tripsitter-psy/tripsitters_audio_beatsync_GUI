@@ -53,9 +53,6 @@ Thumbs.db
 *.mov
 *.flac
 
-# Project virtualenv (do not commit)
-.venv/
-
 # Keep sample files in dedicated directory
 !test_assets/*.mp3
 !test_assets/*.wav
