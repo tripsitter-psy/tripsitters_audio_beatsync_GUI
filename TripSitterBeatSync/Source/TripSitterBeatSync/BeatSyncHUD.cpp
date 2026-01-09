@@ -1551,20 +1551,20 @@ FString ABeatSyncHUD::OpenFileDialog(const FString& Title, const FString& Defaul
 	}
 #elif PLATFORM_WINDOWS
 	// Native Windows file dialog
-	OPENFILENAMEW ofn;
-	wchar_t szFile[MAX_PATH] = {0};
+	OPENFILENAME ofn;
+	TCHAR szFile[MAX_PATH] = {0};
 
 	ZeroMemory(&ofn, sizeof(ofn));
 	ofn.lStructSize = sizeof(ofn);
 	ofn.hwndOwner = NULL;
 	ofn.lpstrFile = szFile;
 	ofn.nMaxFile = MAX_PATH;
-	ofn.lpstrFilter = L"All Files\0*.*\0Audio Files\0*.wav;*.mp3;*.flac\0Video Files\0*.mp4;*.mov;*.avi\0";
+	ofn.lpstrFilter = TEXT("All Files\0*.*\0Audio Files\0*.wav;*.mp3;*.flac\0Video Files\0*.mp4;*.mov;*.avi\0");
 	ofn.nFilterIndex = 1;
-	ofn.lpstrTitle = *Title ? TCHAR_TO_WCHAR(*Title) : L"Open File";
+	ofn.lpstrTitle = Title.IsEmpty() ? TEXT("Open File") : *Title;
 	ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
 
-	if (GetOpenFileNameW(&ofn))
+	if (GetOpenFileName(&ofn))
 	{
 		return FString(szFile);
 	}
@@ -1644,8 +1644,8 @@ FString ABeatSyncHUD::SaveFileDialog(const FString& Title, const FString& Defaul
 	}
 #elif PLATFORM_WINDOWS
 	// Native Windows save dialog
-	OPENFILENAMEW ofn;
-	wchar_t szFile[MAX_PATH] = {0};
+	OPENFILENAME ofn;
+	TCHAR szFile[MAX_PATH] = {0};
 
 	// Copy default filename
 	if (!DefaultFile.IsEmpty())
@@ -1658,12 +1658,12 @@ FString ABeatSyncHUD::SaveFileDialog(const FString& Title, const FString& Defaul
 	ofn.hwndOwner = NULL;
 	ofn.lpstrFile = szFile;
 	ofn.nMaxFile = MAX_PATH;
-	ofn.lpstrFilter = L"All Files\0*.*\0Video Files\0*.mp4;*.mov;*.avi\0";
+	ofn.lpstrFilter = TEXT("All Files\0*.*\0Video Files\0*.mp4;*.mov;*.avi\0");
 	ofn.nFilterIndex = 1;
-	ofn.lpstrTitle = *Title ? TCHAR_TO_WCHAR(*Title) : L"Save File";
+	ofn.lpstrTitle = Title.IsEmpty() ? TEXT("Save File") : *Title;
 	ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
 
-	if (GetSaveFileNameW(&ofn))
+	if (GetSaveFileName(&ofn))
 	{
 		return FString(szFile);
 	}
