@@ -110,15 +110,16 @@ private:
 	bool bMouseJustReleased = false;
 	bool bPrevMousePressed = false;
 
-	// UI Colors (psychedelic theme)
-	FLinearColor CyanColor = FLinearColor(0.0f, 0.85f, 1.0f, 1.0f);
-	FLinearColor PurpleColor = FLinearColor(0.545f, 0.0f, 1.0f, 1.0f);
-	FLinearColor PinkColor = FLinearColor(1.0f, 0.0f, 0.5f, 1.0f);
-	FLinearColor OrangeColor = FLinearColor(1.0f, 0.533f, 0.0f, 1.0f);
-	FLinearColor DarkBG = FLinearColor(0.02f, 0.02f, 0.04f, 0.9f);
-	FLinearColor ButtonBG = FLinearColor(0.08f, 0.08f, 0.12f, 1.0f);
-	FLinearColor ButtonHover = FLinearColor(0.12f, 0.12f, 0.18f, 1.0f);
-	FLinearColor SliderBG = FLinearColor(0.05f, 0.05f, 0.08f, 1.0f);
+	// UI Colors (psychedelic neon theme - more vibrant)
+	FLinearColor CyanColor = FLinearColor(0.0f, 1.0f, 1.0f, 1.0f);        // Electric cyan
+	FLinearColor PurpleColor = FLinearColor(0.7f, 0.0f, 1.0f, 1.0f);      // Vivid purple
+	FLinearColor PinkColor = FLinearColor(1.0f, 0.0f, 0.8f, 1.0f);        // Hot magenta
+	FLinearColor OrangeColor = FLinearColor(1.0f, 0.4f, 0.0f, 1.0f);      // Neon orange
+	FLinearColor LimeColor = FLinearColor(0.5f, 1.0f, 0.0f, 1.0f);        // Acid green
+	FLinearColor DarkBG = FLinearColor(0.03f, 0.02f, 0.06f, 0.92f);       // Deep purple-black
+	FLinearColor ButtonBG = FLinearColor(0.1f, 0.05f, 0.15f, 1.0f);       // Dark purple tint
+	FLinearColor ButtonHover = FLinearColor(0.18f, 0.08f, 0.25f, 1.0f);   // Lighter purple
+	FLinearColor SliderBG = FLinearColor(0.06f, 0.03f, 0.1f, 1.0f);       // Dark purple
 
 	// === INPUT PANEL STATE ===
 	FString AudioFilePath = TEXT("No file selected");
