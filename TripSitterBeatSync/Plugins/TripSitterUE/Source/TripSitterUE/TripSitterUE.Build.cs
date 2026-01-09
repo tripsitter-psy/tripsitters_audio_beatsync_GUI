@@ -47,28 +47,7 @@ public class TripSitterUE : ModuleRules
 			PrivateDefinitions.Add("WITH_DESKTOP_PLATFORM=0");
 		}
 
-		// ThirdParty beatsync library path
-		string ThirdPartyPath = Path.Combine(PluginDirectory, "..", "..", "ThirdParty", "beatsync");
-
-		if (Target.Platform == UnrealTargetPlatform.Win64)
-		{
-			string LibPath = Path.Combine(ThirdPartyPath, "lib", "x64");
-			PublicAdditionalLibraries.Add(Path.Combine(LibPath, "beatsync_backend.lib"));
-			RuntimeDependencies.Add(Path.Combine(LibPath, "beatsync_backend.dll"));
-		}
-		else if (Target.Platform == UnrealTargetPlatform.Mac)
-		{
-			string LibPath = Path.Combine(ThirdPartyPath, "lib", "Mac");
-			PublicAdditionalLibraries.Add(Path.Combine(LibPath, "libbeatsync_backend.dylib"));
-			RuntimeDependencies.Add(Path.Combine(LibPath, "libbeatsync_backend.dylib"));
-			// Add Python beat detection script
-			RuntimeDependencies.Add(Path.Combine(ThirdPartyPath, "beat_detect.py"));
-		}
-		else if (Target.Platform == UnrealTargetPlatform.Linux)
-		{
-			string LibPath = Path.Combine(ThirdPartyPath, "lib", "Linux");
-			PublicAdditionalLibraries.Add(Path.Combine(LibPath, "libbeatsync_backend.so"));
-			RuntimeDependencies.Add(Path.Combine(LibPath, "libbeatsync_backend.so"));
-		}
+		// Native C++ beat detection - no external libraries needed
+		// All beat detection and waveform extraction is done in BeatsyncSubsystem.cpp
 	}
 }

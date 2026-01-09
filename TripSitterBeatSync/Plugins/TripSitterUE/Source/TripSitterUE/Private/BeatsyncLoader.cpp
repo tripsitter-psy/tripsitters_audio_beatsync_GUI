@@ -102,7 +102,8 @@ bool FBeatsyncLoader::Initialize()
 
 	if (DllPath.IsEmpty())
 	{
-		UE_LOG(LogTemp, Error, TEXT("Beatsync library not found in any search path"));
+		// Library not found - this is OK, we use native C++ beat detection
+		UE_LOG(LogTemp, Log, TEXT("Beatsync external library not found - using native C++ beat detection"));
 		return false;
 	}
 
