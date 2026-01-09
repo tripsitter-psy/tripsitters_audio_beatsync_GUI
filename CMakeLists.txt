@@ -15,10 +15,9 @@ if(FFMPEG_ROOT)
     link_directories(${FFMPEG_ROOT}/lib)
 endif()
 
-# wxWidgets setup
+# (wxWidgets support removed)
 # On Windows we ship a default path; on macOS/Linux we let find_package find it
-# Set USE_WXUNIVERSAL=ON to use wxUniversal build with custom theming
-option(USE_WXUNIVERSAL "Use wxUniversal build for custom theming" OFF)
+# wxWidgets support removed (wxUniversal option removed since wxWidgets is no longer used)
 
 # Optional AI / advanced feature flags (stubs included; wire deps when available)
 option(USE_ESSENTIA "Enable Essentia-based beat analyzer" OFF)
@@ -27,18 +26,20 @@ option(USE_DEMUCS "Enable Demucs stem separation" OFF)
 option(USE_GLTRANSITIONS "Enable GLSL transitions library" OFF)
 option(USE_AUDIOREACTIVE "Enable FFT-driven audio-reactive effects" OFF)
 
-if(WIN32)
-    set(wxWidgets_ROOT_DIR "C:/wxWidgets-3.2.4")
-    if(USE_WXUNIVERSAL)
-        set(wxWidgets_CONFIGURATION mswunivu)
-        set(wxWidgets_LIB_DIR "C:/wxWidgets-3.2.4/lib/vc_x64_dll")
-        add_definitions(-D__WXUNIVERSAL__)
-    else()
-        set(wxWidgets_CONFIGURATION mswu)
+# Build options
+option(BUILD_GUI "Build TripSitter GUI" ON)
+
+# If GUI build is requested, check for wxWidgets; if not found, disable GUI early
+if(BUILD_GUI)
+    find_package(wxWidgets QUIET COMPONENTS core base adv)
+    if(NOT wxWidgets_FOUND)
+        message(STATUS "wxWidgets not found; disabling TripSitter GUI build")
+        set(BUILD_GUI OFF)
     endif()
 endif()
-find_package(wxWidgets REQUIRED COMPONENTS core base adv)
-include(${wxWidgets_USE_FILE})
+
+
+# wxWidgets find_package removed (no longer used)
 
 # Source files
 set(CORE_SOURCES
@@ -52,7 +53,7 @@ set(CORE_SOURCES
 option(BEATSYNC_BUILD_SHARED "Build beatsync backend as shared library" ON)
 
 # Always provide a static backend for linking by internal targets (TripSitter, beatsync, tests)
-add_library(beatsync_backend_static STATIC ${CORE_SOURCES} ${OPTIONAL_SOURCES})
+add_library(beatsync_backend_static STATIC ${CORE_SOURCES} ${OPTIONAL_SOURCES} src/backend/beatsync_capi.cpp)
 target_include_directories(beatsync_backend_static PUBLIC ${CMAKE_SOURCE_DIR}/src)
 set_target_properties(beatsync_backend_static PROPERTIES PUBLIC_HEADER "${CMAKE_SOURCE_DIR}/src/backend/beatsync_capi.h")
 
@@ -69,6 +70,9 @@ if(BEATSYNC_BUILD_SHARED AND (WIN32 OR APPLE OR UNIX))
     target_include_directories(beatsync_backend_shared PUBLIC ${CMAKE_SOURCE_DIR}/src)
     set_target_properties(beatsync_backend_shared PROPERTIES PUBLIC_HEADER "${CMAKE_SOURCE_DIR}/src/backend/beatsync_capi.h")
     target_link_libraries(beatsync_backend_shared PRIVATE avformat avcodec avutil swresample swscale avfilter)
+
+    # Ensure OPTIONAL_SOURCES (eg. TransitionLibrary) are explicitly added to shared target too
+    target_sources(beatsync_backend_shared PRIVATE ${OPTIONAL_SOURCES})
 
     # Copy built shared library and headers to unreal-prototype/ThirdParty for Unreal plugin consumption
     add_custom_command(TARGET beatsync_backend_shared POST_BUILD
@@ -105,14 +109,32 @@ option(USE_ONNX "Enable ONNX Runtime for native AI inference" ON)
 if(USE_ONNX)
     find_package(onnxruntime CONFIG QUIET)
     if(onnxruntime_FOUND)
-        message(STATUS "ONNX Runtime found - enabling native AI inference")
-        list(APPEND OPTIONAL_SOURCES 
-            src/audio/OnnxBeatDetector.cpp
-            src/audio/OnnxStemSeparator.cpp
-        )
-        add_definitions(-DUSE_ONNX)
+        message(STATUS "ONNX Runtime found - attempting to enable native AI inference")
+        if(EXISTS "${CMAKE_SOURCE_DIR}/src/audio/OnnxBeatDetector.cpp" AND EXISTS "${CMAKE_SOURCE_DIR}/src/audio/OnnxStemSeparator.cpp")
+            list(APPEND OPTIONAL_SOURCES 
+                src/audio/OnnxBeatDetector.cpp
+                src/audio/OnnxStemSeparator.cpp
+            )
+            add_definitions(-DUSE_ONNX)
+        else()
+            message(WARNING "ONNX Runtime found, but ONNX source files are missing in src/audio/. ONNX inference will remain a stub until sources are added.")
+        endif()
     else()
-        message(WARNING "ONNX Runtime not found. Install with: vcpkg install onnxruntime-gpu")
+        # Provide actionable guidance to users when ONNX isn't found
+        if(EXISTS "${CMAKE_SOURCE_DIR}/vcpkg.json")
+            message(WARNING "ONNX Runtime not found. This repository includes a vcpkg manifest (vcpkg.json).")
+            message(STATUS "Recommended steps:")
+            message(STATUS "  1) Install vcpkg (https://github.com/microsoft/vcpkg).")
+            message(STATUS "  2) From the repo root run: vcpkg bootstrap (Windows: .\\vcpkg\\bootstrap-vcpkg.bat).")
+            message(STATUS "  3) Install packages: .\\vcpkg\\vcpkg.exe install --manifest")
+            message(STATUS "  4) Reconfigure CMake with: -DCMAKE_TOOLCHAIN_FILE=<path-to-vcpkg>/scripts/buildsystems/vcpkg.cmake")
+            message(STATUS "If you have a CUDA-enabled GPU and want GPU-accelerated ONNX, install 'onnxruntime-gpu' instead of 'onnxruntime'.")
+            if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+                message(STATUS "Detected VCPKG_ROOT environment variable. You can reconfigure with -DCMAKE_TOOLCHAIN_FILE=$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+            endif()
+        else()
+            message(WARNING "ONNX Runtime not found. Install with vcpkg (e.g., 'vcpkg install onnxruntime' or 'vcpkg install onnxruntime-gpu') and reconfigure with the vcpkg toolchain file.")
+        endif()
     endif()
 endif()
 
@@ -132,6 +154,10 @@ endif()
 # Ensure optional sources are added to the backend library target
 if(TARGET beatsync_backend_static)
     target_sources(beatsync_backend_static PRIVATE ${OPTIONAL_SOURCES})
+endif()
+
+if(TARGET beatsync_backend_shared)
+    target_sources(beatsync_backend_shared PRIVATE ${OPTIONAL_SOURCES})
 endif()
 
 set(GUI_SOURCES
@@ -156,27 +182,32 @@ if(USE_ONNX AND onnxruntime_FOUND)
 endif()
 
 # GUI executable (NEW)
-if(WIN32)
-    # Add icon resource only if the file exists. This avoids build failures when a placeholder
-    # or no icon is present in the assets directory.
-    if(EXISTS "${CMAKE_SOURCE_DIR}/assets/icon.rc")
-        set(GUI_ICON_RC "${CMAKE_SOURCE_DIR}/assets/icon.rc")
-        add_executable(TripSitter WIN32 src/GUI_main.cpp ${GUI_SOURCES} ${GUI_ICON_RC})
+if(BUILD_GUI)
+    if(WIN32)
+        # Add icon resource only if the file exists. This avoids build failures when a placeholder
+        # or no icon is present in the assets directory.
+        if(EXISTS "${CMAKE_SOURCE_DIR}/assets/icon.rc")
+            set(GUI_ICON_RC "${CMAKE_SOURCE_DIR}/assets/icon.rc")
+            add_executable(TripSitter WIN32 src/GUI_main.cpp ${GUI_SOURCES} ${GUI_ICON_RC})
+        else()
+            add_executable(TripSitter WIN32 src/GUI_main.cpp ${GUI_SOURCES})
+        endif()
     else()
-        add_executable(TripSitter WIN32 src/GUI_main.cpp ${GUI_SOURCES})
+        add_executable(TripSitter src/GUI_main.cpp ${GUI_SOURCES})
     endif()
-else()
-    add_executable(TripSitter src/GUI_main.cpp ${GUI_SOURCES})
-endif()
 
-# Link GUI executable against backend and required libs
-target_link_libraries(TripSitter PRIVATE
-    beatsync_backend_static
-    ${wxWidgets_LIBRARIES}
-    avformat avcodec avutil swresample swscale avfilter
-)
-if(USE_ONNX AND onnxruntime_FOUND)
-    target_link_libraries(TripSitter PRIVATE onnxruntime::onnxruntime)
+    # Link GUI executable against backend and required libs
+    target_link_libraries(TripSitter PRIVATE
+        beatsync_backend_static
+        avformat avcodec avutil swresample swscale avfilter
+    )
+
+    if(USE_ONNX AND onnxruntime_FOUND)
+        target_link_libraries(TripSitter PRIVATE onnxruntime::onnxruntime)
+    endif()
+
+else()
+    message(STATUS "GUI build is disabled (BUILD_GUI=OFF or wxWidgets not found)")
 endif()
 
 # Optional: link Essentia if requested and available
@@ -184,13 +215,17 @@ if(USE_ESSENTIA)
     find_package(Essentia CONFIG QUIET)
     if(Essentia_FOUND)
         message(STATUS "Essentia found - enabling Essentia analyzer support")
-        target_link_libraries(beatsync PUBLIC Essentia::essentia)
-        target_link_libraries(TripSitter PUBLIC Essentia::essentia)
+        target_link_libraries(beatsync PUBLIC Essentia::essent)
+        if(BUILD_GUI)
+            target_link_libraries(TripSitter PUBLIC Essentia::essent)
+        endif()
         add_compile_definitions(HAVE_ESSENTIA)
     else()
         message(WARNING "USE_ESSENTIA enabled but Essentia package not found. EssentiaAnalyzer will remain a stub.")
     endif()
 endif()
+
+if(BUILD_GUI)
 
 # macOS App Bundle configuration
 if(APPLE)
@@ -260,34 +295,51 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/assets/wallpaper.png")
     install(FILES ${CMAKE_SOURCE_DIR}/assets/wallpaper.png DESTINATION . OPTIONAL)
 endif()
 
+endif()
+
 # Backend smoke test executable (quick runtime check)
 add_executable(backend_smoke src/tools/backend_smoke.cpp)
 target_include_directories(backend_smoke PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(backend_smoke PRIVATE beatsync_backend_static avformat avcodec avutil swresample swscale avfilter)
 set_target_properties(backend_smoke PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
 
-# Copy FFmpeg DLLs to output directory (Windows only)
+# Simple smoke test that loads the copied beatsync shared DLL and checks required exports
+add_executable(dll_loader_smoke src/tools/dll_loader_smoke.cpp)
+set_target_properties(dll_loader_smoke PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
 if(WIN32)
-    file(GLOB FFMPEG_DLLS "${FFMPEG_ROOT}/bin/*.dll")
-    foreach(DLL ${FFMPEG_DLLS})
-        add_custom_command(TARGET TripSitter POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${DLL}
-            $<TARGET_FILE_DIR:TripSitter>
-        )
-    endforeach()
-
-    # Also install FFmpeg DLLs so they are included by CPack
-    install(FILES ${FFMPEG_DLLS} DESTINATION .)
-endif()
-
-# Install TripSitter executable and assets for packaging
-if(APPLE)
-    install(TARGETS TripSitter BUNDLE DESTINATION .)
+    # No extra link libs required - uses Win32 LoadLibrary
 else()
-    install(TARGETS TripSitter RUNTIME DESTINATION .)
+    # Link dl on platforms that require it (linux)
+    target_link_libraries(dll_loader_smoke PRIVATE dl)
 endif()
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/assets DESTINATION .)
+
+# Ensure CLI gets installed so CPack includes the beatsync executable
+install(TARGETS beatsync RUNTIME DESTINATION .)
+
+if(BUILD_GUI)
+    # Copy FFmpeg DLLs to output directory (Windows only)
+    if(WIN32)
+        file(GLOB FFMPEG_DLLS "${FFMPEG_ROOT}/bin/*.dll")
+        foreach(DLL ${FFMPEG_DLLS})
+            add_custom_command(TARGET TripSitter POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${DLL}
+                $<TARGET_FILE_DIR:TripSitter>
+            )
+        endforeach()
+
+        # Also install FFmpeg DLLs so they are included by CPack
+        install(FILES ${FFMPEG_DLLS} DESTINATION .)
+    endif()
+
+    # Install TripSitter executable and assets for packaging
+    if(APPLE)
+        install(TARGETS TripSitter BUNDLE DESTINATION .)
+    else()
+        install(TARGETS TripSitter RUNTIME DESTINATION .)
+    endif()
+    install(DIRECTORY ${CMAKE_SOURCE_DIR}/assets DESTINATION .)
+endif()
 
 # Install AI tools if they exist (bundled executables for beat detection)
 # These are built separately with PyInstaller - see scripts/build_ai_tools.py

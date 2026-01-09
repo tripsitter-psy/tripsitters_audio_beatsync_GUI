@@ -73,7 +73,7 @@ cmake --build build --config Release
 ## Current Status ✅
 - Video freezing — **✅ FIXED and tested**
 - Duration padding — **✅ FIXED and tested**
-- GUI (TripSitter) — **✅ COMPLETE** (`build/bin/Release/TripSitter.exe`). wxWidgets-based GUI with PREVIEW FRAME button, timestamp input, `VideoPreview::LoadFrame` implementation, and `BeatVisualizer` for beat visualization.
+- GUI (TripSitter) — **✅ COMPLETE** (`build/bin/Release/TripSitter.exe`). GUI implemented (no longer uses wxWidgets).
 - CLI (beatsync) — **✅ COMPLETE** (`build/bin/Release/beatsync.exe`). Full command-line interface for analyze/sync/multiclip/split operations.
 - Packaging & CI — **✅ CONFIGURED**. CPack setup for ZIP + NSIS. GitHub Actions workflow in `.github/workflows/windows-build.yml` builds and uploads artifacts.
 - Assets — **✅ IMPORTED**. High-quality TripSitter psychedelic fractal backgrounds imported from user's Downloads folder and committed.
@@ -95,115 +95,14 @@ cmake --build build --config Release
 
 **Known Limitations:**
 - Native file dialogs remain system-styled (expected behavior)
-- wxUniversal is less tested than native wxWidgets ports
+
 
 ---
 
-## Session Log (2026-01-03) — wxUniversal Integration 🎨
+## Session Log (2026-01-03) — UI investigation
+wxUniversal (a wxWidgets port) was investigated but ultimately not adopted; the project no longer uses wxWidgets for the GUI. The GUI uses the current UI stack and build configuration.
 
-### Goal: Static Background + Fully Custom Theme
-**Problem:** Background image scrolled with content; native controls couldn't be fully styled.
-**Solution:** wxUniversal — a wxWidgets port that renders all controls itself, enabling:
-- Static background that stays fixed while UI scrolls over it
-- Complete control over all widget rendering via custom theme
-
-### Phase 1: Build wxWidgets with wxUniversal ✅
-
-**Build Script Created:** `C:\Users\samue\Desktop\build_wxuniv.bat`
-```batch
-@echo off
-call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
-cd /d C:\wxWidgets-3.2.4\build\msw
-nmake /f makefile.vc BUILD=release SHARED=1 WXUNIV=1 UNICODE=1 TARGET_CPU=X64
-```
-
-**Output Libraries:** `C:\wxWidgets-3.2.4\lib\vc_x64_dll\`
-- `wxmswuniv32u_core_vc_x64.dll`
-- `wxmswuniv32u_base_vc_x64.dll`
-- `wxmswuniv32u_adv_vc_x64.dll`
-
-### Phase 2: PsychedelicTheme Implementation ✅
-
-**New Files:**
-- `src/gui/PsychedelicTheme.h` — Theme header with color palette
-- `src/gui/PsychedelicTheme.cpp` — Full theme implementation
-
-**Color Palette:**
-| Element | Color | Hex |
-|---------|-------|-----|
-| Primary | Neon Cyan | #00D9FF |
-| Secondary | Neon Purple | #8B00FF |
-| Background | Dark Blue-Black | #0A0A1A |
-| Surface | Dark Gray-Blue | #141428 |
-| Text | Light Blue-White | #C8DCFF |
-| Accent | Hot Pink | #FF0080 |
-
-**Theme Features:**
-- Custom button rendering with gradients
-- Glow effects on hover/focus
-- Custom checkbox and radio button drawing
-- Styled scrollbars and progress bars
-- Transparent control backgrounds
-
-### Phase 3: CMakeLists.txt Updates ✅
-
-**New Option Added:**
-```cmake
-option(USE_WXUNIVERSAL "Use wxUniversal build for custom theming" OFF)
-
-if(WIN32)
-    if(USE_WXUNIVERSAL)
-        set(wxWidgets_CONFIGURATION mswunivu)
-        add_definitions(-D__WXUNIVERSAL__)
-    else()
-        set(wxWidgets_CONFIGURATION mswu)
-    endif()
-endif()
-```
-
-### Phase 4: MainWindow Updates ✅
-
-**Changes to `src/gui_main.cpp`:**
-- Added theme registration: `WX_USE_THEME(psychedelic);`
-- Theme initialization in `OnInit()`: `wxTheme::Set(wxTheme::Create("psychedelic"));`
-
-**Changes to `src/gui/MainWindow.cpp`:**
-- Conditional code with `#ifdef __WXUNIVERSAL__`
-- Simplified background handling for wxUniversal (transparent scrolled panel)
-- Frame-level paint handler for static background
-
-### Build Commands
-
-**Standard Build (Native Controls):**
-```bash
-cmake -B build
-cmake --build build --config Release
-```
-
-**wxUniversal Build (Custom Theme):**
-```bash
-cmake -B build -DUSE_WXUNIVERSAL=ON
-cmake --build build --config Release
-```
-
-### Status
-- ✅ wxWidgets wxUniversal libraries built
-- ✅ PsychedelicTheme files created
-- ✅ CMakeLists.txt updated with USE_WXUNIVERSAL option
-- ✅ MainWindow updated for layered panel approach
-- ⏳ Rebuild and test with USE_WXUNIVERSAL=ON
-
-**Repository Structure:**
-- `main` branch — stable release code with assets
-- `ci/nsis-smoke-test` branch — includes CI workflow for NSIS packaging
-- GitHub Actions will build packages (ZIP + NSIS) automatically on push
-- Artifacts available at: https://github.com/tripsitter-psy/tripsitters_audio_beatsync_GUI/actions
-
-**Ready for:**
-1. ✅ Local testing — Build and run immediately
-2. ✅ CI packaging — Push triggers GitHub Actions workflow
-3. ✅ Distribution — Download artifacts from Actions or run `cpack -C Release` locally
-4. ⏭️ Optional: Merge `ci/nsis-smoke-test` to `main` to enable CI on main branch
+---
 
 ---
 
