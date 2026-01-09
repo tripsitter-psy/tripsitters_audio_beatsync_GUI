@@ -45,20 +45,10 @@ ABeatSyncHUD::ABeatSyncHUD()
 		HeaderTexture = HeaderFinder.Object;
 	}
 
-	// Try to load custom Corpta font
-	static ConstructorHelpers::FObjectFinder<UFont> FontFinder(
-		TEXT("Font'/Game/UI/Fonts/Corpta_Font.Corpta_Font'"));
-	if (FontFinder.Succeeded())
-	{
-		CustomFont = FontFinder.Object;
-		CustomFontLarge = FontFinder.Object;
-	}
-	else
-	{
-		// Fallback to engine fonts
-		CustomFont = nullptr;
-		CustomFontLarge = nullptr;
-	}
+	// Use engine built-in fonts (custom font disabled for now)
+	// To use custom font: import Corpta.otf in editor, create Font asset at /Game/UI/Fonts/Corpta_Font
+	CustomFont = nullptr;
+	CustomFontLarge = nullptr;
 }
 
 void ABeatSyncHUD::BeginPlay()
