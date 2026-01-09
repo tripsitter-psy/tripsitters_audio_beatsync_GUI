@@ -1,0 +1,31 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.7",
+	"Category": "",
+	"Description": "TripSitter BeatSync - Audio-synchronized video editing application",
+	"Modules": [
+		{
+			"Name": "TripSitterBeatSync",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"Engine",
+				"UMG"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "TripSitterUE",
+			"Enabled": true
+		},
+		{
+			"Name": "MediaCompositing",
+			"Enabled": true
+		},
+		{
+			"Name": "MediaPlate",
+			"Enabled": true
+		}
+	]
+}
