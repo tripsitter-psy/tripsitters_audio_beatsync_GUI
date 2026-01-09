@@ -356,6 +356,10 @@ bool UBeatsyncSubsystem::AnalyzeAudioFile(const FString& FilePath)
 				CurrentBeatData.Duration = static_cast<float>(Duration);
 				CurrentBeatData.BeatCount = Beats.Num();
 
+				// Store debug info in status
+				CurrentBeatData.DebugInfo = FString::Printf(TEXT("[v2] %d samples @ %dHz = %.1fs"),
+					LoadedSamples, LoadedSR, Duration);
+
 				// Also extract waveform for visualization
 				ExtractWaveform(FilePath, 2048);
 
@@ -363,7 +367,7 @@ bool UBeatsyncSubsystem::AnalyzeAudioFile(const FString& FilePath)
 			}
 			else
 			{
-				FString ErrorMsg = FString::Printf(TEXT("Failed: Loaded %d samples at %dHz from %s"),
+				FString ErrorMsg = FString::Printf(TEXT("[v2] Failed: %d samples @ %dHz from %s"),
 					LoadedSamples, LoadedSR, *FPaths::GetCleanFilename(FilePath));
 				OnError.Broadcast(ErrorMsg);
 			}

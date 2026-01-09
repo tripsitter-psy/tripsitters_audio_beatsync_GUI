@@ -153,7 +153,9 @@ void ABeatSyncHUD::OnAnalysisComplete()
 		TotalAudioDuration = CachedDuration;
 		bHasRealWaveform = CachedWaveform.Num() > 0;
 
-		AnalysisStatus = FString::Printf(TEXT("Found %d beats at %.1f BPM (%.0fs)"), Data.BeatCount, Data.BPM, Data.Duration);
+		// Show debug info with version marker [v2] to confirm new code is running
+		AnalysisStatus = FString::Printf(TEXT("[v2] Found %d beats at %.1f BPM (%.0fs) %s"),
+			Data.BeatCount, Data.BPM, Data.Duration, *Data.DebugInfo);
 		StatusMessage = AnalysisStatus;
 		StatusMessageTimer = 5.0f;
 	}

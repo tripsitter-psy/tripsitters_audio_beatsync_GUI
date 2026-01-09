@@ -51,6 +51,9 @@ struct FBeatData
 
 	UPROPERTY(BlueprintReadOnly, Category = "BeatSync")
 	int32 SampleRate = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "BeatSync")
+	FString DebugInfo;  // Debug info for troubleshooting
 };
 
 /**
