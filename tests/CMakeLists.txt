@@ -46,10 +46,11 @@ target_link_libraries(test_transition_library PRIVATE Catch2::Catch2)
 add_test(NAME transition_library COMMAND test_transition_library)
 set_tests_properties(transition_library PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
-# FFTAnalyzer test skeleton
+# FFTAnalyzer test
 add_executable(test_fft_analyzer
     catch_main.cpp
     test_fft_analyzer.cpp
+    ../src/audio/FFTAnalyzer.cpp
 )
 
 target_include_directories(test_fft_analyzer PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -57,10 +58,12 @@ target_link_libraries(test_fft_analyzer PRIVATE Catch2::Catch2)
 add_test(NAME fft_analyzer COMMAND test_fft_analyzer)
 set_tests_properties(fft_analyzer PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
-# BeatNetBridge test skeleton
+# BeatNetBridge test
 add_executable(test_beatnet_bridge
     catch_main.cpp
     test_beatnet_bridge.cpp
+    ../src/audio/BeatNetBridge.cpp
+    ../src/audio/BeatGrid.cpp
 )
 
 target_include_directories(test_beatnet_bridge PRIVATE ${CMAKE_SOURCE_DIR}/src)
