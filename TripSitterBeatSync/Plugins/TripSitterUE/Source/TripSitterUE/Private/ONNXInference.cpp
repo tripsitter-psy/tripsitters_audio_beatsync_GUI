@@ -10,9 +10,8 @@
 #include "NNEModelData.h"
 #endif
 
-// Use UE's math constants (PI and LOCAL_TWO_PI are deprecated macros)
-#define LOCAL_PI UE_PI
-#define LOCAL_LOCAL_TWO_PI UE_LOCAL_TWO_PI
+// Math constant - use direct value to avoid UE macro conflicts
+static constexpr float kTwoPi = 6.28318530717958647692f;
 
 //==============================================================================
 // Audio Preprocessing
@@ -47,7 +46,7 @@ void ComputeDFT(const TArray<float>& Frame, TArray<float>& OutReal, TArray<float
 
 		for (int32 n = 0; n < N; n++)
 		{
-			float Angle = LOCAL_TWO_PI * k * n / N;
+			float Angle = kTwoPi * k * n / N;
 			Real += Frame[n] * FMath::Cos(Angle);
 			Imag -= Frame[n] * FMath::Sin(Angle);
 		}
@@ -63,7 +62,7 @@ void ApplyHannWindow(TArray<float>& Frame)
 	int32 N = Frame.Num();
 	for (int32 i = 0; i < N; i++)
 	{
-		float Window = 0.5f * (1.0f - FMath::Cos(LOCAL_TWO_PI * i / (N - 1)));
+		float Window = 0.5f * (1.0f - FMath::Cos(kTwoPi * i / (N - 1)));
 		Frame[i] *= Window;
 	}
 }
