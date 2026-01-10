@@ -84,6 +84,19 @@ target_link_libraries(test_beatnet_python PRIVATE Catch2::Catch2)
 add_test(NAME beatnet_python COMMAND test_beatnet_python)
 set_tests_properties(beatnet_python PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
+# OnnxDetector prototype test
+add_executable(test_onnx_detector
+    catch_main.cpp
+    test_onnx_detector.cpp
+    ../src/audio/OnnxBeatDetector.cpp
+    ../src/audio/BeatGrid.cpp
+)
+
+target_include_directories(test_onnx_detector PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_onnx_detector PRIVATE Catch2::Catch2)
+add_test(NAME onnx_detector COMMAND test_onnx_detector)
+set_tests_properties(onnx_detector PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
 # Transition chaining tests - disabled: tests private method
 # add_executable(test_transition_chaining
 #     catch_main.cpp
