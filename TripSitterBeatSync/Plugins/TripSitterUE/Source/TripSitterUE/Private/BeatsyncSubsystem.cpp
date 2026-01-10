@@ -297,11 +297,32 @@ static bool PythonBeatDetection(const FString& AudioFilePath, TArray<double>& Ou
 		return false;
 	}
 
-	// Find the detect_beats.py script
-	FString ScriptPath = FPaths::ProjectDir() / TEXT("scripts/detect_beats.py");
-	if (!FPaths::FileExists(ScriptPath))
+	// Find the detect_beats.py script - check multiple locations
+	FString ScriptPath;
+	TArray<FString> ScriptSearchPaths = {
+		FPaths::ProjectDir() / TEXT("scripts/detect_beats.py"),
+		FPaths::ProjectContentDir() / TEXT("../scripts/detect_beats.py"),
+		// For packaged builds on Mac, check relative to executable
+		FPaths::GetPath(FPlatformProcess::ExecutablePath()) / TEXT("../../../scripts/detect_beats.py"),
+		FPaths::GetPath(FPlatformProcess::ExecutablePath()) / TEXT("../../TripSitterBeatSync/scripts/detect_beats.py"),
+		// Hardcoded fallback for development
+		TEXT("/Users/tripsitter/tripsitters_audio_beatsync_GUI/TripSitterBeatSync/scripts/detect_beats.py"),
+	};
+
+	for (const FString& TestPath : ScriptSearchPaths)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("detect_beats.py not found at: %s"), *ScriptPath);
+		FString NormalizedPath = FPaths::ConvertRelativePathToFull(TestPath);
+		if (FPaths::FileExists(NormalizedPath))
+		{
+			ScriptPath = NormalizedPath;
+			UE_LOG(LogTemp, Log, TEXT("Found detect_beats.py at: %s"), *ScriptPath);
+			break;
+		}
+	}
+
+	if (ScriptPath.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("detect_beats.py not found in any search path"));
 		return false;
 	}
 
