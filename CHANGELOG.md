@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Added `tests/test_onnx_detector_regression.cpp` with 200-iteration stress test to catch allocator/heap corruption regressions
+- Added `tests/onnx_inference_helper.cpp` and `test_onnx_inference_helper` to run ONNX inference in an isolated process to contain runtime crashes
 - Updated `tests/CMakeLists.txt` with regression test configuration and DLL copy helper
 
 ### Changed
