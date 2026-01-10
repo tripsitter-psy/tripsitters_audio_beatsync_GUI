@@ -1591,8 +1591,9 @@ void ABeatSyncHUD::DrawVisualizerPanel(float X, float Y, float Width)
 
 FString ABeatSyncHUD::OpenFileDialog(const FString& Title, const FString& DefaultPath, const FString& FileTypes)
 {
-#if WITH_DESKTOP_PLATFORM
-	// Try DesktopPlatform first (available in Editor builds)
+#if WITH_EDITOR && WITH_DESKTOP_PLATFORM
+	// DesktopPlatform only works reliably in Editor builds
+	// In packaged builds on Mac, NSOpenPanel must be on main thread which causes crashes
 	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
 	if (DesktopPlatform)
 	{
