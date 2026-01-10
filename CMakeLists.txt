@@ -22,9 +22,23 @@ endif()
 # Optional AI / advanced feature flags (stubs included; wire deps when available)
 option(USE_ESSENTIA "Enable Essentia-based beat analyzer" OFF)
 option(USE_BEATNET "Enable BeatNet Python bridge" OFF)
+# Enable invoking Python subprocess for BeatNet (dev-only; DO NOT enable for release builds)
+option(ENABLE_BEATNET_PYTHON "Enable invoking Python subprocess for BeatNet (dev only)" OFF)
+if(ENABLE_BEATNET_PYTHON)
+    add_compile_definitions(ENABLE_BEATNET_PYTHON)
+endif()
 option(USE_DEMUCS "Enable Demucs stem separation" OFF)
 option(USE_GLTRANSITIONS "Enable GLSL transitions library" OFF)
 option(USE_AUDIOREACTIVE "Enable FFT-driven audio-reactive effects" OFF)
+
+# BeatNet Python integration - OFF by default for packaged builds
+# Enable with -DENABLE_BEATNET_PYTHON=ON for development only
+# Runtime can also be enabled via BEATSYNC_ENABLE_PYTHON=1 environment variable
+option(ENABLE_BEATNET_PYTHON "Enable BeatNet Python subprocess invocation (dev only)" OFF)
+if(ENABLE_BEATNET_PYTHON)
+    add_definitions(-DENABLE_BEATNET_PYTHON)
+    message(STATUS "BeatNet Python subprocess ENABLED - this should NOT be used in release builds")
+endif()
 
 # Build options
 option(BUILD_GUI "Build TripSitter GUI" ON)
@@ -73,6 +87,11 @@ if(BEATSYNC_BUILD_SHARED AND (WIN32 OR APPLE OR UNIX))
 
     # Ensure OPTIONAL_SOURCES (eg. TransitionLibrary) are explicitly added to shared target too
     target_sources(beatsync_backend_shared PRIVATE ${OPTIONAL_SOURCES})
+
+    # Fail release builds if ENABLE_BEATNET_PYTHON is enabled (to avoid bundling Python in releases)
+    if(ENABLE_BEATNET_PYTHON AND CMAKE_BUILD_TYPE MATCHES "Release")
+        message(FATAL_ERROR "ENABLE_BEATNET_PYTHON must be OFF for Release builds. Set ENABLE_BEATNET_PYTHON=OFF to proceed.")
+    endif()
 
     # Copy built shared library and headers to unreal-prototype/ThirdParty for Unreal plugin consumption
     add_custom_command(TARGET beatsync_backend_shared POST_BUILD
@@ -363,6 +382,15 @@ install(FILES
     DESTINATION scripts
     OPTIONAL
 )
+
+# Packaging safety check: fail if Python is enabled in release builds
+# This ensures packaged releases don't require Python
+if(ENABLE_BEATNET_PYTHON)
+    message(WARNING "ENABLE_BEATNET_PYTHON is ON - packaged builds will require Python!")
+    message(WARNING "Set -DENABLE_BEATNET_PYTHON=OFF for release builds.")
+    # Uncomment the following line to make this a hard error:
+    # message(FATAL_ERROR "Cannot package with ENABLE_BEATNET_PYTHON=ON")
+endif()
 
 # CPack packaging configuration (ZIP + NSIS for Windows)
 include(InstallRequiredSystemLibraries)

@@ -14,11 +14,22 @@
 
 namespace BeatSync {
 
-BeatNetBridge::BeatNetBridge() = default;
+BeatNetBridge::BeatNetBridge() {
+    // Check environment variable for runtime opt-in
+    const char* envVal = std::getenv("BEATSYNC_ENABLE_PYTHON");
+    if (envVal && (std::string(envVal) == "1" || std::string(envVal) == "true")) {
+        m_config.pythonEnabled = true;
+    }
+}
 
 BeatNetBridge::BeatNetBridge(const BeatNetConfig& config)
     : m_config(config)
 {
+    // Check environment variable for runtime opt-in (can override config)
+    const char* envVal = std::getenv("BEATSYNC_ENABLE_PYTHON");
+    if (envVal && (std::string(envVal) == "1" || std::string(envVal) == "true")) {
+        m_config.pythonEnabled = true;
+    }
 }
 
 std::string BeatNetBridge::getDefaultScriptPath() {
@@ -30,7 +41,24 @@ std::string BeatNetBridge::getDefaultScriptPath() {
 #endif
 }
 
+bool BeatNetBridge::isPythonEnabled() const {
+    // Python is only enabled if:
+    // 1. Compile-time flag ENABLE_BEATNET_PYTHON is set, AND
+    // 2. Runtime flag pythonEnabled is true (via setPythonEnabled() or env var)
+#ifdef ENABLE_BEATNET_PYTHON
+    return m_config.pythonEnabled;
+#else
+    // Compile-time disabled - Python subprocess is never available
+    return false;
+#endif
+}
+
 std::string BeatNetBridge::findPythonExecutable() const {
+    // Only search for Python if enabled
+    if (!isPythonEnabled()) {
+        return "";
+    }
+
     // Use configured path if provided
     if (!m_config.pythonPath.empty()) {
         return m_config.pythonPath;
@@ -61,11 +89,26 @@ std::string BeatNetBridge::findPythonExecutable() const {
 }
 
 bool BeatNetBridge::isPythonAvailable() const {
+    // First check if Python is enabled (compile-time + runtime)
+    if (!isPythonEnabled()) {
+        return false;
+    }
+    // Then check if Python executable exists
     std::string python = findPythonExecutable();
     return !python.empty();
 }
 
 std::string BeatNetBridge::runPythonProcess(const std::string& audioFilePath, int& exitCode) {
+#ifndef ENABLE_BEATNET_PYTHON
+    // Compile-time disabled - return error
+    exitCode = -1;
+    return "Python subprocess disabled at compile time";
+#else
+    if (!isPythonEnabled()) {
+        exitCode = -1;
+        return "Python subprocess disabled at runtime";
+    }
+
     std::string python = findPythonExecutable();
     if (python.empty()) {
         exitCode = -1;
@@ -116,6 +159,7 @@ std::string BeatNetBridge::runPythonProcess(const std::string& audioFilePath, in
 #endif
 
     return output;
+#endif // ENABLE_BEATNET_PYTHON
 }
 
 bool BeatNetBridge::parseJsonOutput(const std::string& jsonStr, BeatGrid& outGrid) {
@@ -218,6 +262,15 @@ BeatGrid BeatNetBridge::analyzeWithSidecar(const std::string& audioFilePath) {
 BeatGrid BeatNetBridge::analyzeWithPython(const std::string& audioFilePath, BeatNetProgressCallback progressCallback) {
     BeatGrid grid;
 
+#ifndef ENABLE_BEATNET_PYTHON
+    m_lastError = "Python subprocess disabled at compile time";
+    return grid;
+#else
+    if (!isPythonEnabled()) {
+        m_lastError = "Python subprocess disabled at runtime";
+        return grid;
+    }
+
     if (progressCallback) {
         progressCallback(0.0f, "Starting BeatNet analysis...");
     }
@@ -250,6 +303,7 @@ BeatGrid BeatNetBridge::analyzeWithPython(const std::string& audioFilePath, Beat
     }
 
     return grid;
+#endif // ENABLE_BEATNET_PYTHON
 }
 
 BeatGrid BeatNetBridge::analyze(const std::string& audioFilePath) {
@@ -266,7 +320,7 @@ BeatGrid BeatNetBridge::analyze(const std::string& audioFilePath, BeatNetProgres
             return analyzeWithSidecar(audioFilePath);
 
         case BeatNetMode::PythonOptIn:
-            // Try Python first, fall back to sidecar
+            // Try Python first (if enabled), fall back to sidecar
             if (isPythonAvailable()) {
                 grid = analyzeWithPython(audioFilePath, progressCallback);
                 if (!grid.isEmpty()) {
@@ -283,11 +337,15 @@ BeatGrid BeatNetBridge::analyze(const std::string& audioFilePath, BeatNetProgres
                     return grid;
                 }
             }
-            // Python not available, try sidecar
+            // Python not available or not enabled, try sidecar
             return analyzeWithSidecar(audioFilePath);
 
         case BeatNetMode::PythonRequired:
-            // Require Python, fail if not available
+            // Require Python, fail if not available or not enabled
+            if (!isPythonEnabled()) {
+                m_lastError = "Python is required but not enabled (set BEATSYNC_ENABLE_PYTHON=1 or call setPythonEnabled(true))";
+                return grid;
+            }
             if (!isPythonAvailable()) {
                 m_lastError = "Python is required but not available";
                 return grid;

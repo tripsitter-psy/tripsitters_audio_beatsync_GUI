@@ -20,6 +20,7 @@ struct BeatNetConfig {
     std::string scriptPath;                        // Path to beatnet_analyze.py
     int timeoutMs = 60000;                         // Timeout for Python subprocess (ms)
     bool verbose = false;                          // Enable verbose logging
+    bool pythonEnabled = false;                    // Runtime opt-in for Python (checked in addition to compile-time flag)
 };
 
 // Progress callback for long-running analysis
@@ -47,11 +48,17 @@ public:
     void setPythonPath(const std::string& pythonPath) { m_config.pythonPath = pythonPath; }
     void setScriptPath(const std::string& scriptPath) { m_config.scriptPath = scriptPath; }
 
+    // Runtime opt-in for Python subprocess invocation
+    // This must be explicitly enabled AND the compile-time flag ENABLE_BEATNET_PYTHON must be set
+    // Can also be enabled via BEATSYNC_ENABLE_PYTHON=1 environment variable
+    void setPythonEnabled(bool enabled) { m_config.pythonEnabled = enabled; }
+    bool isPythonEnabled() const;
+
     // Error handling
     const std::string& getLastError() const { return m_lastError; }
     bool hasError() const { return !m_lastError.empty(); }
 
-    // Check if Python is available and working
+    // Check if Python is available and working (compile-time + runtime checks)
     bool isPythonAvailable() const;
 
     // Get the path to the default script (relative to executable)
