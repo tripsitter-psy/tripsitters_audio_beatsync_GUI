@@ -71,6 +71,19 @@ target_link_libraries(test_beatnet_bridge PRIVATE Catch2::Catch2)
 add_test(NAME beatnet_bridge COMMAND test_beatnet_bridge)
 set_tests_properties(beatnet_bridge PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
+# BeatNet Python integration (gated by env var BEATSYNC_ENABLE_PYTHON)
+add_executable(test_beatnet_python
+    catch_main.cpp
+    test_beatnet_python.cpp
+    ../src/audio/BeatNetBridge.cpp
+    ../src/audio/BeatGrid.cpp
+)
+
+target_include_directories(test_beatnet_python PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_beatnet_python PRIVATE Catch2::Catch2)
+add_test(NAME beatnet_python COMMAND test_beatnet_python)
+set_tests_properties(beatnet_python PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
 # Transition chaining tests - disabled: tests private method
 # add_executable(test_transition_chaining
 #     catch_main.cpp
