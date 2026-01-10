@@ -199,6 +199,81 @@ This creates a music video that switches between different clips on each beat!
 
 ## Building The Project
 
+### ONNX Model Conversion and Reference Model
+- To regenerate the test ONNX models (opset 12):
+  - python tools/generate_beat_stub.py
+  - This writes `tests/models/beat_stub.onnx` and `tests/models/beat_reference.onnx`.
+- To convert a small PyTorch model to ONNX (opset 12):
+  - python tools/convert_pytorch_to_onnx.py --out tests/models/beat_reference.onnx
+  - The script exits with an informative message if PyTorch is not available locally.
+- Tests now assert ONNX inference strictly against the reference model; ensure your environment has a compatible ONNX Runtime (vcpkg onnxruntime) and providers configured before running ONNX integration tests. If you encounter intermittent crashes, run the CPU-only tests (`ctest -R onnx_detector -E cuda`) to isolate CUDA/provider issues; consider using the conversion script to regenerate a model if needed.
+
+### GPU/CUDA CI
+- The CUDA integration workflow is gated and will only run on self-hosted runners labeled `gpu`:
+  - Trigger via manual dispatch (Actions → CUDA Integration Tests) or by labeling a pull request with **`test-cuda`**.
+  - The job checks for an NVIDIA GPU on the runner and skips the CUDA steps if none is found.
+  - Use this to validate GPU-accelerated ONNX inference in CI without affecting regular CI runs.
+
+### Tracing & debugging 🐛🔍
+- Build with tracing enabled: pass `-DUSE_TRACING=ON` when configuring CMake to enable `TRACE_FUNC()` / `TRACE_SCOPE()` macros and tracing support.
+- At runtime enable tracing by setting either `BEATSYNC_ENABLE_TRACING=1` or `BEATSYNC_TRACE_OUT=/path/to/trace.log` (if unset, traces are written to the platform temp directory as `beatsync-trace.log`).
+- Run the tracing smoke test locally:
+  - Configure with `-DUSE_TRACING=ON`, build, then run `ctest -R tracing -V` to run `tests/test_tracing.cpp`.
+- Viewing traces:
+  - Use the AI Toolkit trace viewer (`ai-mlstudio.tracing.open`) in VS Code for OTLP-compatible traces, or simply open the `beatsync-trace.log` file in an editor — spans are logged as `START`/`END` lines with timestamps and durations.
+- Tip: Enable tracing only when debugging (it is lightweight but produces file output). If tracing exposes a race or file removal issue, run the unit test under the debugger and inspect the trace file for START/END spans to find the culprit.
+
+**CI:** There is a new workflow **Tracing smoke tests** (`.github/workflows/tracing-smoke.yml`) that runs on PRs and can be triggered manually; it builds the project with `-DUSE_TRACING=ON` and runs `ctest -R tracing -V` on Linux and Windows.
+
+
+### Self-hosted GPU runner checklist ✅
+
+A compact checklist to provision a self-hosted GitHub Actions runner capable of validating CUDA/ONNX GPU jobs.
+
+1. **Choose hardware & OS** — NVIDIA GPU (RTX class recommended). Prefer Linux (Ubuntu 20.04/22.04) for stability; Windows Server 2019/2022 is also supported.
+2. **Install NVIDIA drivers & CUDA** — Install the NVIDIA driver and the CUDA toolkit version compatible with your ONNX Runtime build (match CUDA/cuDNN versions used by `vcpkg`/`onnxruntime`).
+3. **Install Docker (optional)** — If using containers, install Docker and the NVIDIA Container Toolkit (`nvidia-docker2`) so containers can access GPUs.
+4. **Install runner software** — Follow GitHub's self-hosted runner docs to install the `actions/runner` as a service and register it with the repo/org. Add labels: `self-hosted`, `gpu`, `x64`, and `windows` or `linux`.
+5. **Install build dependencies** — Install compilers / build tools (Visual Studio Build Tools on Windows or `build-essential` on Linux), `vcpkg`, and any other toolchains your CI needs.
+6. **Verify GPU access** — Run `nvidia-smi` and (if using Docker) `docker run --gpus all nvidia/cuda:12.0-base nvidia-smi` to confirm the GPU is visible to the runner.
+7. **Set environment & PATH** — Ensure CUDA and `vcpkg`-installed binaries are on PATH so CI steps can find `nvcc`, `onnxruntime` DLLs, and CUDA libraries. Watch TEMP or /tmp free space (nvcc writes large temporary files during builds).
+8. **Security & scoping** — Restrict runner to specific repositories or use runner groups. Run the runner as a non-privileged service account, rotate registration tokens, and keep the OS and GPU drivers updated.
+9. **Smoke test the workflow** — Manually trigger the `CUDA Integration Tests` workflow (Actions → CUDA Integration Tests) or run the CUDA-labeled test locally with the `test-cuda` label to confirm the job runs and passes on the runner.
+10. **Monitoring & maintenance** — Add monitoring for GPU health, driver updates, disk usage and set automated cleanup for TEMP to avoid nvcc / ptxas disk-space failures.
+
+**Quick verification commands:**
+
+- `nvidia-smi`
+- `docker run --gpus all nvidia/cuda:12.0-base nvidia-smi` (if using Docker)
+- Confirm the runner is registered and labeled `gpu` in the repository settings (Settings → Actions → Runners)
+
+**Runner validation scripts:**
+
+We've added small helper scripts to automate common checks on a self-hosted runner (NVIDIA visibility, Docker GPU access, nvcc presence, TEMP disk space, and optional GitHub label checks).
+
+- PowerShell (Windows): `scripts/check_gpu_runner.ps1`
+- Bash (Linux): `scripts/check_gpu_runner.sh`
+
+Usage examples:
+
+- PowerShell: `powershell -File scripts\check_gpu_runner.ps1 -GithubRepo "owner/repo"` (requires `GITHUB_TOKEN` env var for GitHub checks)
+- Bash: `REPO="owner/repo" GITHUB_TOKEN="$TOKEN" ./scripts/check_gpu_runner.sh`
+You can also trigger an automated sanity check from the GitHub UI using the **GPU Runner Sanity** workflow (Actions → GPU Runner Sanity). The workflow attempts to run the appropriate script on any available self-hosted runner labeled `gpu` (Linux and Windows jobs).
+> **Note:** If you encounter `ptxas` or `nvcc` write errors during builds, check disk space and TEMP (or `/tmp`) permissions; cleaning TEMP often resolves these failures.
+
+**ONNX regression test:** We added `tests/test_onnx_detector_regression.cpp` which runs the stub ONNX model repeatedly (200 iterations) to detect heap/allocator regressions; run it locally with:
+
+```bash
+ctest -R onnx_detector_regression -V
+```
+
+
+### PR guidance for GPU changes
+- We added a lightweight PR check that scans diffs for GPU/ONNX-related changes. If such changes are detected, the check will fail unless the PR is labeled **`test-cuda`**.
+- Please add **`test-cuda`** to PRs that modify CUDA providers, ONNX runtime usage, or add/remove GPU-targeted code so the gated GPU CI job runs and validates the change on a GPU-capable runner.
+- The repository includes `tools/check_gpu_changes.py` which you can run locally to preview whether your changes will trigger the GPU check.
+
+
 ### Step 1: Build the Backend DLL
 
 ```powershell
