@@ -273,111 +273,63 @@ static bool NativeBeatDetection(const TArray<float>& MonoSamples, int32 SampleRa
 // Python-based beat detection using librosa (most accurate)
 static bool PythonBeatDetection(const FString& AudioFilePath, TArray<double>& OutBeats, double& OutBPM, double& OutDuration)
 {
-	// Find Python and detect_beats.py script
-	FString Python3Path;
-	TArray<FString> PythonPaths = {
-		TEXT("/opt/homebrew/bin/python3"),
-		TEXT("/usr/local/bin/python3"),
-		TEXT("/usr/bin/python3"),
-		TEXT("python3"),  // Use PATH
-	};
+	// Hardcoded paths that work
+	FString Python3Path = TEXT("/opt/homebrew/bin/python3");
+	FString ScriptPath = TEXT("/Users/tripsitter/tripsitters_audio_beatsync_GUI/TripSitterBeatSync/scripts/detect_beats.py");
+	FString TempOutputPath = TEXT("/tmp/beatsync_detection.json");
 
-	for (const FString& Path : PythonPaths)
+	if (!FPaths::FileExists(Python3Path))
 	{
-		if (Path == TEXT("python3") || FPaths::FileExists(Path))
-		{
-			Python3Path = Path;
-			break;
-		}
+		Python3Path = TEXT("/usr/local/bin/python3");
 	}
-
-	if (Python3Path.IsEmpty())
+	if (!FPaths::FileExists(Python3Path))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Python3 not found for beat detection"));
+		UE_LOG(LogTemp, Warning, TEXT("Python3 not found"));
 		return false;
 	}
 
-	// Find the detect_beats.py script - check multiple locations
-	FString ScriptPath;
-	TArray<FString> ScriptSearchPaths = {
-		FPaths::ProjectDir() / TEXT("scripts/detect_beats.py"),
-		FPaths::ProjectContentDir() / TEXT("../scripts/detect_beats.py"),
-		// For packaged builds on Mac, check relative to executable
-		FPaths::GetPath(FPlatformProcess::ExecutablePath()) / TEXT("../../../scripts/detect_beats.py"),
-		FPaths::GetPath(FPlatformProcess::ExecutablePath()) / TEXT("../../TripSitterBeatSync/scripts/detect_beats.py"),
-		// Hardcoded fallback for development
-		TEXT("/Users/tripsitter/tripsitters_audio_beatsync_GUI/TripSitterBeatSync/scripts/detect_beats.py"),
-	};
-
-	for (const FString& TestPath : ScriptSearchPaths)
+	if (!FPaths::FileExists(ScriptPath))
 	{
-		FString NormalizedPath = FPaths::ConvertRelativePathToFull(TestPath);
-		if (FPaths::FileExists(NormalizedPath))
-		{
-			ScriptPath = NormalizedPath;
-			UE_LOG(LogTemp, Log, TEXT("Found detect_beats.py at: %s"), *ScriptPath);
-			break;
-		}
-	}
-
-	if (ScriptPath.IsEmpty())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("detect_beats.py not found in any search path"));
+		UE_LOG(LogTemp, Warning, TEXT("detect_beats.py not found at: %s"), *ScriptPath);
 		return false;
 	}
 
-	// Run Python script and capture output
-	FString Command = FString::Printf(TEXT("\"%s\" \"%s\" \"%s\""), *Python3Path, *ScriptPath, *AudioFilePath);
-	FString StdOut;
-	FString StdErr;
-	int32 ReturnCode = -1;
+	// Use system() to run Python and redirect output to temp file
+	FString Command = FString::Printf(TEXT("\"%s\" \"%s\" \"%s\" > \"%s\" 2>&1"),
+		*Python3Path, *ScriptPath, *AudioFilePath, *TempOutputPath);
 
-	// Create process with output capture
-	void* ReadPipe = nullptr;
-	void* WritePipe = nullptr;
-	FPlatformProcess::CreatePipe(ReadPipe, WritePipe);
+	UE_LOG(LogTemp, Log, TEXT("Running: %s"), *Command);
 
-	FProcHandle ProcHandle = FPlatformProcess::CreateProc(
-		*Python3Path,
-		*FString::Printf(TEXT("\"%s\" \"%s\""), *ScriptPath, *AudioFilePath),
-		false, true, true, nullptr, 0, nullptr, WritePipe, ReadPipe);
+	int32 Result = system(TCHAR_TO_UTF8(*Command));
 
-	if (ProcHandle.IsValid())
+	if (Result != 0)
 	{
-		// Read output while process runs
-		while (FPlatformProcess::IsProcRunning(ProcHandle))
-		{
-			FPlatformProcess::Sleep(0.1f);
-			StdOut += FPlatformProcess::ReadPipe(ReadPipe);
-		}
-		// Read any remaining output
-		StdOut += FPlatformProcess::ReadPipe(ReadPipe);
-
-		FPlatformProcess::GetProcReturnCode(ProcHandle, &ReturnCode);
-		FPlatformProcess::CloseProc(ProcHandle);
-	}
-
-	FPlatformProcess::ClosePipe(ReadPipe, WritePipe);
-
-	if (ReturnCode != 0 || StdOut.IsEmpty())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("Python beat detection failed (code %d)"), ReturnCode);
+		UE_LOG(LogTemp, Warning, TEXT("Python beat detection failed with code %d"), Result);
 		return false;
 	}
+
+	// Read the output file
+	FString JsonOutput;
+	if (!FFileHelper::LoadFileToString(JsonOutput, *TempOutputPath))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Failed to read Python output from %s"), *TempOutputPath);
+		return false;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Python output: %s"), *JsonOutput.Left(200));
 
 	// Parse JSON output
-	// Expected: {"success": true, "bpm": 129.2, "duration": 418.83, "beat_count": 892, "beats": [...]}
-	if (!StdOut.Contains(TEXT("\"success\": true")) && !StdOut.Contains(TEXT("\"success\":true")))
+	if (!JsonOutput.Contains(TEXT("\"success\": true")) && !JsonOutput.Contains(TEXT("\"success\":true")))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Python beat detection returned failure"));
 		return false;
 	}
 
 	// Extract BPM
-	int32 BpmIdx = StdOut.Find(TEXT("\"bpm\":"));
+	int32 BpmIdx = JsonOutput.Find(TEXT("\"bpm\":"));
 	if (BpmIdx != INDEX_NONE)
 	{
-		FString BpmStr = StdOut.Mid(BpmIdx + 6, 10);
+		FString BpmStr = JsonOutput.Mid(BpmIdx + 6, 10);
 		BpmStr = BpmStr.TrimStartAndEnd();
 		int32 CommaIdx = BpmStr.Find(TEXT(","));
 		if (CommaIdx != INDEX_NONE)
@@ -388,10 +340,10 @@ static bool PythonBeatDetection(const FString& AudioFilePath, TArray<double>& Ou
 	}
 
 	// Extract duration
-	int32 DurIdx = StdOut.Find(TEXT("\"duration\":"));
+	int32 DurIdx = JsonOutput.Find(TEXT("\"duration\":"));
 	if (DurIdx != INDEX_NONE)
 	{
-		FString DurStr = StdOut.Mid(DurIdx + 11, 15);
+		FString DurStr = JsonOutput.Mid(DurIdx + 11, 15);
 		DurStr = DurStr.TrimStartAndEnd();
 		int32 CommaIdx = DurStr.Find(TEXT(","));
 		if (CommaIdx != INDEX_NONE)
@@ -402,18 +354,18 @@ static bool PythonBeatDetection(const FString& AudioFilePath, TArray<double>& Ou
 	}
 
 	// Extract beats array
-	int32 BeatsStart = StdOut.Find(TEXT("\"beats\": ["));
+	int32 BeatsStart = JsonOutput.Find(TEXT("\"beats\": ["));
 	if (BeatsStart == INDEX_NONE)
 	{
-		BeatsStart = StdOut.Find(TEXT("\"beats\":["));
+		BeatsStart = JsonOutput.Find(TEXT("\"beats\":["));
 	}
 	if (BeatsStart != INDEX_NONE)
 	{
-		int32 ArrayStart = StdOut.Find(TEXT("["), ESearchCase::IgnoreCase, ESearchDir::FromStart, BeatsStart);
-		int32 ArrayEnd = StdOut.Find(TEXT("]"), ESearchCase::IgnoreCase, ESearchDir::FromStart, ArrayStart);
+		int32 ArrayStart = JsonOutput.Find(TEXT("["), ESearchCase::IgnoreCase, ESearchDir::FromStart, BeatsStart);
+		int32 ArrayEnd = JsonOutput.Find(TEXT("]"), ESearchCase::IgnoreCase, ESearchDir::FromStart, ArrayStart);
 		if (ArrayStart != INDEX_NONE && ArrayEnd != INDEX_NONE)
 		{
-			FString BeatsArray = StdOut.Mid(ArrayStart + 1, ArrayEnd - ArrayStart - 1);
+			FString BeatsArray = JsonOutput.Mid(ArrayStart + 1, ArrayEnd - ArrayStart - 1);
 			TArray<FString> BeatStrings;
 			BeatsArray.ParseIntoArray(BeatStrings, TEXT(","));
 
@@ -431,6 +383,9 @@ static bool PythonBeatDetection(const FString& AudioFilePath, TArray<double>& Ou
 
 	UE_LOG(LogTemp, Log, TEXT("Python librosa beat detection: %d beats at %.1f BPM, duration %.1fs"),
 		OutBeats.Num(), OutBPM, OutDuration);
+
+	// Clean up temp file
+	IFileManager::Get().Delete(*TempOutputPath);
 
 	return OutBeats.Num() > 0 && OutBPM > 0.0;
 }
