@@ -270,6 +270,150 @@ void UBeatsyncSubsystem::Deinitialize()
 static bool ReadWavFileForAnalysis(const FString& FilePath, TArray<float>& OutSamples, int32& OutSampleRate, int32& OutChannels);
 static bool NativeBeatDetection(const TArray<float>& MonoSamples, int32 SampleRate, TArray<double>& OutBeats, double& OutBPM, double& OutDuration);
 
+// Python-based beat detection using librosa (most accurate)
+static bool PythonBeatDetection(const FString& AudioFilePath, TArray<double>& OutBeats, double& OutBPM, double& OutDuration)
+{
+	// Find Python and detect_beats.py script
+	FString Python3Path;
+	TArray<FString> PythonPaths = {
+		TEXT("/opt/homebrew/bin/python3"),
+		TEXT("/usr/local/bin/python3"),
+		TEXT("/usr/bin/python3"),
+		TEXT("python3"),  // Use PATH
+	};
+
+	for (const FString& Path : PythonPaths)
+	{
+		if (Path == TEXT("python3") || FPaths::FileExists(Path))
+		{
+			Python3Path = Path;
+			break;
+		}
+	}
+
+	if (Python3Path.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Python3 not found for beat detection"));
+		return false;
+	}
+
+	// Find the detect_beats.py script
+	FString ScriptPath = FPaths::ProjectDir() / TEXT("scripts/detect_beats.py");
+	if (!FPaths::FileExists(ScriptPath))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("detect_beats.py not found at: %s"), *ScriptPath);
+		return false;
+	}
+
+	// Run Python script and capture output
+	FString Command = FString::Printf(TEXT("\"%s\" \"%s\" \"%s\""), *Python3Path, *ScriptPath, *AudioFilePath);
+	FString StdOut;
+	FString StdErr;
+	int32 ReturnCode = -1;
+
+	// Create process with output capture
+	void* ReadPipe = nullptr;
+	void* WritePipe = nullptr;
+	FPlatformProcess::CreatePipe(ReadPipe, WritePipe);
+
+	FProcHandle ProcHandle = FPlatformProcess::CreateProc(
+		*Python3Path,
+		*FString::Printf(TEXT("\"%s\" \"%s\""), *ScriptPath, *AudioFilePath),
+		false, true, true, nullptr, 0, nullptr, WritePipe, ReadPipe);
+
+	if (ProcHandle.IsValid())
+	{
+		// Read output while process runs
+		while (FPlatformProcess::IsProcRunning(ProcHandle))
+		{
+			FPlatformProcess::Sleep(0.1f);
+			StdOut += FPlatformProcess::ReadPipe(ReadPipe);
+		}
+		// Read any remaining output
+		StdOut += FPlatformProcess::ReadPipe(ReadPipe);
+
+		FPlatformProcess::GetProcReturnCode(ProcHandle, &ReturnCode);
+		FPlatformProcess::CloseProc(ProcHandle);
+	}
+
+	FPlatformProcess::ClosePipe(ReadPipe, WritePipe);
+
+	if (ReturnCode != 0 || StdOut.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Python beat detection failed (code %d)"), ReturnCode);
+		return false;
+	}
+
+	// Parse JSON output
+	// Expected: {"success": true, "bpm": 129.2, "duration": 418.83, "beat_count": 892, "beats": [...]}
+	if (!StdOut.Contains(TEXT("\"success\": true")) && !StdOut.Contains(TEXT("\"success\":true")))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Python beat detection returned failure"));
+		return false;
+	}
+
+	// Extract BPM
+	int32 BpmIdx = StdOut.Find(TEXT("\"bpm\":"));
+	if (BpmIdx != INDEX_NONE)
+	{
+		FString BpmStr = StdOut.Mid(BpmIdx + 6, 10);
+		BpmStr = BpmStr.TrimStartAndEnd();
+		int32 CommaIdx = BpmStr.Find(TEXT(","));
+		if (CommaIdx != INDEX_NONE)
+		{
+			BpmStr = BpmStr.Left(CommaIdx);
+		}
+		OutBPM = FCString::Atof(*BpmStr);
+	}
+
+	// Extract duration
+	int32 DurIdx = StdOut.Find(TEXT("\"duration\":"));
+	if (DurIdx != INDEX_NONE)
+	{
+		FString DurStr = StdOut.Mid(DurIdx + 11, 15);
+		DurStr = DurStr.TrimStartAndEnd();
+		int32 CommaIdx = DurStr.Find(TEXT(","));
+		if (CommaIdx != INDEX_NONE)
+		{
+			DurStr = DurStr.Left(CommaIdx);
+		}
+		OutDuration = FCString::Atof(*DurStr);
+	}
+
+	// Extract beats array
+	int32 BeatsStart = StdOut.Find(TEXT("\"beats\": ["));
+	if (BeatsStart == INDEX_NONE)
+	{
+		BeatsStart = StdOut.Find(TEXT("\"beats\":["));
+	}
+	if (BeatsStart != INDEX_NONE)
+	{
+		int32 ArrayStart = StdOut.Find(TEXT("["), ESearchCase::IgnoreCase, ESearchDir::FromStart, BeatsStart);
+		int32 ArrayEnd = StdOut.Find(TEXT("]"), ESearchCase::IgnoreCase, ESearchDir::FromStart, ArrayStart);
+		if (ArrayStart != INDEX_NONE && ArrayEnd != INDEX_NONE)
+		{
+			FString BeatsArray = StdOut.Mid(ArrayStart + 1, ArrayEnd - ArrayStart - 1);
+			TArray<FString> BeatStrings;
+			BeatsArray.ParseIntoArray(BeatStrings, TEXT(","));
+
+			OutBeats.Empty(BeatStrings.Num());
+			for (const FString& BeatStr : BeatStrings)
+			{
+				double BeatTime = FCString::Atof(*BeatStr.TrimStartAndEnd());
+				if (BeatTime > 0.0)
+				{
+					OutBeats.Add(BeatTime);
+				}
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Python librosa beat detection: %d beats at %.1f BPM, duration %.1fs"),
+		OutBeats.Num(), OutBPM, OutDuration);
+
+	return OutBeats.Num() > 0 && OutBPM > 0.0;
+}
+
 // AI-powered beat detection wrapper using BeatNet ONNX model
 bool UBeatsyncSubsystem::AIBeatDetection(const TArray<float>& MonoSamples, int32 SampleRate, TArray<double>& OutBeats, double& OutBPM, double& OutDuration)
 {
@@ -611,7 +755,16 @@ bool UBeatsyncSubsystem::AnalyzeAudioFile(const FString& FilePath)
 		int32 SampleRate = 0;
 		int32 Channels = 0;
 
-		if (ReadWavFileForAnalysis(FilePath, RawSamples, SampleRate, Channels))
+		// Try Python librosa detection first (most accurate)
+		bSuccess = PythonBeatDetection(FilePath, Beats, BPM, Duration);
+		if (bSuccess)
+		{
+			DetectionMethod = TEXT("Librosa");
+			UE_LOG(LogTemp, Log, TEXT("Python librosa detection succeeded: %d beats at %.1f BPM"), Beats.Num(), BPM);
+		}
+
+		// Fall back to reading WAV and using C++ methods
+		if (!bSuccess && ReadWavFileForAnalysis(FilePath, RawSamples, SampleRate, Channels))
 		{
 			// Convert stereo to mono if needed
 			TArray<float> MonoSamples;
@@ -628,13 +781,14 @@ bool UBeatsyncSubsystem::AnalyzeAudioFile(const FString& FilePath)
 				MonoSamples = MoveTemp(RawSamples);
 			}
 
-			// Try AI beat detection first (BeatNet), fall back to native if unavailable
-			if (bAIDetectionAvailable && AIAnalyzer.IsValid())
+			// Try AI beat detection (BeatNet ONNX)
+			if (!bSuccess && bAIDetectionAvailable && AIAnalyzer.IsValid())
 			{
 				bSuccess = AIAnalyzer->AnalyzeBeats(MonoSamples, SampleRate, Beats, BPM);
 				Duration = static_cast<double>(MonoSamples.Num()) / static_cast<double>(SampleRate);
 				if (bSuccess)
 				{
+					DetectionMethod = TEXT("BeatNet");
 					UE_LOG(LogTemp, Log, TEXT("AI beat detection succeeded: %d beats at %.1f BPM"), Beats.Num(), BPM);
 				}
 				else
@@ -643,10 +797,14 @@ bool UBeatsyncSubsystem::AnalyzeAudioFile(const FString& FilePath)
 				}
 			}
 
-			// Fall back to native detection if AI failed or unavailable
+			// Final fallback to native C++ detection
 			if (!bSuccess)
 			{
 				bSuccess = NativeBeatDetection(MonoSamples, SampleRate, Beats, BPM, Duration);
+				if (bSuccess)
+				{
+					DetectionMethod = TEXT("Native");
+				}
 			}
 		}
 
