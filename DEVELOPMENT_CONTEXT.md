@@ -575,6 +575,11 @@ Get-ChildItem "C:\Users\samue\AppData\Local\Temp\beatsync_segment_*.mp4" | Measu
      "C:\Users\samue\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\ThirdParty\beatsync\lib\x64\"
    ```
 
+**UI divergence note & backup**
+- There are UI differences between the macOS and Windows GUIs; to avoid accidental overwrites, a snapshot of the current Windows UI has been saved in the repository at `backups/ui-windows-20260110/GUI/`. If you prefer the macOS UI later, please open an issue to discuss the preferred UI and the migration steps.
+- If you need to restore the Windows UI, copy files from `backups/ui-windows-20260110/GUI/` back into `src/GUI/` and run a compile check.
+
+
 3. **Clean UE intermediate files if plugin changes don't show**
    ```powershell
    Remove-Item -Recurse "...\Plugins\TripSitterUE\Intermediate"
@@ -621,8 +626,29 @@ When sharing the app with others:
    - Either bundle FFmpeg with the app
    - Or provide installation instructions
 
-**Important: Do not bundle Python for BeatNet**
-- BeatNet Python integration is **opt-in only** and should not be included in packaged releases. For development, enable python invocation with CMake option `ENABLE_BEATNET_PYTHON=ON` and set `BEATSYNC_ENABLE_PYTHON=1` when running Python integration tests locally.
+**Important: Python/BeatNet Packaging Policy (Issue #22)**
+
+Python subprocess integration for BeatNet is being phased out and must NOT be included in release builds:
+
+| Build Type | `ENABLE_BEATNET_PYTHON` | Python Bundled? | Notes |
+|------------|------------------------|-----------------|-------|
+| Release/Distribution | OFF (default) | No | Use sidecar JSON files only |
+| Development/Testing | ON (opt-in) | No | Enable for local testing only |
+| CI (main workflow) | OFF | No | Tests use mock fixtures |
+| CI (gated workflow) | ON | No | `python-integration.yml` - manual trigger only |
+
+**How the opt-in works:**
+1. **Compile-time**: Set `-DENABLE_BEATNET_PYTHON=ON` in CMake
+2. **Runtime**: Set `BEATSYNC_ENABLE_PYTHON=1` environment variable OR call `BeatNetBridge::setPythonEnabled(true)`
+3. Both compile-time AND runtime flags must be enabled for Python to be invoked
+
+**For sidecar files:**
+- Place `<audio_file>.beatnet.json` alongside audio files
+- Format: `{"beats": [0.5, 1.0, ...], "bpm": 120.0, "downbeats": [0.5, 2.5, ...]}`
+
+**Roadmap:**
+- Native ONNX inference will replace Python subprocess (see Issue #22)
+- Until then, sidecar JSON files are the recommended approach for packaging
 
 3. **Test on a clean machine:**
    - Install on a PC without dev tools
