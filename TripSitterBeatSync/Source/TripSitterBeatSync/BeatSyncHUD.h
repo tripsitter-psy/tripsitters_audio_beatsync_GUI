@@ -123,7 +123,7 @@ private:
 
 	// === INPUT PANEL STATE ===
 	FString AudioFilePath = TEXT("No file selected");
-	FString VideoFilePath = TEXT("No file selected");
+	TArray<FString> VideoFilePaths;  // Multiple video clips
 	FString StatusMessage = TEXT("");
 	float StatusMessageTimer = 0.0f;
 
@@ -211,6 +211,7 @@ private:
 	// File dialogs
 	FString OpenFileDialog(const FString& Title, const FString& DefaultPath, const FString& FileTypes);
 	FString SaveFileDialog(const FString& Title, const FString& DefaultPath, const FString& DefaultFile, const FString& FileTypes);
+	FString OpenFolderDialog(const FString& Title);
 
 	// Active slider tracking
 	int32 ActiveSliderID = -1;
@@ -242,4 +243,11 @@ private:
 
 	UFUNCTION()
 	void OnAnalysisProgress(float Progress);
+
+	// Callbacks for video processing events
+	UFUNCTION()
+	void OnProcessingProgress(float Progress);
+
+	UFUNCTION()
+	void OnProcessingComplete();
 };

@@ -1,9 +1,169 @@
 #include "BeatsyncSubsystem.h"
 #include "BeatsyncLoader.h"
+#include "ONNXInference.h"
 #include "Async/Async.h"
 #include "Misc/FileHelper.h"
 #include "HAL/PlatformFileManager.h"
 #include "Misc/Paths.h"
+#include "HAL/PlatformProcess.h"
+#include "Interfaces/IPluginManager.h"
+#include <cstdlib>  // for system()
+
+// Native FFmpeg command-line helpers
+namespace NativeFFmpeg
+{
+	static FString LastError;
+
+	static FString FindFFmpegPath()
+	{
+		// Common FFmpeg locations - check these directly
+		TArray<FString> SearchPaths = {
+			TEXT("/opt/homebrew/bin/ffmpeg"),  // Mac Apple Silicon (Homebrew)
+			TEXT("/usr/local/bin/ffmpeg"),      // Mac Intel (Homebrew) / Linux
+			TEXT("/usr/bin/ffmpeg"),            // Linux system
+			TEXT("C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe"), // Windows
+			TEXT("C:\\ffmpeg\\bin\\ffmpeg.exe"), // Windows alternate
+		};
+
+		for (const FString& Path : SearchPaths)
+		{
+			if (FPaths::FileExists(Path))
+			{
+				UE_LOG(LogTemp, Log, TEXT("Found FFmpeg at: %s"), *Path);
+				return Path;
+			}
+		}
+
+		LastError = TEXT("FFmpeg not found. Install with: brew install ffmpeg");
+		UE_LOG(LogTemp, Error, TEXT("%s"), *LastError);
+		return FString();
+	}
+
+	static FString GetLastError() { return LastError; }
+
+	static bool CutVideoSegment(const FString& FFmpegPath, const FString& InputVideo,
+		double StartTime, double Duration, const FString& OutputVideo)
+	{
+		if (FFmpegPath.IsEmpty())
+		{
+			LastError = TEXT("FFmpeg path is empty");
+			return false;
+		}
+
+		// Build full command line for system() call
+		// Use -an to strip audio (we'll add the original audio track later)
+		FString FullCommand = FString::Printf(
+			TEXT("\"%s\" -y -ss %.3f -i \"%s\" -t %.3f -an -c:v copy -avoid_negative_ts make_zero \"%s\" 2>/dev/null"),
+			*FFmpegPath, StartTime, *InputVideo, Duration, *OutputVideo
+		);
+
+		UE_LOG(LogTemp, Log, TEXT("FFmpeg cut command: %s"), *FullCommand);
+
+		// Use system() for maximum compatibility
+		int32 ReturnCode = system(TCHAR_TO_UTF8(*FullCommand));
+
+		if (ReturnCode != 0)
+		{
+			LastError = FString::Printf(TEXT("FFmpeg cut failed with code %d"), ReturnCode);
+			UE_LOG(LogTemp, Error, TEXT("%s"), *LastError);
+			return false;
+		}
+
+		// Verify output exists
+		if (!FPaths::FileExists(OutputVideo))
+		{
+			LastError = FString::Printf(TEXT("FFmpeg ran but output not found: %s"), *OutputVideo);
+			UE_LOG(LogTemp, Error, TEXT("%s"), *LastError);
+			return false;
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("FFmpeg cut success: %s"), *OutputVideo);
+		return true;
+	}
+
+	// Merge silent video with audio track
+	static bool MergeVideoWithAudio(const FString& FFmpegPath, const FString& VideoFile,
+		const FString& AudioFile, const FString& OutputFile)
+	{
+		if (FFmpegPath.IsEmpty()) return false;
+
+		// Combine video (no audio) with audio file, trim audio to video length
+		FString FullCommand = FString::Printf(
+			TEXT("\"%s\" -y -i \"%s\" -i \"%s\" -c:v copy -c:a aac -shortest \"%s\" 2>/dev/null"),
+			*FFmpegPath, *VideoFile, *AudioFile, *OutputFile
+		);
+
+		UE_LOG(LogTemp, Log, TEXT("FFmpeg merge command: %s"), *FullCommand);
+
+		int32 ReturnCode = system(TCHAR_TO_UTF8(*FullCommand));
+
+		if (ReturnCode != 0)
+		{
+			LastError = FString::Printf(TEXT("FFmpeg merge failed with code %d"), ReturnCode);
+			UE_LOG(LogTemp, Error, TEXT("%s"), *LastError);
+			return false;
+		}
+
+		if (!FPaths::FileExists(OutputFile))
+		{
+			LastError = TEXT("FFmpeg merge ran but output not found");
+			return false;
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("FFmpeg merge success: %s"), *OutputFile);
+		return true;
+	}
+
+	static bool ConcatenateVideos(const FString& FFmpegPath, const TArray<FString>& InputVideos,
+		const FString& OutputVideo, const FString& TempDir)
+	{
+		if (FFmpegPath.IsEmpty() || InputVideos.Num() == 0) return false;
+
+		// Create concat file list
+		FString ConcatFile = FPaths::Combine(TempDir, TEXT("concat_list.txt"));
+		FString ConcatContent;
+		for (const FString& Video : InputVideos)
+		{
+			ConcatContent += FString::Printf(TEXT("file '%s'\n"), *Video);
+		}
+
+		if (!FFileHelper::SaveStringToFile(ConcatContent, *ConcatFile))
+		{
+			LastError = FString::Printf(TEXT("Failed to write concat list: %s"), *ConcatFile);
+			return false;
+		}
+
+		// Re-encode during concatenation to avoid keyframe glitches at cut points
+		// Use libx264 with fast preset for reasonable speed, crf 18 for good quality
+		FString FullCommand = FString::Printf(
+			TEXT("\"%s\" -y -f concat -safe 0 -i \"%s\" -c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p \"%s\" 2>/dev/null"),
+			*FFmpegPath, *ConcatFile, *OutputVideo
+		);
+
+		UE_LOG(LogTemp, Log, TEXT("FFmpeg concat command: %s"), *FullCommand);
+
+		int32 ReturnCode = system(TCHAR_TO_UTF8(*FullCommand));
+
+		// Clean up temp file
+		IFileManager::Get().Delete(*ConcatFile);
+
+		if (ReturnCode != 0)
+		{
+			LastError = FString::Printf(TEXT("FFmpeg concat failed with code %d"), ReturnCode);
+			UE_LOG(LogTemp, Error, TEXT("%s"), *LastError);
+			return false;
+		}
+
+		if (!FPaths::FileExists(OutputVideo))
+		{
+			LastError = FString::Printf(TEXT("FFmpeg concat ran but output not found: %s"), *OutputVideo);
+			return false;
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("FFmpeg concat success: %s"), *OutputVideo);
+		return true;
+	}
+}
 
 void UBeatsyncSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -14,11 +174,82 @@ void UBeatsyncSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		AnalyzerHandle = FBeatsyncLoader::CreateAnalyzer();
 		WriterHandle = FBeatsyncLoader::CreateVideoWriter();
 	}
+
+	// Initialize AI models for beat detection
+	InitializeAIModels();
+}
+
+void UBeatsyncSubsystem::InitializeAIModels()
+{
+	AIAnalyzer = MakeUnique<FAIAudioAnalyzer>();
+
+	// Find ONNX model paths
+	// First check the plugin's ThirdParty directory
+	FString PluginDir = FPaths::ProjectPluginsDir() / TEXT("TripSitterUE");
+	FString ProjectDir = FPaths::ProjectDir();
+
+	// Possible model locations
+	TArray<FString> SearchPaths = {
+		ProjectDir / TEXT("ThirdParty/onnx_models"),
+		PluginDir / TEXT("ThirdParty/onnx_models"),
+		ProjectDir / TEXT("Content/Models"),
+		FPaths::ProjectContentDir() / TEXT("Models"),
+	};
+
+	FString BeatNetPath;
+	FString DemucsPath;
+
+	for (const FString& SearchPath : SearchPaths)
+	{
+		FString TestBeatNet = SearchPath / TEXT("beatnet.onnx");
+		FString TestDemucs = SearchPath / TEXT("demucs.onnx");
+
+		if (BeatNetPath.IsEmpty() && FPaths::FileExists(TestBeatNet))
+		{
+			BeatNetPath = TestBeatNet;
+			UE_LOG(LogTemp, Log, TEXT("Found BeatNet model: %s"), *BeatNetPath);
+		}
+
+		if (DemucsPath.IsEmpty() && FPaths::FileExists(TestDemucs))
+		{
+			DemucsPath = TestDemucs;
+			UE_LOG(LogTemp, Log, TEXT("Found Demucs model: %s"), *DemucsPath);
+		}
+	}
+
+	// Try to initialize AI models
+	if (!BeatNetPath.IsEmpty())
+	{
+		bAIDetectionAvailable = AIAnalyzer->Initialize(BeatNetPath, DemucsPath);
+		if (bAIDetectionAvailable)
+		{
+			DetectionMethod = TEXT("BeatNet AI");
+			if (AIAnalyzer->HasDemucs())
+			{
+				DetectionMethod += TEXT(" + Demucs");
+			}
+			UE_LOG(LogTemp, Log, TEXT("AI beat detection enabled: %s"), *DetectionMethod);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Failed to initialize AI models, falling back to native detection"));
+			DetectionMethod = TEXT("Native (AI unavailable)");
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Log, TEXT("ONNX models not found, using native beat detection"));
+		UE_LOG(LogTemp, Log, TEXT("To enable AI detection, export models using scripts/export_beatnet_onnx.py"));
+		DetectionMethod = TEXT("Native");
+	}
 }
 
 void UBeatsyncSubsystem::Deinitialize()
 {
 	CancelOperation();
+
+	// Clean up AI analyzer
+	AIAnalyzer.Reset();
 
 	if (AnalyzerHandle)
 	{
@@ -38,9 +269,35 @@ void UBeatsyncSubsystem::Deinitialize()
 // Forward declaration for WAV reading
 static bool ReadWavFileForAnalysis(const FString& FilePath, TArray<float>& OutSamples, int32& OutSampleRate, int32& OutChannels);
 
+// AI-powered beat detection wrapper using BeatNet ONNX model
+bool UBeatsyncSubsystem::AIBeatDetection(const TArray<float>& MonoSamples, int32 SampleRate, TArray<double>& OutBeats, double& OutBPM, double& OutDuration)
+{
+	if (!AIAnalyzer.IsValid() || !AIAnalyzer->HasBeatNet())
+	{
+		return false;
+	}
+
+	OutDuration = static_cast<double>(MonoSamples.Num()) / static_cast<double>(SampleRate);
+
+	bool bSuccess = AIAnalyzer->AnalyzeBeats(MonoSamples, SampleRate, OutBeats, OutBPM);
+
+	if (bSuccess)
+	{
+		UE_LOG(LogTemp, Log, TEXT("AI beat detection: %d beats at %.1f BPM, duration %.1fs"), OutBeats.Num(), OutBPM, OutDuration);
+	}
+
+	return bSuccess;
+}
+
+// Native C++ beat detection wrapper (fallback when AI not available)
+bool UBeatsyncSubsystem::NativeBeatDetectionMethod(const TArray<float>& MonoSamples, int32 SampleRate, TArray<double>& OutBeats, double& OutBPM, double& OutDuration)
+{
+	return NativeBeatDetection(MonoSamples, SampleRate, OutBeats, OutBPM, OutDuration);
+}
+
 // Native C++ beat detection using onset/energy detection
 // FORCENOINLINE prevents linker from stripping this during optimization
-FORCENOINLINE bool NativeBeatDetection(const TArray<float>& MonoSamples, int32 SampleRate, TArray<double>& OutBeats, double& OutBPM, double& OutDuration)
+FORCENOINLINE static bool NativeBeatDetection(const TArray<float>& MonoSamples, int32 SampleRate, TArray<double>& OutBeats, double& OutBPM, double& OutDuration)
 {
 	if (MonoSamples.Num() == 0 || SampleRate == 0)
 	{
@@ -139,14 +396,15 @@ FORCENOINLINE bool NativeBeatDetection(const TArray<float>& MonoSamples, int32 S
 		OutBeats.Add(TimeStamp);
 	}
 
-	// Calculate BPM from inter-beat intervals
+	// Calculate BPM from inter-beat intervals with tempo histogram
 	if (OutBeats.Num() >= 4)
 	{
+		// Collect all valid intervals
 		TArray<double> Intervals;
 		for (int32 i = 1; i < OutBeats.Num(); i++)
 		{
 			double Interval = OutBeats[i] - OutBeats[i - 1];
-			if (Interval > 0.2 && Interval < 2.0) // Filter unreasonable intervals
+			if (Interval > 0.15 && Interval < 2.0)
 			{
 				Intervals.Add(Interval);
 			}
@@ -154,15 +412,53 @@ FORCENOINLINE bool NativeBeatDetection(const TArray<float>& MonoSamples, int32 S
 
 		if (Intervals.Num() > 0)
 		{
-			// Sort and take median
-			Intervals.Sort();
-			double MedianInterval = Intervals[Intervals.Num() / 2];
+			// Create tempo histogram - vote for tempo bins
+			TMap<int32, int32> TempoVotes;
+			for (double Interval : Intervals)
+			{
+				double RawBPM = 60.0 / Interval;
 
-			OutBPM = 60.0 / MedianInterval;
+				// Normalize to 70-180 range
+				while (RawBPM > 180.0) RawBPM /= 2.0;
+				while (RawBPM < 70.0) RawBPM *= 2.0;
 
-			// Adjust to common tempo range (70-180 BPM)
-			while (OutBPM > 180.0) OutBPM /= 2.0;
-			while (OutBPM < 70.0) OutBPM *= 2.0;
+				// Round to nearest integer BPM and vote
+				int32 BPMBin = FMath::RoundToInt(RawBPM);
+				TempoVotes.FindOrAdd(BPMBin)++;
+			}
+
+			// Find the BPM with most votes
+			int32 BestBPM = 120;
+			int32 MaxVotes = 0;
+			for (auto& Pair : TempoVotes)
+			{
+				if (Pair.Value > MaxVotes)
+				{
+					MaxVotes = Pair.Value;
+					BestBPM = Pair.Key;
+				}
+			}
+
+			// Check neighboring bins and find weighted average for more precision
+			int32 VotesM1 = TempoVotes.FindRef(BestBPM - 1);
+			int32 VotesP1 = TempoVotes.FindRef(BestBPM + 1);
+			int32 VotesCenter = TempoVotes.FindRef(BestBPM);
+
+			// Weighted average of the peak and neighbors for sub-BPM precision
+			double WeightedBPM = static_cast<double>(BestBPM);
+			int32 TotalVotes = VotesM1 + VotesCenter + VotesP1;
+			if (TotalVotes > 0)
+			{
+				WeightedBPM = (static_cast<double>(BestBPM - 1) * VotesM1 +
+							   static_cast<double>(BestBPM) * VotesCenter +
+							   static_cast<double>(BestBPM + 1) * VotesP1) / TotalVotes;
+			}
+
+			// Round to 1 decimal place
+			OutBPM = FMath::RoundToDouble(WeightedBPM * 10.0) / 10.0;
+
+			UE_LOG(LogTemp, Log, TEXT("Tempo histogram: peak=%d BPM (votes=%d), weighted=%.1f BPM"),
+				BestBPM, MaxVotes, OutBPM);
 		}
 		else
 		{
@@ -295,6 +591,9 @@ bool UBeatsyncSubsystem::AnalyzeAudioFile(const FString& FilePath)
 		return false;
 	}
 
+	// Store audio file path for later use in video muxing
+	CurrentAudioFilePath = FilePath;
+
 	bIsAnalyzing = true;
 	bCancelRequested = false;
 
@@ -328,8 +627,26 @@ bool UBeatsyncSubsystem::AnalyzeAudioFile(const FString& FilePath)
 				MonoSamples = MoveTemp(RawSamples);
 			}
 
-			// Run native beat detection
-			bSuccess = NativeBeatDetection(MonoSamples, SampleRate, Beats, BPM, Duration);
+			// Try AI beat detection first (BeatNet), fall back to native if unavailable
+			if (bAIDetectionAvailable && AIAnalyzer.IsValid())
+			{
+				bSuccess = AIAnalyzer->AnalyzeBeats(MonoSamples, SampleRate, Beats, BPM);
+				Duration = static_cast<double>(MonoSamples.Num()) / static_cast<double>(SampleRate);
+				if (bSuccess)
+				{
+					UE_LOG(LogTemp, Log, TEXT("AI beat detection succeeded: %d beats at %.1f BPM"), Beats.Num(), BPM);
+				}
+				else
+				{
+					UE_LOG(LogTemp, Warning, TEXT("AI beat detection failed, falling back to native"));
+				}
+			}
+
+			// Fall back to native detection if AI failed or unavailable
+			if (!bSuccess)
+			{
+				bSuccess = NativeBeatDetection(MonoSamples, SampleRate, Beats, BPM, Duration);
+			}
 		}
 
 		int32 LoadedSamples = RawSamples.Num();
@@ -356,9 +673,9 @@ bool UBeatsyncSubsystem::AnalyzeAudioFile(const FString& FilePath)
 				CurrentBeatData.Duration = static_cast<float>(Duration);
 				CurrentBeatData.BeatCount = Beats.Num();
 
-				// Store debug info in status
-				CurrentBeatData.DebugInfo = FString::Printf(TEXT("[v2] %d samples @ %dHz = %.1fs"),
-					LoadedSamples, LoadedSR, Duration);
+				// Store debug info in status (include detection method)
+				CurrentBeatData.DebugInfo = FString::Printf(TEXT("[%s] %d samples @ %dHz = %.1fs"),
+					*DetectionMethod, LoadedSamples, LoadedSR, Duration);
 
 				// Also extract waveform for visualization
 				ExtractWaveform(FilePath, 2048);
@@ -367,8 +684,8 @@ bool UBeatsyncSubsystem::AnalyzeAudioFile(const FString& FilePath)
 			}
 			else
 			{
-				FString ErrorMsg = FString::Printf(TEXT("[v2] Failed: %d samples @ %dHz from %s"),
-					LoadedSamples, LoadedSR, *FPaths::GetCleanFilename(FilePath));
+				FString ErrorMsg = FString::Printf(TEXT("[%s] Failed: %d samples @ %dHz from %s"),
+					*DetectionMethod, LoadedSamples, LoadedSR, *FPaths::GetCleanFilename(FilePath));
 				OnError.Broadcast(ErrorMsg);
 			}
 		});
@@ -379,9 +696,12 @@ bool UBeatsyncSubsystem::AnalyzeAudioFile(const FString& FilePath)
 
 bool UBeatsyncSubsystem::ProcessVideos(const TArray<FString>& VideoFiles, const FString& OutputPath, float ClipDuration)
 {
-	if (!WriterHandle)
+	// ALWAYS prefer native FFmpeg if available (more reliable than external library)
+	FString FFmpegPath = NativeFFmpeg::FindFFmpegPath();
+
+	if (FFmpegPath.IsEmpty())
 	{
-		OnError.Broadcast(TEXT("BeatSync backend not initialized"));
+		OnError.Broadcast(TEXT("FFmpeg not found - install with: brew install ffmpeg"));
 		return false;
 	}
 
@@ -403,51 +723,129 @@ bool UBeatsyncSubsystem::ProcessVideos(const TArray<FString>& VideoFiles, const 
 		return false;
 	}
 
+	if (CurrentAudioFilePath.IsEmpty())
+	{
+		OnError.Broadcast(TEXT("No audio file path stored - analyze audio first"));
+		return false;
+	}
+
 	bIsProcessing = true;
 	bCancelRequested = false;
 
-	// Convert beat timestamps to double array
-	TArray<double> BeatTimes;
-	for (float Beat : CurrentBeatData.BeatTimestamps)
-	{
-		BeatTimes.Add(static_cast<double>(Beat));
-	}
+	// Calculate how many beats we need based on desired output duration
+	int32 TotalBeats = CurrentBeatData.BeatCount;
+	float AudioDuration = CurrentBeatData.Duration;
 
-	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, VideoFiles, OutputPath, ClipDuration, BeatTimes = MoveTemp(BeatTimes)]()
+	UE_LOG(LogTemp, Log, TEXT("ProcessVideos: %d videos, %d beats, clip duration %.2fs, audio: %s"),
+		VideoFiles.Num(), TotalBeats, ClipDuration, *CurrentAudioFilePath);
+
+	// Store audio path for lambda capture
+	FString AudioPath = CurrentAudioFilePath;
+
+	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, VideoFiles, OutputPath, ClipDuration, TotalBeats, AudioDuration, FFmpegPath, AudioPath]()
 	{
 		bool bSuccess = true;
 		TArray<FString> ProcessedVideos;
+		FString ErrorMsg;
 
-		// Process each video
-		int32 TotalVideos = VideoFiles.Num();
-		for (int32 i = 0; i < TotalVideos && bSuccess && !bCancelRequested; ++i)
+		// Ensure output directory exists
+		IFileManager::Get().MakeDirectory(*OutputPath, true);
+
+		int32 NumVideos = VideoFiles.Num();
+
+		// Simple random seed based on time
+		uint32 RandomSeed = static_cast<uint32>(FPlatformTime::Cycles());
+
+		// For each beat, cut a segment from a cycling video
+		// The segment is cut from a random position in the source video (NOT at beat timestamps)
+		for (int32 BeatIdx = 0; BeatIdx < TotalBeats && bSuccess && !bCancelRequested; ++BeatIdx)
 		{
-			FString OutputFile = FPaths::Combine(OutputPath, FString::Printf(TEXT("segment_%03d.mp4"), i));
+			// Cycle through videos: beat 0 -> video 0, beat 1 -> video 1, etc.
+			int32 VideoIdx = BeatIdx % NumVideos;
+			const FString& InputVideo = VideoFiles[VideoIdx];
 
-			bSuccess = FBeatsyncLoader::CutVideoAtBeats(WriterHandle, VideoFiles[i], BeatTimes, OutputFile, ClipDuration);
+			// Pick a random start time within the source video
+			// Assume source videos are at least 10 seconds long, start from random point
+			// Use a simple LCG random for reproducibility
+			RandomSeed = RandomSeed * 1103515245 + 12345;
+			float RandomFactor = static_cast<float>((RandomSeed >> 16) & 0x7FFF) / 32767.0f;
+			double MaxStartTime = 5.0;  // Assume videos are at least 5+clipDuration seconds
+			double StartTime = RandomFactor * MaxStartTime;
 
-			if (bSuccess)
+			FString OutputFile = FPaths::Combine(OutputPath, FString::Printf(TEXT("clip_%03d.mp4"), BeatIdx));
+
+			bSuccess = NativeFFmpeg::CutVideoSegment(FFmpegPath, InputVideo, StartTime, ClipDuration, OutputFile);
+
+			if (bSuccess && FPaths::FileExists(OutputFile))
 			{
 				ProcessedVideos.Add(OutputFile);
 			}
-
-			// Report progress
-			float Progress = static_cast<float>(i + 1) / static_cast<float>(TotalVideos);
-			AsyncTask(ENamedThreads::GameThread, [this, Progress]()
+			else if (!bSuccess)
 			{
-				OnProcessingProgress.Broadcast(Progress * 0.8f); // Reserve 20% for concatenation
+				ErrorMsg = FString::Printf(TEXT("Failed to cut video %d at %.2fs"), VideoIdx, StartTime);
+				UE_LOG(LogTemp, Error, TEXT("%s"), *ErrorMsg);
+			}
+
+			// Report progress (cutting is 60% of work)
+			if (BeatIdx % 10 == 0)
+			{
+				float Progress = static_cast<float>(BeatIdx) / static_cast<float>(TotalBeats) * 0.6f;
+				AsyncTask(ENamedThreads::GameThread, [this, Progress]()
+				{
+					OnProcessingProgress.Broadcast(Progress);
+				});
+			}
+		}
+
+		// Concatenate all silent video clips
+		FString SilentVideo;
+		if (bSuccess && !bCancelRequested && ProcessedVideos.Num() > 0)
+		{
+			SilentVideo = FPaths::Combine(OutputPath, TEXT("silent_concat.mp4"));
+
+			bSuccess = NativeFFmpeg::ConcatenateVideos(FFmpegPath, ProcessedVideos, SilentVideo, OutputPath);
+
+			if (!bSuccess)
+			{
+				ErrorMsg = TEXT("Failed to concatenate video segments");
+			}
+
+			// Report progress (concat is 20% of work)
+			AsyncTask(ENamedThreads::GameThread, [this]()
+			{
+				OnProcessingProgress.Broadcast(0.8f);
 			});
 		}
 
-		// Concatenate if successful
-		if (bSuccess && !bCancelRequested && ProcessedVideos.Num() > 0)
+		// Merge with original audio
+		FString FinalOutput;
+		if (bSuccess && !bCancelRequested && FPaths::FileExists(SilentVideo))
 		{
-			FString FinalOutput = FPaths::Combine(OutputPath, TEXT("final_output.mp4"));
-			bSuccess = FBeatsyncLoader::ConcatenateVideos(ProcessedVideos, FinalOutput);
+			FinalOutput = FPaths::Combine(OutputPath, TEXT("final_beatsync.mp4"));
+
+			bSuccess = NativeFFmpeg::MergeVideoWithAudio(FFmpegPath, SilentVideo, AudioPath, FinalOutput);
+
+			if (!bSuccess)
+			{
+				ErrorMsg = TEXT("Failed to merge video with audio");
+			}
+
+			// Clean up silent video
+			IFileManager::Get().Delete(*SilentVideo);
 		}
 
+		// Clean up temporary clip files
+		for (const FString& TempFile : ProcessedVideos)
+		{
+			IFileManager::Get().Delete(*TempFile);
+		}
+
+		// Also clean up concat list if it exists
+		FString ConcatList = FPaths::Combine(OutputPath, TEXT("concat_list.txt"));
+		IFileManager::Get().Delete(*ConcatList);
+
 		// Return to game thread
-		AsyncTask(ENamedThreads::GameThread, [this, bSuccess]()
+		AsyncTask(ENamedThreads::GameThread, [this, bSuccess, FinalOutput, ErrorMsg]()
 		{
 			bIsProcessing = false;
 
@@ -456,15 +854,21 @@ bool UBeatsyncSubsystem::ProcessVideos(const TArray<FString>& VideoFiles, const 
 				return;
 			}
 
-			if (bSuccess)
+			if (bSuccess && FPaths::FileExists(FinalOutput))
 			{
 				OnProcessingProgress.Broadcast(1.0f);
 				OnProcessingComplete.Broadcast();
+				UE_LOG(LogTemp, Log, TEXT("Video processing complete: %s"), *FinalOutput);
 			}
 			else
 			{
-				FString Error = WriterHandle ? FBeatsyncLoader::GetVideoWriterLastError(WriterHandle) : TEXT("Unknown error");
+				FString Error = !ErrorMsg.IsEmpty() ? ErrorMsg : NativeFFmpeg::GetLastError();
+				if (Error.IsEmpty())
+				{
+					Error = TEXT("Video processing failed - no output created");
+				}
 				OnError.Broadcast(Error);
+				UE_LOG(LogTemp, Error, TEXT("Video processing failed: %s"), *Error);
 			}
 		});
 	});

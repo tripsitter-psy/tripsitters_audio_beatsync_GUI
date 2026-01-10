@@ -1,0 +1,10 @@
+# Requirements for TripSitter BeatSync ONNX model export
+# Install with: pip install -r requirements.txt
+
+torch>=2.0.0
+numpy>=1.20.0
+onnx>=1.12.0
+onnxscript>=0.1.0
+
+# Optional: for model verification
+onnxruntime>=1.14.0

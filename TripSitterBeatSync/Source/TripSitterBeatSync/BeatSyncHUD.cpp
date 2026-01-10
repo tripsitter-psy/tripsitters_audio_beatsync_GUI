@@ -89,6 +89,8 @@ void ABeatSyncHUD::BeginPlay()
 		Subsystem->OnAnalysisProgress.AddDynamic(this, &ABeatSyncHUD::OnAnalysisProgress);
 		Subsystem->OnAnalysisComplete.AddDynamic(this, &ABeatSyncHUD::OnAnalysisComplete);
 		Subsystem->OnError.AddDynamic(this, &ABeatSyncHUD::OnAnalysisError);
+		Subsystem->OnProcessingProgress.AddDynamic(this, &ABeatSyncHUD::OnProcessingProgress);
+		Subsystem->OnProcessingComplete.AddDynamic(this, &ABeatSyncHUD::OnProcessingComplete);
 	}
 }
 
@@ -166,6 +168,21 @@ void ABeatSyncHUD::OnAnalysisError(const FString& Error)
 	bIsAnalyzing = false;
 	AnalysisStatus = FString::Printf(TEXT("Error: %s"), *Error);
 	StatusMessage = AnalysisStatus;
+	StatusMessageTimer = 5.0f;
+}
+
+void ABeatSyncHUD::OnProcessingProgress(float Progress)
+{
+	ProcessingProgress = Progress;
+	StatusMessage = FString::Printf(TEXT("Processing: %.0f%%"), Progress * 100.0f);
+	StatusMessageTimer = 5.0f;
+}
+
+void ABeatSyncHUD::OnProcessingComplete()
+{
+	bIsProcessing = false;
+	ProcessingProgress = 1.0f;
+	StatusMessage = TEXT("Video exported successfully!");
 	StatusMessageTimer = 5.0f;
 }
 
@@ -822,16 +839,18 @@ void ABeatSyncHUD::DrawInputPanel(float X, float Y, float Width)
 	}
 	ContentY += 45;
 
-	// Video file section
-	DrawLabel(ContentX, ContentY, TEXT("Video File:"), CyanColor);
+	// Video clips section
+	DrawLabel(ContentX, ContentY, TEXT("Video Clips:"), CyanColor);
 	ContentY += 20;
 
-	FString DisplayVideoPath = VideoFilePath;
-	if (DisplayVideoPath.Len() > 30) DisplayVideoPath = TEXT("...") + DisplayVideoPath.Right(27);
-	DrawLabel(ContentX, ContentY, DisplayVideoPath, FLinearColor(0.6f, 0.6f, 0.6f, 1.0f));
+	// Show clip count
+	FString ClipCountText = FString::Printf(TEXT("%d clips loaded"), VideoFilePaths.Num());
+	DrawLabel(ContentX, ContentY, ClipCountText, VideoFilePaths.Num() > 0 ? FLinearColor::Green : FLinearColor(0.6f, 0.6f, 0.6f, 1.0f));
 	ContentY += 22;
 
-	if (DrawButton(ContentX, ContentY, ButtonWidth, 32, TEXT("Browse Video File..."), CyanColor))
+	// Add single video button
+	float SmallBtnWidth = (ButtonWidth - 10) / 2;
+	if (DrawButton(ContentX, ContentY, SmallBtnWidth, 32, TEXT("+ Add Video"), CyanColor))
 	{
 		FString Result = OpenFileDialog(
 			TEXT("Select Video File"),
@@ -840,15 +859,56 @@ void ABeatSyncHUD::DrawInputPanel(float X, float Y, float Width)
 		);
 		if (!Result.IsEmpty())
 		{
-			VideoFilePath = Result;
-			StatusMessage = TEXT("Video file selected!");
+			VideoFilePaths.Add(Result);
+			StatusMessage = FString::Printf(TEXT("Added clip! (%d total)"), VideoFilePaths.Num());
 			StatusMessageTimer = 3.0f;
 		}
-		else
+	}
+
+	// Load folder button
+	if (DrawButton(ContentX + SmallBtnWidth + 10, ContentY, SmallBtnWidth, 32, TEXT("Load Folder"), CyanColor))
+	{
+		FString FolderPath = OpenFolderDialog(TEXT("Select Video Folder"));
+		if (!FolderPath.IsEmpty())
 		{
-			StatusMessage = TEXT("Drag & drop files onto window (coming soon)");
+			// Find all video files in folder
+			TArray<FString> FoundFiles;
+			IFileManager::Get().FindFiles(FoundFiles, *(FolderPath / TEXT("*")), true, false);
+
+			int32 AddedCount = 0;
+			for (const FString& File : FoundFiles)
+			{
+				FString Ext = FPaths::GetExtension(File).ToLower();
+				if (Ext == TEXT("mp4") || Ext == TEXT("mov") || Ext == TEXT("avi") || Ext == TEXT("mkv") || Ext == TEXT("webm"))
+				{
+					VideoFilePaths.Add(FolderPath / File);
+					AddedCount++;
+				}
+			}
+
+			if (AddedCount > 0)
+			{
+				StatusMessage = FString::Printf(TEXT("Added %d clips from folder! (%d total)"), AddedCount, VideoFilePaths.Num());
+			}
+			else
+			{
+				StatusMessage = TEXT("No video files found in folder");
+			}
 			StatusMessageTimer = 3.0f;
 		}
+	}
+	ContentY += 38;
+
+	// Clear videos button
+	if (VideoFilePaths.Num() > 0)
+	{
+		if (DrawButton(ContentX, ContentY, ButtonWidth, 28, TEXT("Clear All Clips"), FLinearColor(0.8f, 0.2f, 0.2f, 1.0f)))
+		{
+			VideoFilePaths.Empty();
+			StatusMessage = TEXT("Clips cleared");
+			StatusMessageTimer = 2.0f;
+		}
+		ContentY += 32;
 	}
 
 	// Show status message if active
@@ -1045,17 +1105,67 @@ void ABeatSyncHUD::DrawProgressPanel(float X, float Y, float Width)
 	FLinearColor ButtonColor = bIsProcessing ? OrangeColor : CyanColor;
 	if (DrawButton(ContentX + BarWidth + 70, ContentY - 5, 150, 26, ButtonText, ButtonColor))
 	{
-		bIsProcessing = !bIsProcessing;
-		if (!bIsProcessing) ProcessingProgress = 0.0f;
-	}
-
-	// Simulate progress for demo
-	if (bIsProcessing)
-	{
-		ProcessingProgress = FMath::Min(1.0f, ProcessingProgress + 0.001f);
-		if (ProcessingProgress >= 1.0f)
+		if (bIsProcessing)
 		{
+			// Cancel processing
 			bIsProcessing = false;
+			ProcessingProgress = 0.0f;
+			StatusMessage = TEXT("Processing cancelled");
+			StatusMessageTimer = 3.0f;
+		}
+		else
+		{
+			// Start processing - validate inputs first
+			if (VideoFilePaths.Num() == 0)
+			{
+				StatusMessage = TEXT("Please add video clips first");
+				StatusMessageTimer = 3.0f;
+			}
+			else if (!bHasRealWaveform || CachedBeatTimestamps.Num() == 0)
+			{
+				StatusMessage = TEXT("Please analyze audio first");
+				StatusMessageTimer = 3.0f;
+			}
+			else
+			{
+				// Get subsystem and start processing
+				UBeatsyncSubsystem* Subsystem = GetBeatsyncSubsystem();
+				if (Subsystem)
+				{
+					// Calculate clip duration from BPM (one beat per clip)
+					float ClipDuration = 60.0f / CachedBPM;
+
+					// Expand output path if needed
+					FString ExpandedOutputPath = OutputPath;
+					if (ExpandedOutputPath.StartsWith(TEXT("~")))
+					{
+						ExpandedOutputPath = FPlatformMisc::GetEnvironmentVariable(TEXT("HOME")) + ExpandedOutputPath.RightChop(1);
+					}
+
+					StatusMessage = FString::Printf(TEXT("Processing %d clips..."), VideoFilePaths.Num());
+					StatusMessageTimer = 10.0f;
+					bIsProcessing = true;
+					ProcessingProgress = 0.0f;
+
+					// Call the subsystem to process videos (runs async - callbacks will update progress)
+					bool bStarted = Subsystem->ProcessVideos(VideoFilePaths, ExpandedOutputPath, ClipDuration);
+
+					if (!bStarted)
+					{
+						// Failed to even start processing
+						StatusMessage = TEXT("Failed to start processing - check logs");
+						bIsProcessing = false;
+						ProcessingProgress = 0.0f;
+						StatusMessageTimer = 5.0f;
+					}
+					// If started successfully, callbacks will handle progress and completion
+				}
+				else
+				{
+					StatusMessage = TEXT("BeatSync subsystem not available");
+					StatusMessageTimer = 3.0f;
+				}
+			}
 		}
 	}
 }
@@ -1570,6 +1680,66 @@ FString ABeatSyncHUD::OpenFileDialog(const FString& Title, const FString& Defaul
 	}
 #endif
 
+	return FString();
+}
+
+FString ABeatSyncHUD::OpenFolderDialog(const FString& Title)
+{
+#if PLATFORM_MAC
+	// Native macOS folder dialog using osascript
+	@autoreleasepool
+	{
+		NSMutableString* script = [NSMutableString stringWithString:@"POSIX path of (choose folder with prompt \""];
+		[script appendString:[NSString stringWithUTF8String:TCHAR_TO_UTF8(*Title)]];
+		[script appendString:@"\")"];
+
+		NSTask* task = [[NSTask alloc] init];
+		[task setExecutableURL:[NSURL fileURLWithPath:@"/usr/bin/osascript"]];
+		[task setArguments:@[@"-e", script]];
+
+		NSPipe* outputPipe = [NSPipe pipe];
+		NSPipe* errorPipe = [NSPipe pipe];
+		[task setStandardOutput:outputPipe];
+		[task setStandardError:errorPipe];
+
+		NSError* error = nil;
+		[task launchAndReturnError:&error];
+
+		if (!error)
+		{
+			[task waitUntilExit];
+
+			NSData* outputData = [[outputPipe fileHandleForReading] readDataToEndOfFile];
+			NSString* output = [[NSString alloc] initWithData:outputData encoding:NSUTF8StringEncoding];
+
+			if (output && [output length] > 0)
+			{
+				output = [output stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+				if ([output length] > 0)
+				{
+					return FString(UTF8_TO_TCHAR([output UTF8String]));
+				}
+			}
+		}
+	}
+#elif PLATFORM_WINDOWS
+	// Windows folder dialog using SHBrowseForFolder
+	BROWSEINFO bi = {0};
+	bi.lpszTitle = *Title;
+	bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+
+	LPITEMIDLIST pidl = SHBrowseForFolder(&bi);
+	if (pidl != nullptr)
+	{
+		TCHAR szPath[MAX_PATH];
+		if (SHGetPathFromIDList(pidl, szPath))
+		{
+			CoTaskMemFree(pidl);
+			return FString(szPath);
+		}
+		CoTaskMemFree(pidl);
+	}
+#endif
 	return FString();
 }
 

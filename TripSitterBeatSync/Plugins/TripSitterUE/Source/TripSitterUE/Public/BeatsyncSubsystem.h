@@ -4,6 +4,9 @@
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "BeatsyncSubsystem.generated.h"
 
+// Forward declaration for AI analyzer
+class FAIAudioAnalyzer;
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAnalysisProgress, float, Progress);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnProcessingProgress, float, Progress);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAnalysisComplete);
@@ -116,13 +119,36 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BeatSync")
 	bool HasWaveformData() const { return CurrentBeatData.WaveformData.Num() > 0; }
 
+	/** Check if AI-based beat detection is available */
+	UFUNCTION(BlueprintCallable, Category = "BeatSync")
+	bool IsAIDetectionAvailable() const { return bAIDetectionAvailable; }
+
+	/** Get the detection method used (for UI display) */
+	UFUNCTION(BlueprintCallable, Category = "BeatSync")
+	FString GetDetectionMethod() const { return DetectionMethod; }
+
 private:
 	FBeatData CurrentBeatData;
+	FString CurrentAudioFilePath;  // Store audio path for final mux
 	void* AnalyzerHandle = nullptr;
 	void* WriterHandle = nullptr;
 	bool bIsAnalyzing = false;
 	bool bIsProcessing = false;
 	bool bCancelRequested = false;
+
+	// AI-based audio analysis (BeatNet + Demucs)
+	TUniquePtr<FAIAudioAnalyzer> AIAnalyzer;
+	bool bAIDetectionAvailable = false;
+	FString DetectionMethod = TEXT("Native");
+
+	/** Initialize AI models (BeatNet, Demucs) */
+	void InitializeAIModels();
+
+	/** AI-powered beat detection using BeatNet */
+	bool AIBeatDetection(const TArray<float>& MonoSamples, int32 SampleRate, TArray<double>& OutBeats, double& OutBPM, double& OutDuration);
+
+	/** Native C++ beat detection (fallback) */
+	bool NativeBeatDetectionMethod(const TArray<float>& MonoSamples, int32 SampleRate, TArray<double>& OutBeats, double& OutBPM, double& OutDuration);
 
 	/** Extract waveform data from audio file */
 	bool ExtractWaveform(const FString& FilePath, int32 NumSamples = 2048);

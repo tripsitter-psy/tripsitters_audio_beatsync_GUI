@@ -15,3 +15,8 @@ Build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Python
+scripts/.venv/
+__pycache__/
+*.pyc
