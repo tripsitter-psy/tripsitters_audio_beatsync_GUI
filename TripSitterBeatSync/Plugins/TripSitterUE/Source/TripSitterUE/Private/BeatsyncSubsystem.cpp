@@ -266,8 +266,9 @@ void UBeatsyncSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
-// Forward declaration for WAV reading
+// Forward declarations
 static bool ReadWavFileForAnalysis(const FString& FilePath, TArray<float>& OutSamples, int32& OutSampleRate, int32& OutChannels);
+static bool NativeBeatDetection(const TArray<float>& MonoSamples, int32 SampleRate, TArray<double>& OutBeats, double& OutBPM, double& OutDuration);
 
 // AI-powered beat detection wrapper using BeatNet ONNX model
 bool UBeatsyncSubsystem::AIBeatDetection(const TArray<float>& MonoSamples, int32 SampleRate, TArray<double>& OutBeats, double& OutBPM, double& OutDuration)

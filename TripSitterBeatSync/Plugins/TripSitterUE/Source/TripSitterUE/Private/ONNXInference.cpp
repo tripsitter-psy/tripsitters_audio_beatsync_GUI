@@ -10,9 +10,9 @@
 #include "NNEModelData.h"
 #endif
 
-// Math constants
-constexpr float PI = 3.14159265358979323846f;
-constexpr float TWO_PI = 2.0f * PI;
+// Use UE's math constants (PI and LOCAL_TWO_PI are deprecated macros)
+#define LOCAL_PI UE_PI
+#define LOCAL_LOCAL_TWO_PI UE_LOCAL_TWO_PI
 
 //==============================================================================
 // Audio Preprocessing
@@ -47,7 +47,7 @@ void ComputeDFT(const TArray<float>& Frame, TArray<float>& OutReal, TArray<float
 
 		for (int32 n = 0; n < N; n++)
 		{
-			float Angle = TWO_PI * k * n / N;
+			float Angle = LOCAL_TWO_PI * k * n / N;
 			Real += Frame[n] * FMath::Cos(Angle);
 			Imag -= Frame[n] * FMath::Sin(Angle);
 		}
@@ -63,7 +63,7 @@ void ApplyHannWindow(TArray<float>& Frame)
 	int32 N = Frame.Num();
 	for (int32 i = 0; i < N; i++)
 	{
-		float Window = 0.5f * (1.0f - FMath::Cos(TWO_PI * i / (N - 1)));
+		float Window = 0.5f * (1.0f - FMath::Cos(LOCAL_TWO_PI * i / (N - 1)));
 		Frame[i] *= Window;
 	}
 }
@@ -509,11 +509,11 @@ bool FDemucsInference::RunInference(
 	// For now, use simple frequency-band separation as placeholder
 
 	// Process in chunks
-	int32 ChunkSize = FMath::Min(this->ChunkSize, NumSamples);
+	int32 ProcessChunkSize = FMath::Min(this->ChunkSize, NumSamples);
 
-	for (int32 Offset = 0; Offset < NumSamples; Offset += ChunkSize)
+	for (int32 Offset = 0; Offset < NumSamples; Offset += ProcessChunkSize)
 	{
-		int32 End = FMath::Min(Offset + ChunkSize, NumSamples);
+		int32 End = FMath::Min(Offset + ProcessChunkSize, NumSamples);
 
 		for (int32 i = Offset; i < End; i++)
 		{
