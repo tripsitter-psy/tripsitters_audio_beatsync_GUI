@@ -68,8 +68,8 @@ private:
     wxButton* m_previewButton = nullptr; // Trigger a preview frame
     wxTextCtrl* m_previewTimestampCtrl = nullptr; // Preview timestamp in seconds
     
-    BeatVisualizer* m_beatVisualizer;
-    VideoPreview* m_videoPreview;
+    BeatVisualizer* m_beatVisualizer = nullptr;
+    VideoPreview* m_videoPreview = nullptr;
     
     // Animation for start button
     wxAnimationCtrl* m_startAnimation;

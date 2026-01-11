@@ -3,6 +3,11 @@
 #include "HAL/PlatformProcess.h"
 #include "Misc/OutputDeviceNull.h"
 #include <cassert>
+#include "beatsync_capi.h"
+
+// Static storage for callback data to prevent leaks
+static TMap<void*, TUniquePtr<FBeatsyncLoader::CallbackData>> GCallbackStorage;
+static FCriticalSection GCallbackStorageMutex;
 
 // Function pointer types
 using bs_resolve_ffmpeg_path_t = const char* (*)();
@@ -159,13 +164,21 @@ bool FBeatsyncLoader::Initialize()
 
 void FBeatsyncLoader::Shutdown()
 {
+    // Clear all callback data to prevent leaks
+    {
+        FScopeLock Lock(&GCallbackStorageMutex);
+        GCallbackStorage.Empty();
+    }
+
     if (GApi.DllHandle) {
         FPlatformProcess::FreeDllHandle(GApi.DllHandle);
-        GApi.DllHandle = nullptr;
-        GApi.resolve_ffmpeg = nullptr;
-        GApi.create_analyzer = nullptr;
-        GApi.destroy_analyzer = nullptr;
+        GApi = {};
     }
+}
+
+bool FBeatsyncLoader::IsInitialized()
+{
+    return !!GApi.DllHandle;
 }
 
 FString FBeatsyncLoader::ResolveFFmpegPath()
@@ -192,16 +205,9 @@ bool FBeatsyncLoader::AnalyzeAudio(void* handle, const FString& path, FBeatGrid&
     if (!GApi.analyze_audio) return false;
 
     // Prepare C beatgrid
-    struct bs_beatgrid_t {
-        double* beats;
-        size_t count;
-        double bpm;
-        double duration;
-    } grid;
+    bs_beatgrid_t grid = {};
 
-    memset(&grid, 0, sizeof(grid));
-
-    int res = GApi.analyze_audio(handle, TCHAR_TO_ANSI(*path), (void*)&grid);
+    int res = GApi.analyze_audio(handle, TCHAR_TO_ANSI(*path), &grid);
     if (res != 0) return false;
 
     outGrid.BPM = grid.bpm;
@@ -220,28 +226,52 @@ FString FBeatsyncLoader::GetVideoLastError(void* writer)
     return p ? FString(p) : FString();
 }
 
-void FBeatsyncLoader::SetProgressCallback(void* writer, TFunction<void(double)> cb)
+void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
 {
     if (!GApi.video_set_progress) return;
 
-    struct CallbackData { TFunction<void(double)> Func; };
+    FScopeLock Lock(&GCallbackStorageMutex);
 
-    CallbackData* data = new CallbackData{cb};
-    auto trampoline = [](double progress, void* user_data) {
-        CallbackData* d = reinterpret_cast<CallbackData*>(user_data);
-        if (d && d->Func) {
-            d->Func(progress);
-        }
-    };
+    // Remove any existing callback for this writer
+    GCallbackStorage.Remove(writer);
 
-    GApi.video_set_progress(writer, trampoline, data);
+    if (cb)
+    {
+        // Store the callback data
+        auto data = MakeUnique<CallbackData>();
+        data->Func = cb;
+        GCallbackStorage.Add(writer, MoveTemp(data));
+
+        auto trampoline = [](double progress, void* user_data) {
+            FOnBeatsyncProcessingProgress LocalFunc;
+            {
+                FScopeLock Lock(&GCallbackStorageMutex);
+                CallbackData* d = reinterpret_cast<CallbackData*>(user_data);
+                if (d && d->Func) {
+                    LocalFunc = d->Func;  // Copy to avoid holding lock during callback
+                }
+            }  // Lock released here
+            if (LocalFunc.IsBound()) {
+                LocalFunc.Execute(progress);
+            }
+        };
+
+        GApi.video_set_progress(writer, trampoline, GCallbackStorage[writer].Get());
+    }
+    else
+    {
+        // Unregister callback
+        GApi.video_set_progress(writer, nullptr, nullptr);
+    }
 }
 
 bool FBeatsyncLoader::CutVideoAtBeats(void* writer, const FString& inputVideo, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration)
 {
     if (!GApi.video_cut_at_beats) return false;
 
-    int res = GApi.video_cut_at_beats(writer, TCHAR_TO_ANSI(*inputVideo), beatTimes.GetData(), (size_t)beatTimes.Num(), TCHAR_TO_ANSI(*outputVideo), clipDuration);
+    FTCHARToANSI inputConverter(*inputVideo);
+    FTCHARToANSI outputConverter(*outputVideo);
+    int res = GApi.video_cut_at_beats(writer, inputConverter.Get(), beatTimes.GetData(), (size_t)beatTimes.Num(), outputConverter.Get(), clipDuration);
     return res == 0;
 }
 
@@ -249,18 +279,29 @@ bool FBeatsyncLoader::CutVideoAtBeatsMulti(void* writer, const TArray<FString>& 
 {
     if (!GApi.video_cut_at_beats_multi) return false;
 
-    // Build char** array
+    // Build char** array with persistent converters
+    TArray<FTCHARToANSI> converters;
+    converters.Reserve(inputVideos.Num());
     TArray<const char*> arr;
     arr.Reserve(inputVideos.Num());
-    for (const auto& s : inputVideos) arr.Add(TCHAR_TO_ANSI(*s));
+    for (const auto& s : inputVideos) {
+        converters.Emplace(*s);
+        arr.Add(converters.Last().Get());
+    }
 
-    int res = GApi.video_cut_at_beats_multi(writer, arr.GetData(), (size_t)arr.Num(), beatTimes.GetData(), (size_t)beatTimes.Num(), TCHAR_TO_ANSI(*outputVideo), clipDuration);
+    FTCHARToANSI outputConverter(*outputVideo);
+    int res = GApi.video_cut_at_beats_multi(writer, arr.GetData(), (size_t)arr.Num(), beatTimes.GetData(), (size_t)beatTimes.Num(), outputConverter.Get(), clipDuration);
     return res == 0;
 }
 
 void FBeatsyncLoader::SetEffectsConfig(void* writer, const FEffectsConfig& config)
 {
     if (!GApi.video_set_effects) return;
+
+    // Create persistent converters for string fields - these RAII objects keep the
+    // ANSI buffers alive until after the API call completes
+    auto TransitionTypeAnsi = StringCast<ANSICHAR>(*config.TransitionType);
+    auto ColorPresetAnsi = StringCast<ANSICHAR>(*config.ColorPreset);
 
     struct bs_effects_config_t {
         int enableTransitions;
@@ -278,10 +319,10 @@ void FBeatsyncLoader::SetEffectsConfig(void* writer, const FEffectsConfig& confi
     } cfg;
 
     cfg.enableTransitions = config.bEnableTransitions ? 1 : 0;
-    cfg.transitionType = TCHAR_TO_ANSI(*config.TransitionType);
+    cfg.transitionType = TransitionTypeAnsi.Get();
     cfg.transitionDuration = config.TransitionDuration;
     cfg.enableColorGrade = config.bEnableColorGrade ? 1 : 0;
-    cfg.colorPreset = TCHAR_TO_ANSI(*config.ColorPreset);
+    cfg.colorPreset = ColorPresetAnsi.Get();
     cfg.enableVignette = config.bEnableVignette ? 1 : 0;
     cfg.vignetteStrength = config.VignetteStrength;
     cfg.enableBeatFlash = config.bEnableBeatFlash ? 1 : 0;
@@ -297,7 +338,9 @@ bool FBeatsyncLoader::ApplyEffects(void* writer, const FString& inputVideo, cons
 {
     if (!GApi.video_apply_effects) return false;
 
-    int res = GApi.video_apply_effects(writer, TCHAR_TO_ANSI(*inputVideo), TCHAR_TO_ANSI(*outputVideo), beatTimes.GetData(), (size_t)beatTimes.Num());
+    FTCHARToANSI inConv(*inputVideo);
+    FTCHARToANSI outConv(*outputVideo);
+    int res = GApi.video_apply_effects(writer, inConv.Get(), outConv.Get(), beatTimes.GetData(), (size_t)beatTimes.Num());
     return res == 0;
 }
 
@@ -356,16 +399,4 @@ void FBeatsyncLoader::SpanAddEvent(SpanHandle h, const FString& ev)
 {
     if (!GApi.span_add_event) return;
     GApi.span_add_event(h, TCHAR_TO_ANSI(*ev));
-}
-
-void* FBeatsyncLoader::CreateAnalyzer()
-{
-    if (!GApi.create_analyzer) return nullptr;
-    return GApi.create_analyzer();
-}
-
-void FBeatsyncLoader::DestroyAnalyzer(void* handle)
-{
-    if (!GApi.destroy_analyzer) return;
-    GApi.destroy_analyzer(handle);
 }

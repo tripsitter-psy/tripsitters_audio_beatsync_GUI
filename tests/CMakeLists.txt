@@ -14,13 +14,15 @@ add_test(NAME logarchiver_deflate COMMAND test_logarchiver_deflate)
 
 # Catch2-based stub test (disabled until BUILD_TESTS is ON). This provides a minimal
 # unit-test scaffold so contributors can add assertions when DEFLATE is implemented.
-include(FetchContent)
-FetchContent_Declare(
-    catch2
-    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-    GIT_TAG v3.4.0
-)
-FetchContent_MakeAvailable(catch2)
+if(BUILD_TESTS)
+    include(FetchContent)
+    FetchContent_Declare(
+        catch2
+        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG v3.4.0
+    )
+    FetchContent_MakeAvailable(catch2)
+endif()
 
 add_executable(test_logarchiver_catch2
     catch_main.cpp
@@ -75,8 +77,12 @@ if(NOT BEATSYNC_SKIP_GUI)
     )
 
     target_link_libraries(test_wallpaper_installed PRIVATE Catch2::Catch2)
-    # Pass two candidate locations: non-mac build assets path and macOS bundle assets path
-    add_test(NAME wallpaper_installed COMMAND test_wallpaper_installed "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets/wallpaper.png" "$<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/assets/wallpaper.png")
+    # Pass candidate locations: non-mac build assets path and macOS bundle assets path (if applicable)
+    if(APPLE)
+        add_test(NAME wallpaper_installed COMMAND test_wallpaper_installed "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets/wallpaper.png" "$<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/assets/wallpaper.png")
+    else()
+        add_test(NAME wallpaper_installed COMMAND test_wallpaper_installed "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets/wallpaper.png")
+    endif()
     set_tests_properties(wallpaper_installed PROPERTIES WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
 
     # Runtime check: launch the GUI executable with --check-wallpaper and assert success when wallpaper found

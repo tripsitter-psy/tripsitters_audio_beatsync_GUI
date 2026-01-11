@@ -8,10 +8,12 @@
 struct FBeatsyncProcessingParams
 {
     FString AudioPath;
+    // VideoPath is used when bIsMultiClip is false, VideoPaths when true
     FString VideoPath;
     TArray<FString> VideoPaths;
     FString OutputPath;
     bool bIsMultiClip = false;
+    // Beat rate divisor: 0 = use every detected beat, N > 0 = use every Nth beat (must be >= 0)
     int32 BeatRate = 0;
     double AudioStart = 0.0;
     double AudioEnd = -1.0;
@@ -27,6 +29,7 @@ struct FBeatsyncProcessingResult
     TArray<double> BeatTimes;
 };
 
+// Delegates for progress and completion callbacks (called on worker thread - marshal to game thread if needed)
 DECLARE_DELEGATE_TwoParams(FOnBeatsyncProcessingProgress, float /*Progress*/, const FString& /*Status*/);
 DECLARE_DELEGATE_OneParam(FOnBeatsyncProcessingComplete, const FBeatsyncProcessingResult& /*Result*/);
 
@@ -41,7 +44,7 @@ public:
 
     void DoWork();
     void RequestCancel() { bCancelRequested.AtomicSet(true); }
-    bool IsCancelled() const { return bCancelRequested; }
+    bool IsCancelled() const { return bCancelRequested.load(); }
 
     FORCEINLINE TStatId GetStatId() const
     {

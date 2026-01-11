@@ -283,6 +283,19 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
         return -1;
     }
 
+    // RAII helper to ensure temp files are cleaned up even if an exception is thrown
+    struct TempFileCleanup {
+        std::vector<std::string>& files;
+        ~TempFileCleanup() {
+            for (const auto& f : files) {
+                remove(f.c_str());
+            }
+        }
+    };
+
+    std::vector<std::string> tempFiles;
+    TempFileCleanup cleanup{tempFiles};
+
     try {
         auto* w = static_cast<BeatSync::VideoWriter*>(writer);
 
@@ -300,7 +313,6 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
         }
 
         // Build segments from beats, cycling through videos
-        std::vector<std::string> tempFiles;
         size_t videoIdx = 0;
 
         for (size_t i = 0; i < beatCount; ++i) {
@@ -346,13 +358,10 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
         // Concatenate all segments
         bool success = w->concatenateVideos(tempFiles, outputVideo);
 
-        // Clean up temp files
-        for (const auto& f : tempFiles) {
-            remove(f.c_str());
-        }
-
+        // Cleanup handled by TempFileCleanup destructor
         return success ? 0 : -1;
     } catch (...) {
+        // Cleanup handled by TempFileCleanup destructor
         return -1;
     }
 }
@@ -444,8 +453,10 @@ BEATSYNC_API void bs_video_set_effects_config(void* writer, const bs_effects_con
         }
 
         w->setEffectsConfig(cfg);
+    } catch (const std::exception& e) {
+        s_lastError = e.what();
     } catch (...) {
-        // Silently ignore errors
+        s_lastError = "unknown error in bs_video_set_effects_config";
     }
 }
 
@@ -501,6 +512,8 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
         return -1;
     }
 
+    AVFrame* frame = nullptr;  // Declare outside try block for proper cleanup in catch
+
     try {
         BeatSync::VideoProcessor vp;
         if (!vp.open(videoPath)) {
@@ -513,7 +526,6 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
             return -1;
         }
 
-        AVFrame* frame = nullptr;
         if (!vp.readFrame(&frame) || !frame) {
             s_lastError = "Failed to read frame";
             return -1;
@@ -532,6 +544,7 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
         );
 
         if (!swsCtx) {
+            av_frame_free(&frame);
             s_lastError = "Failed to create scaler context";
             return -1;
         }
@@ -541,6 +554,7 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
         unsigned char* rgbData = static_cast<unsigned char*>(malloc(rgbSize));
         if (!rgbData) {
             sws_freeContext(swsCtx);
+            av_frame_free(&frame);
             s_lastError = "Failed to allocate RGB buffer";
             return -1;
         }
@@ -553,13 +567,20 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
         sws_scale(swsCtx, frame->data, frame->linesize, 0, srcH, dstData, dstLinesize);
 
         sws_freeContext(swsCtx);
+        av_frame_free(&frame);
 
         *outData = rgbData;
         return 0;
     } catch (const std::exception& e) {
+        if (frame) {
+            av_frame_free(&frame);
+        }
         s_lastError = e.what();
         return -1;
     } catch (...) {
+        if (frame) {
+            av_frame_free(&frame);
+        }
         s_lastError = "Exception during frame extraction";
         return -1;
     }

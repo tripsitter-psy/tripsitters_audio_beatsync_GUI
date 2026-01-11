@@ -170,6 +170,12 @@ AudioAnalyzer::AudioData AudioAnalyzer::loadAudioFile(const std::string& filePat
                             av_q2d(formatCtx->streams[audioStreamIndex]->time_base);
         }
 
+        // Reserve capacity to avoid reallocations
+        if (result.duration > 0.0 && result.sampleRate > 0) {
+            size_t estimatedSamples = static_cast<size_t>(result.duration * result.sampleRate);
+            result.samples.reserve(estimatedSamples);
+        }
+
         // Allocate packet and frame
         AVPacket* packet = av_packet_alloc();
         AVFrame* frame = av_frame_alloc();
@@ -183,9 +189,9 @@ AudioAnalyzer::AudioData AudioAnalyzer::loadAudioFile(const std::string& filePat
                     while (avcodec_receive_frame(codecCtx, frame) == 0) {
                         // Allocate buffer for resampled data
                         int outSamples = frame->nb_samples;
-                        float* buffer = new float[outSamples];
+                        std::vector<float> buffer(outSamples);
 
-                        uint8_t* outData = reinterpret_cast<uint8_t*>(buffer);
+                        uint8_t* outData = reinterpret_cast<uint8_t*>(buffer.data());
 
                         // Resample to mono float
                         int samplesOut = swr_convert(swrCtx, &outData, outSamples,
@@ -193,10 +199,8 @@ AudioAnalyzer::AudioData AudioAnalyzer::loadAudioFile(const std::string& filePat
 
                         if (samplesOut > 0) {
                             // Append to result
-                            result.samples.insert(result.samples.end(), buffer, buffer + samplesOut);
+                            result.samples.insert(result.samples.end(), buffer.begin(), buffer.begin() + samplesOut);
                         }
-
-                        delete[] buffer;
                     }
                 }
             }
@@ -207,17 +211,15 @@ AudioAnalyzer::AudioData AudioAnalyzer::loadAudioFile(const std::string& filePat
         avcodec_send_packet(codecCtx, nullptr);
         while (avcodec_receive_frame(codecCtx, frame) == 0) {
             int outSamples = frame->nb_samples;
-            float* buffer = new float[outSamples];
-            uint8_t* outData = reinterpret_cast<uint8_t*>(buffer);
+            std::vector<float> buffer(outSamples);
+            uint8_t* outData = reinterpret_cast<uint8_t*>(buffer.data());
 
             int samplesOut = swr_convert(swrCtx, &outData, outSamples,
                                         (const uint8_t**)frame->data, frame->nb_samples);
 
             if (samplesOut > 0) {
-                result.samples.insert(result.samples.end(), buffer, buffer + samplesOut);
+                result.samples.insert(result.samples.end(), buffer.begin(), buffer.begin() + samplesOut);
             }
-
-            delete[] buffer;
         }
 
         // Update duration if not set

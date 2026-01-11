@@ -58,7 +58,7 @@ set(CORE_SOURCES
 option(BEATSYNC_BUILD_SHARED "Build beatsync backend as shared library" ON)
 
 # Always provide a static backend for linking by internal targets (TripSitter, beatsync, tests)
-add_library(beatsync_backend_static STATIC ${CORE_SOURCES} ${OPTIONAL_SOURCES} src/backend/beatsync_capi.cpp)
+add_library(beatsync_backend_static STATIC ${CORE_SOURCES} src/backend/beatsync_capi.cpp)
 target_include_directories(beatsync_backend_static PUBLIC ${CMAKE_SOURCE_DIR}/src)
 set_target_properties(beatsync_backend_static PROPERTIES PUBLIC_HEADER "${CMAKE_SOURCE_DIR}/src/backend/beatsync_capi.h")
 
@@ -69,7 +69,7 @@ add_library(beatsync_backend ALIAS beatsync_backend_static)
 
 # Optionally also build a shared library for external consumers (Unreal plugin)
 if(BEATSYNC_BUILD_SHARED AND (WIN32 OR APPLE OR UNIX))
-    add_library(beatsync_backend_shared SHARED ${CORE_SOURCES} ${OPTIONAL_SOURCES} src/backend/beatsync_capi.cpp)
+    add_library(beatsync_backend_shared SHARED ${CORE_SOURCES} src/backend/beatsync_capi.cpp)
     # Export C API symbols when building a shared library (Windows uses dllexport; Unix uses visibility attribute)
     target_compile_definitions(beatsync_backend_shared PRIVATE BEATSYNC_CAPI_EXPORT)
     target_include_directories(beatsync_backend_shared PUBLIC ${CMAKE_SOURCE_DIR}/src)
@@ -361,7 +361,7 @@ if(WIN32)
         "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk' '$INSTDIR\\\\bin\\\\TripSitter.exe'"
     )
     set(CPACK_NSIS_DELETE_ICONS_EXTRA
-        "Delete '$SMPROGRAMS\\\\$START_MENU\\\\MTV TripSitter.lnk'"
+        "Delete '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk'"
     )
 
     # Add option for desktop shortcut

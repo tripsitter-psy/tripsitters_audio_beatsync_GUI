@@ -65,6 +65,14 @@ function Get-CertificateFromEnv {
     if ($env:CODESIGN_CERTIFICATE_BASE64) {
         $tempCert = Join-Path $env:TEMP "codesign_cert.pfx"
         [System.IO.File]::WriteAllBytes($tempCert, [System.Convert]::FromBase64String($env:CODESIGN_CERTIFICATE_BASE64))
+        
+        # Set restrictive permissions: current user only
+        $acl = Get-Acl $tempCert
+        $acl.SetAccessRuleProtection($true, $false)  # Remove inherited permissions
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($env:USERNAME, "FullControl", "Allow")
+        $acl.SetAccessRule($rule)
+        Set-Acl $tempCert $acl
+        
         return $tempCert
     }
     return $null
@@ -100,72 +108,86 @@ if (-not (Test-Path $cert)) {
     exit 1
 }
 
-# Find files to sign
-$filesToSign = @()
-$extensions = @("*.exe", "*.dll")
-
-foreach ($ext in $extensions) {
-    $files = Get-ChildItem -Path $BuildDir -Recurse -Filter $ext -File
-    $filesToSign += $files
+if (-not $password -or $password -eq '') {
+    Write-Error "Certificate password is missing. Set CODESIGN_CERTIFICATE_PASSWORD in CI secrets."
+    exit 1
 }
 
-if ($filesToSign.Count -eq 0) {
-    Write-Host "No files found to sign in $BuildDir"
-    exit 0
-}
+# Import certificate to store securely
+$securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+$certObject = Import-PfxCertificate -FilePath $cert -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword
+$thumbprint = $certObject.Thumbprint
 
-Write-Host "Found $($filesToSign.Count) files to sign:"
-$filesToSign | ForEach-Object { Write-Host "  - $($_.Name)" }
+Write-Host "Imported certificate with thumbprint: $thumbprint"
 
-# Sign each file
-$signedCount = 0
-$failedCount = 0
+try {
+    # Find files to sign
+    $filesToSign = @()
+    $extensions = @("*.exe", "*.dll")
 
-foreach ($file in $filesToSign) {
-    Write-Host "`nSigning: $($file.FullName)" -ForegroundColor Yellow
-
-    if ($DryRun) {
-        Write-Host "  [DRY RUN] Would sign this file"
-        $signedCount++
-        continue
+    foreach ($ext in $extensions) {
+        $files = Get-ChildItem -Path $BuildDir -Recurse -Filter $ext -File
+        $filesToSign += $files
     }
 
-    $args = @(
-        "sign",
-        "/f", $cert,
-        "/p", $password,
-        "/fd", "SHA256",
-        "/tr", $TimestampUrl,
-        "/td", "SHA256",
-        "/d", "MTV TripSitter",
-        "/du", "https://github.com/tripsitter-psy/tripsitters_audio_beatsync_GUI",
-        $file.FullName
-    )
+    if ($filesToSign.Count -eq 0) {
+        Write-Host "No files found to sign in $BuildDir"
+        exit 0
+    }
 
-    try {
-        $result = & $signtool @args 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "  Signed successfully" -ForegroundColor Green
+    Write-Host "Found $($filesToSign.Count) files to sign:"
+    $filesToSign | ForEach-Object { Write-Host "  - $($_.Name)" }
+
+    # Sign each file
+    $signedCount = 0
+    $failedCount = 0
+
+    foreach ($file in $filesToSign) {
+        Write-Host "`nSigning: $($file.FullName)" -ForegroundColor Yellow
+
+        if ($DryRun) {
+            Write-Host "  [DRY RUN] Would sign this file"
             $signedCount++
-        } else {
-            Write-Warning "  Failed to sign: $result"
+            continue
+        }
+
+        $args = @(
+            "sign",
+            "/sha1", $thumbprint,
+            "/fd", "SHA256",
+            "/tr", $TimestampUrl,
+            "/td", "SHA256",
+            "/d", "MTV TripSitter",
+            "/du", "https://github.com/tripsitter-psy/tripsitters_audio_beatsync_GUI",
+            $file.FullName
+        )
+
+        try {
+            $result = & $signtool @args 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  Signed successfully" -ForegroundColor Green
+                $signedCount++
+            } else {
+                Write-Warning "  Failed to sign: $result"
+                $failedCount++
+            }
+        } catch {
+            Write-Warning "  Error signing: $_"
             $failedCount++
         }
-    } catch {
-        Write-Warning "  Error signing: $_"
-        $failedCount++
     }
-}
 
-# Clean up temp certificate
-if ($cert -eq (Join-Path $env:TEMP "codesign_cert.pfx")) {
-    Remove-Item $cert -Force -ErrorAction SilentlyContinue
-}
+    Write-Host "`n=== Signing Complete ===" -ForegroundColor Cyan
+    Write-Host "Signed: $signedCount"
+    Write-Host "Failed: $failedCount"
 
-Write-Host "`n=== Signing Complete ===" -ForegroundColor Cyan
-Write-Host "Signed: $signedCount"
-Write-Host "Failed: $failedCount"
-
-if ($failedCount -gt 0) {
-    exit 1
+    if ($failedCount -gt 0) {
+        exit 1
+    }
+} finally {
+    # Clean up certificate from store and temp file
+    Remove-Item "Cert:\CurrentUser\My\$thumbprint" -ErrorAction SilentlyContinue
+    if ($cert -eq (Join-Path $env:TEMP "codesign_cert.pfx")) {
+        Remove-Item $cert -Force -ErrorAction SilentlyContinue
+    }
 }

@@ -347,9 +347,9 @@ void MainWindow::LoadBackgroundImage() {
 
     // Fallback: Create gradient background if no image loaded
     if (!m_backgroundBitmap.IsOk()) {
-        wxBitmap bmp(1344, 768);
+        wxBitmap bmp(1344, 950);
         wxMemoryDC dc(bmp);
-        dc.GradientFillLinear(wxRect(0, 0, 1344, 768),
+        dc.GradientFillLinear(wxRect(0, 0, 1344, 950),
             wxColour(10, 10, 26), wxColour(25, 0, 50), wxSOUTH);
         m_backgroundBitmap = bmp;
         {
@@ -561,7 +561,7 @@ void MainWindow::CreateControls() {
 
     // Restore legacy title control: load user's 'final' title image and create
     // a wxStaticBitmap so it behaves as before and preserves alpha.
-    wxString titleCandidates[] = { "asset for top hedder final.png", "asset for top hedder.png" };
+    wxString titleCandidates[] = { "asset for top header final.png", "asset for top header.png" };
     bool titleLoaded = false;
     for (const wxString &n : titleCandidates) {
         wxString p = assetsDir + n;
@@ -993,9 +993,9 @@ void MainWindow::CreateLayout() {
     wxString exePath = wxStandardPaths::Get().GetExecutablePath();
     wxString assetsDir = wxFileName(exePath).GetPath() + "/assets/";
     wxString headerCandidates[] = {
-        "asset for top hedder final.png",
-        "asset for top hedder alpha_2.png",
-        "asset for top hedder.png"
+        "asset for top header final.png",
+        "asset for top header alpha_2.png",
+        "asset for top header.png"
     };
     wxImage headerImg;
     wxString chosenHeader;

@@ -139,7 +139,7 @@ Defined in `vcpkg.json`:
   - **Note**: `avutil` removed from features list - now included in core as of FFmpeg 8.0.1
 - `onnxruntime` (AI beat detection)
 
-Baseline: `3cac76fe5fd1e00031f31c6b52d942cf9f5de8c3` (vcpkg submodule HEAD)
+Baseline: [configured in vcpkg.json](vcpkg.json) (vcpkg submodule HEAD)
 
 ## Current Status (January 2026)
 
@@ -209,7 +209,7 @@ Copy-Item 'unreal-prototype\Source\TripSitterUE\Resources\Corpta.otf' "$env:USER
 
 ## Git Workflow
 
-Current branch: `ci/nsis-smoke-test`
+Current branch: run `git branch --show-current` to see active branch
 Remote: `https://github.com/tripsitter-psy/tripsitters_audio_beatsync_GUI.git`
 
 Commit style: `type: description` (e.g., `feat:`, `fix:`, `ci:`)

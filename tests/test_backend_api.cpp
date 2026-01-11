@@ -409,15 +409,18 @@ TEST_CASE("Frame data free null is safe", "[backend][frame]") {
 
 // ==================== Progress Callback Tests ====================
 
-static int s_callbackCount = 0;
-static double s_lastProgress = -1.0;
+// Callback state struct for thread-safe testing (avoids static globals that could
+// cause flaky tests if run in parallel)
+struct CallbackState {
+    int callCount = 0;
+    double lastProgress = -1.0;
+};
 
 static void test_progress_callback(double progress, void* user_data) {
-    s_callbackCount++;
-    s_lastProgress = progress;
-    int* counter = static_cast<int*>(user_data);
-    if (counter) {
-        (*counter)++;
+    CallbackState* state = static_cast<CallbackState*>(user_data);
+    if (state) {
+        state->callCount++;
+        state->lastProgress = progress;
     }
 }
 
@@ -425,12 +428,10 @@ TEST_CASE("Progress callback registration", "[backend][video][callback]") {
     void* writer = bs_create_video_writer();
     REQUIRE(writer != nullptr);
 
-    int callCount = 0;
-    s_callbackCount = 0;
-    s_lastProgress = -1.0;
+    CallbackState state;
 
     // Register callback
-    bs_video_set_progress_callback(writer, test_progress_callback, &callCount);
+    bs_video_set_progress_callback(writer, test_progress_callback, &state);
 
     // Unregister callback (null)
     bs_video_set_progress_callback(writer, nullptr, nullptr);
@@ -441,6 +442,22 @@ TEST_CASE("Progress callback registration", "[backend][video][callback]") {
 TEST_CASE("Progress callback with null writer", "[backend][video][callback][null]") {
     // Should not crash
     bs_video_set_progress_callback(nullptr, test_progress_callback, nullptr);
+}
+
+TEST_CASE("Progress callback invocation", "[backend][video][callback]") {
+    CallbackState state;
+
+    // Call the callback directly to test state updates
+    test_progress_callback(0.5, &state);
+    REQUIRE(state.callCount == 1);
+    REQUIRE(state.lastProgress == 0.5);
+
+    test_progress_callback(0.75, &state);
+    REQUIRE(state.callCount == 2);
+    REQUIRE(state.lastProgress == 0.75);
+
+    // Test with null user_data (should not crash)
+    test_progress_callback(1.0, nullptr);
 }
 
 // ==================== Beatgrid Memory Tests ====================

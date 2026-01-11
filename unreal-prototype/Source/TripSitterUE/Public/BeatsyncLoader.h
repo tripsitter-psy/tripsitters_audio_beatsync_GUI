@@ -50,8 +50,8 @@ public:
     static void DestroyVideoWriter(void* writer);
     static FString GetVideoLastError(void* writer);
 
-    using FProgressCb = std::function<void(double)>;
-    static void SetProgressCallback(void* writer, TFunction<void(double)> cb);
+    using FProgressCb = TFunction<void(double)>;
+    static void SetProgressCallback(void* writer, FProgressCb cb);
 
     static bool CutVideoAtBeats(void* writer, const FString& inputVideo, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration);
     static bool CutVideoAtBeatsMulti(void* writer, const TArray<FString>& inputVideos, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration);
@@ -70,7 +70,7 @@ public:
     static void SpanSetError(SpanHandle h, const FString& msg);
     static void SpanAddEvent(SpanHandle h, const FString& ev);
 
-    static bool IsInitialized() { return !!GApi.DllHandle; }
+    static bool IsInitialized();
 
 private:
     // Internal state handled in .cpp

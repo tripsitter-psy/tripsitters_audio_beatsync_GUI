@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@0ad4b8fadaa221de228637b11dc3c579563dbe522
 
       - name: Install build tools
         run: |
@@ -74,8 +74,18 @@ jobs:
         run: cmake --build build --config ${{ env.BUILD_TYPE }} -- /m
         shell: powershell
 
+      - name: Check certificate availability
+        id: cert-check
+        run: |
+          if [ -n "${{ secrets.CODESIGN_CERTIFICATE_BASE64 }}" ]; then
+            echo "has_cert=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_cert=false" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
       - name: Sign binaries (if certificate available)
-        if: ${{ env.CODESIGN_CERTIFICATE_BASE64 != '' }}
+        if: steps.cert-check.outputs.has_cert == 'true'
         env:
           CODESIGN_CERTIFICATE_BASE64: ${{ secrets.CODESIGN_CERTIFICATE_BASE64 }}
           CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.CODESIGN_CERTIFICATE_PASSWORD }}
@@ -92,7 +102,7 @@ jobs:
         shell: powershell
 
       - name: Sign installer (if certificate available)
-        if: ${{ env.CODESIGN_CERTIFICATE_BASE64 != '' }}
+        if: steps.cert-check.outputs.has_cert == 'true'
         env:
           CODESIGN_CERTIFICATE_BASE64: ${{ secrets.CODESIGN_CERTIFICATE_BASE64 }}
           CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.CODESIGN_CERTIFICATE_PASSWORD }}
@@ -100,8 +110,7 @@ jobs:
           $installer = Get-ChildItem -Path build -Filter "*.exe" | Where-Object { $_.Name -like "*TripSitter*" } | Select-Object -First 1
           if ($installer) {
             pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/sign-windows-binaries.ps1 `
-              -BuildDir $installer.DirectoryName `
-              -CertificatePath "" # Uses env vars
+              -BuildDir $installer.DirectoryName
           }
         shell: powershell
 
@@ -243,7 +252,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: MTV TripSitter v${{ steps.version.outputs.version }}
-          tag_name: ${{ github.ref_name }}
+          tag_name: v${{ steps.version.outputs.version }}
           draft: true
           prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') }}
           files: |
