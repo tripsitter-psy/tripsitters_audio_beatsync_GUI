@@ -4,10 +4,12 @@
   "dependencies": [
     {
       "name": "onnxruntime",
+      "version>=" : "1.18.1",
       "features": ["cuda"],
       "platform": "windows"
     },
-    "ffmpeg"
+    "ffmpeg",
+    "wxwidgets"
   ],
   "builtin-baseline": "a48bbf436be0867d0eadc42077f280f3123e3698"
 }

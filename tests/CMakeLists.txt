@@ -1,6 +1,30 @@
 # Tests for BeatSyncEditor
 
 # =============================================================================
+# Official ONNX Runtime Download (Workaround for vcpkg build issues)
+# =============================================================================
+# vcpkg's ONNX Runtime 1.23.2 has a heap corruption bug on Windows.
+# We download official Microsoft binaries instead.
+# See: https://github.com/microsoft/vcpkg/issues/49349
+#
+include(${CMAKE_SOURCE_DIR}/cmake/FetchOnnxRuntime.cmake)
+
+if(WIN32)
+    # Download official ONNX Runtime binaries
+    # OPTIONAL: set the SHA256 for the official archive to enable verification.
+    # You can compute this locally (sha256sum on Linux) and paste the value here.
+    # Example: set(ONNXRUNTIME_OFFICIAL_SHA256 "<64-hex-sha256>")
+    if(NOT DEFINED ONNXRUNTIME_OFFICIAL_SHA256)
+        set(ONNXRUNTIME_OFFICIAL_SHA256 "")
+    endif()
+
+    fetch_onnxruntime(VERSION 1.23.2 DESTINATION "${CMAKE_BINARY_DIR}/onnxruntime-official" SHA256 ${ONNXRUNTIME_OFFICIAL_SHA256})
+
+    # Fallback to vcpkg if official download fails
+    set(VCPKG_BIN_DIR "${CMAKE_SOURCE_DIR}/vcpkg_installed/x64-windows/bin")
+endif()
+
+# =============================================================================
 # DLL Copy Helper for Windows Tests
 # =============================================================================
 # On Windows, tests that link to ONNX Runtime or FFmpeg need runtime DLLs.
@@ -12,15 +36,26 @@
 #   - For CUDA tests, also copy onnxruntime_providers_cuda.dll manually or via CI
 #
 if(WIN32)
-    set(VCPKG_BIN_DIR "${CMAKE_SOURCE_DIR}/vcpkg_installed/x64-windows/bin")
-
     # Function to copy runtime DLLs for a test target
+    # Uses official ONNX Runtime binaries (workaround for vcpkg bug)
     # Usage: copy_runtime_dlls_for_test(target_name [INCLUDE_CUDA])
     function(copy_runtime_dlls_for_test TARGET_NAME)
         cmake_parse_arguments(ARG "INCLUDE_CUDA" "" "" ${ARGN})
 
-        if(EXISTS "${VCPKG_BIN_DIR}")
-            # Always copy CPU ONNX Runtime DLLs
+        # Prefer official ONNX Runtime binaries over vcpkg (vcpkg has heap corruption bug)
+        if(DEFINED ONNXRUNTIME_OFFICIAL_DLL_DIR AND EXISTS "${ONNXRUNTIME_OFFICIAL_DLL_DIR}/onnxruntime.dll")
+            add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${ONNXRUNTIME_OFFICIAL_DLL_DIR}/onnxruntime.dll"
+                    "$<TARGET_FILE_DIR:${TARGET_NAME}>"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${ONNXRUNTIME_OFFICIAL_DLL_DIR}/onnxruntime_providers_shared.dll"
+                    "$<TARGET_FILE_DIR:${TARGET_NAME}>"
+                COMMENT "Copying official ONNX Runtime DLLs for ${TARGET_NAME}"
+                VERBATIM
+            )
+        elseif(EXISTS "${VCPKG_BIN_DIR}/onnxruntime.dll")
+            # Fallback to vcpkg (may have issues)
             add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${VCPKG_BIN_DIR}/onnxruntime.dll"
@@ -28,20 +63,21 @@ if(WIN32)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${VCPKG_BIN_DIR}/onnxruntime_providers_shared.dll"
                     "$<TARGET_FILE_DIR:${TARGET_NAME}>"
-                COMMENT "Copying ONNX Runtime DLLs for ${TARGET_NAME}"
+                COMMENT "Copying ONNX Runtime DLLs for ${TARGET_NAME} (vcpkg fallback)"
                 VERBATIM
             )
+        endif()
 
-            # Optionally copy CUDA provider DLL (335+ MB, only for GPU testing)
-            if(ARG_INCLUDE_CUDA AND EXISTS "${VCPKG_BIN_DIR}/onnxruntime_providers_cuda.dll")
-                add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${VCPKG_BIN_DIR}/onnxruntime_providers_cuda.dll"
-                        "$<TARGET_FILE_DIR:${TARGET_NAME}>"
-                    COMMENT "Copying ONNX Runtime CUDA provider for ${TARGET_NAME}"
-                    VERBATIM
-                )
-            endif()
+        # Optionally copy CUDA provider DLL (335+ MB, only for GPU testing)
+        # CUDA provider is only available from vcpkg build
+        if(ARG_INCLUDE_CUDA AND EXISTS "${VCPKG_BIN_DIR}/onnxruntime_providers_cuda.dll")
+            add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${VCPKG_BIN_DIR}/onnxruntime_providers_cuda.dll"
+                    "$<TARGET_FILE_DIR:${TARGET_NAME}>"
+                COMMENT "Copying ONNX Runtime CUDA provider for ${TARGET_NAME}"
+                VERBATIM
+            )
         endif()
     endfunction()
 endif()
@@ -179,14 +215,10 @@ if(WIN32)
     )
 endif()
 
-# Temporary: mark ONNX-related tests as DISABLED while we investigate heap
-# corruption observed with onnxruntime v1.23.2 from vcpkg. These tests crash
-# during ONNX Runtime initialization before any test code runs.
-# To run these tests locally: ctest -R onnx -L onnx_unstable
-# Remove when upstream fixes the regression.
+# ONNX tests now use official Microsoft binaries (workaround for vcpkg heap corruption)
+# See: https://github.com/microsoft/vcpkg/issues/49349
 set_tests_properties(onnx_inference_helper onnx_detector_regression onnx_detector PROPERTIES
-    DISABLED TRUE
-    LABELS "onnx_unstable"
+    LABELS "onnx"
 )
 
 
@@ -217,10 +249,9 @@ if(WIN32)
     )
 endif()
 
-# Temporary: mark CUDA test as DISABLED as well (same runtime issue as CPU tests)
+# CUDA test uses official binaries for CPU portion; CUDA provider still from vcpkg if available
 set_tests_properties(onnx_detector_cuda PROPERTIES
-    DISABLED TRUE
-    LABELS "onnx_unstable;cuda;gpu"
+    LABELS "onnx;cuda;gpu"
 )
 
 # SpectralFlux tests
