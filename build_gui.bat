@@ -10,14 +10,6 @@ echo.
 set PROJECT_DIR=%~dp0
 cd /d "%PROJECT_DIR%"
 
-:: Check wxWidgets
-if not exist "C:\wxWidgets-3.2.4" (
-    echo [ERROR] wxWidgets not found!
-    echo Please run setup_wxwidgets.bat first
-    pause
-    exit /b 1
-)
-
 :: Check FFmpeg
 if not exist "C:\ffmpeg-dev\ffmpeg-master-latest-win64-gpl-shared" (
     echo [ERROR] FFmpeg not found at expected location
@@ -33,7 +25,6 @@ echo [1/3] Configuring CMake...
 cd build_gui
 
 cmake .. -G "Visual Studio 17 2022" -A x64 ^
-    -DwxWidgets_ROOT_DIR="C:/wxWidgets-3.2.4" ^
     -DFFMPEG_ROOT="C:/ffmpeg-dev/ffmpeg-master-latest-win64-gpl-shared"
 
 if errorlevel 1 (

@@ -2,27 +2,78 @@
 
 #include "BeatGrid.h"
 #include <string>
+#include <functional>
 
 namespace BeatSync {
 
+// Analysis mode for BeatNetBridge
+enum class BeatNetMode {
+    SidecarOnly,      // Only use pre-generated sidecar JSON files (CI/deterministic)
+    PythonOptIn,      // Try Python script first, fall back to sidecar
+    PythonRequired    // Require Python script, fail if not available
+};
+
+// Configuration for BeatNetBridge
+struct BeatNetConfig {
+    BeatNetMode mode = BeatNetMode::SidecarOnly;  // Default: deterministic for CI
+    std::string pythonPath;                        // Path to Python executable
+    std::string scriptPath;                        // Path to beatnet_analyze.py
+    int timeoutMs = 60000;                         // Timeout for Python subprocess (ms)
+    bool verbose = false;                          // Enable verbose logging
+    bool pythonEnabled = false;                    // Runtime opt-in for Python (checked in addition to compile-time flag)
+};
+
+// Progress callback for long-running analysis
+using BeatNetProgressCallback = std::function<void(float progress, const std::string& status)>;
+
 // Subprocess wrapper around scripts/beatnet_analyze.py. Invokes the Python
-// script, parses JSON output, and populates a BeatGrid. Falls back to the
-// built-in AudioAnalyzer if Python is unavailable or errors occur.
+// script, parses JSON output, and populates a BeatGrid. Falls back to
+// sidecar JSON files when configured or when Python is unavailable.
 class BeatNetBridge {
 public:
-    BeatNetBridge() = default;
+    BeatNetBridge();
+    explicit BeatNetBridge(const BeatNetConfig& config);
 
-    // Analyze audio via BeatNet. Returns an empty grid if BeatNet unavailable.
+    // Analyze audio via BeatNet. Returns an empty grid on failure.
     BeatGrid analyze(const std::string& audioFilePath);
 
-    // Set path to Python executable (default: "python3" or "python" on Windows).
-    void setPythonPath(const std::string& pythonPath);
+    // Analyze with progress callback
+    BeatGrid analyze(const std::string& audioFilePath, BeatNetProgressCallback progressCallback);
 
+    // Configuration
+    void setConfig(const BeatNetConfig& config) { m_config = config; }
+    const BeatNetConfig& getConfig() const { return m_config; }
+
+    // Legacy API compatibility
+    void setPythonPath(const std::string& pythonPath) { m_config.pythonPath = pythonPath; }
+    void setScriptPath(const std::string& scriptPath) { m_config.scriptPath = scriptPath; }
+
+    // Runtime opt-in for Python subprocess invocation
+    // This must be explicitly enabled AND the compile-time flag ENABLE_BEATNET_PYTHON must be set
+    // Can also be enabled via BEATSYNC_ENABLE_PYTHON=1 environment variable
+    void setPythonEnabled(bool enabled) { m_config.pythonEnabled = enabled; }
+    bool isPythonEnabled() const;
+
+    // Error handling
     const std::string& getLastError() const { return m_lastError; }
+    bool hasError() const { return !m_lastError.empty(); }
+
+    // Check if Python is available and working (compile-time + runtime checks)
+    bool isPythonAvailable() const;
+
+    // Get the path to the default script (relative to executable)
+    static std::string getDefaultScriptPath();
 
 private:
-    std::string m_pythonPath;
+    BeatNetConfig m_config;
     std::string m_lastError;
+
+    // Internal methods
+    BeatGrid analyzeWithPython(const std::string& audioFilePath, BeatNetProgressCallback progressCallback);
+    BeatGrid analyzeWithSidecar(const std::string& audioFilePath);
+    bool parseJsonOutput(const std::string& jsonStr, BeatGrid& outGrid);
+    std::string runPythonProcess(const std::string& audioFilePath, int& exitCode);
+    std::string findPythonExecutable() const;
 };
 
 } // namespace BeatSync

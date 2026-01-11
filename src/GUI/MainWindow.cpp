@@ -212,6 +212,9 @@ MainWindow::MainWindow()
         dbg << "MainWindow ctor: after Centre" << std::endl;
     }
 
+    // Re-layout when the frame size changes to keep scrolled extents correct
+    Bind(wxEVT_SIZE, &MainWindow::OnFrameSize, this);
+
     // Add menu bar with Help -> View Logs & Diagnostics
     const int ID_VIEW_LOGS = wxID_HIGHEST + 1;
     wxMenuBar* menuBar = new wxMenuBar();
@@ -1051,7 +1054,7 @@ void MainWindow::CreateLayout() {
             m_headerCtrl = new wxStaticBitmap(m_mainPanel, wxID_ANY, m_headerBitmap);
             // Preserve alpha and avoid forcing background style on native control
             m_headerCtrl->SetBackgroundColour(wxNullColour);
-            m_headerCtrl->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+            // Avoid calling SetBackgroundStyle on native controls - let the bitmap's alpha handle transparency
             mainSizer->Add(m_headerCtrl, 0, wxALIGN_CENTER_HORIZONTAL | wxALL, 8);
         } else {
             // If there's a title image we keep vertical spacing similar to the header height
@@ -1350,10 +1353,12 @@ void MainWindow::CreateLayout() {
     Layout();  // Force frame layout
 
     // Recompute scrolling extents and force panel layout after frame layout
-    // Help wxScrolledWindow compute its virtual size: apply size hints to the panel's sizer
-    mainSizer->SetSizeHints(m_mainPanel);
-    m_mainPanel->FitInside();  // Calculate virtual size for scrolling
-    m_mainPanel->Layout();     // Force sizer recalculation
+    // Help wxScrolledWindow compute its virtual size and set sensible min sizes on the frame
+    mainSizer->SetSizeHints(this); // apply size hints to the frame rather than the inner panel
+    m_mainPanel->FitInside();      // Calculate virtual size for scrolling
+    m_mainPanel->Layout();         // Force sizer recalculation
+    m_mainPanel->Refresh();        // Ensure visual updates after layout
+    m_mainPanel->Update();
 
     // Diagnostic logging: capture sizes to help debug collapsed/scattered controls
     {
@@ -1373,7 +1378,19 @@ void MainWindow::OnVideoSourceChanged(wxCommandEvent& event) {
     bool isSingle = m_singleVideoRadio->GetValue();
     m_singleVideoPicker->Show(isSingle);
     m_videoFolderPicker->Show(!isSingle);
+
+    // Recompute layout and scroll extents after showing/hiding controls
     m_mainPanel->Layout();
+    m_mainPanel->FitInside();
+    m_mainPanel->Refresh();
+    m_mainPanel->Update();
+
+    // Debug log to help diagnose runtime layout issues
+    std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+    dbg << "OnVideoSourceChanged: isSingle=" << (isSingle ? "true" : "false") << " panelClient=" << m_mainPanel->GetClientSize().x << "x" << m_mainPanel->GetClientSize().y << "\n";
+
+    // Also ensure scrollbars are recalculated so content doesn't collapse on small sizes
+    m_mainPanel->SetScrollRate(10, 10);
 }
 
 void MainWindow::OnAudioSelected(wxFileDirPickerEvent& event) {
@@ -1383,7 +1400,26 @@ void MainWindow::OnAudioSelected(wxFileDirPickerEvent& event) {
         m_statusText->SetLabel("Analyzing audio...");
         m_beatVisualizer->LoadAudio(audioPath);
         m_statusText->SetLabel("Audio loaded - Ready to sync");
+
+        // Make sure the panel layout remains stable after heavy work
+        if (m_mainPanel) {
+            m_mainPanel->FitInside();
+            m_mainPanel->Refresh();
+            m_mainPanel->Update();
+        }
     }
+}
+
+void MainWindow::OnFrameSize(wxSizeEvent& event) {
+    // Keep scrolled area and sizers in sync during live resizes
+    if (m_mainPanel) {
+        m_mainPanel->FitInside();
+        m_mainPanel->Layout();
+        m_mainPanel->Refresh();
+        std::ofstream dbg("tripsitter_debug.log", std::ios::app);
+        dbg << "OnFrameSize: new client=" << GetClientSize().x << "x" << GetClientSize().y << "\n";
+    }
+    event.Skip();
 }
 
 void MainWindow::OnPreviewFrame(wxCommandEvent& event) {
@@ -1418,6 +1454,12 @@ void MainWindow::OnPreviewFrame(wxCommandEvent& event) {
     // Read timestamp from input (seconds)
     double ts = 0.5;
     wxString tsStr = m_previewTimestampCtrl->GetValue();
+
+    // Ensure layout is up-to-date before showing preview (some tools may change size)
+    if (m_mainPanel) {
+        m_mainPanel->Layout();
+        m_mainPanel->Refresh();
+    }
     if (!tsStr.IsEmpty()) {
         ts = wxAtof(tsStr);
     }

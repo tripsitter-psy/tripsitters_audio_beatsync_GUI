@@ -96,6 +96,7 @@ private:
     void OnPreviewTransition(wxCommandEvent& event);
     void OnClose(wxCloseEvent& event);
     void OnPaint(wxPaintEvent& event);
+    void OnFrameSize(wxSizeEvent& event);
     
     // Helper methods
     void CreateControls();
