@@ -39,11 +39,15 @@ BeatGrid AudioAnalyzer::analyze(const std::string& audioFilePath) {
                   << audio.sampleRate << " Hz, "
                   << audio.samples.size() << " samples\n";
 
+        // Always set the audio duration (even if no beats detected)
+        beatGrid.setAudioDuration(audio.duration);
+
         // Detect beats
         std::vector<double> beats = detectBeats(audio);
 
         if (beats.empty()) {
             m_lastError = "No beats detected";
+            // Return grid with duration set but no beats
             return beatGrid;
         }
 
@@ -51,9 +55,6 @@ BeatGrid AudioAnalyzer::analyze(const std::string& audioFilePath) {
 
         // Set beats in grid
         beatGrid.setBeats(beats);
-
-        // Set the actual audio file duration (for padding to full length)
-        beatGrid.setAudioDuration(audio.duration);
 
         // Estimate and set BPM
         double bpm = estimateBPM(beats);

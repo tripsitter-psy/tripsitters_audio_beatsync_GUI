@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 #include <cmath>
+#include <mutex>
 #include <unordered_map>
 
 // FFmpeg includes for frame conversion
@@ -29,6 +30,7 @@ static thread_local std::string s_ffmpegPath;
 
 // Store effects config per writer (since VideoWriter doesn't expose getter)
 static std::unordered_map<void*, BeatSync::EffectsConfig> s_effectsConfigs;
+static std::mutex s_effectsConfigsMutex;
 
 // ==================== Version and Init API ====================
 
@@ -44,6 +46,7 @@ BEATSYNC_API int bs_init() {
 }
 
 BEATSYNC_API void bs_shutdown() {
+    std::lock_guard<std::mutex> lock(s_effectsConfigsMutex);
     s_effectsConfigs.clear();
 }
 
@@ -74,6 +77,16 @@ BEATSYNC_API int bs_analyze_audio(void* analyzer, const char* filepath, bs_beatg
 
         // Use the analyze() method which loads and detects in one call
         BeatSync::BeatGrid grid = a->analyze(filepath);
+
+        // Check if analysis failed (duration will be 0 if file couldn't be loaded)
+        if (grid.getAudioDuration() <= 0.0) {
+            s_lastError = a->getLastError();
+            if (s_lastError.empty()) {
+                s_lastError = "Failed to analyze audio file";
+            }
+            return -1;
+        }
+
         const auto& beats = grid.getBeats();
 
         // Allocate output buffer
@@ -179,7 +192,10 @@ BEATSYNC_API void* bs_create_video_writer() {
     TRACE_FUNC();
     try {
         auto* writer = new BeatSync::VideoWriter();
-        s_effectsConfigs[writer] = BeatSync::EffectsConfig();
+        {
+            std::lock_guard<std::mutex> lock(s_effectsConfigsMutex);
+            s_effectsConfigs[writer] = BeatSync::EffectsConfig();
+        }
         return writer;
     } catch (...) {
         return nullptr;
@@ -189,7 +205,10 @@ BEATSYNC_API void* bs_create_video_writer() {
 BEATSYNC_API void bs_destroy_video_writer(void* writer) {
     TRACE_FUNC();
     if (writer) {
-        s_effectsConfigs.erase(writer);
+        {
+            std::lock_guard<std::mutex> lock(s_effectsConfigsMutex);
+            s_effectsConfigs.erase(writer);
+        }
         delete static_cast<BeatSync::VideoWriter*>(writer);
     }
 }
@@ -296,7 +315,21 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
 
             double duration = endTime - startTime;
             // Use segment start time as position within the source video (modular approach)
-            double sourceStart = fmod(startTime, 30.0);  // Assume 30s per source segment
+            double sourceStart = 0.0;
+            {
+                BeatSync::VideoProcessor proc;
+                if (proc.open(videos[videoIdx])) {
+                    double srcDur = proc.getInfo().duration;
+                    proc.close();
+                    if (srcDur > 0) {
+                        sourceStart = fmod(startTime, srcDur);
+                    } else {
+                        sourceStart = fmod(startTime, 30.0);  // Fallback
+                    }
+                } else {
+                    sourceStart = fmod(startTime, 30.0);  // Fallback
+                }
+            }
 
             if (w->copySegmentFast(videos[videoIdx], sourceStart, duration, tempFile)) {
                 tempFiles.push_back(tempFile);
@@ -405,7 +438,10 @@ BEATSYNC_API void bs_video_set_effects_config(void* writer, const bs_effects_con
         cfg.effectBeatDivisor = config->effectBeatDivisor;
 
         // Store in our map for later retrieval
-        s_effectsConfigs[writer] = cfg;
+        {
+            std::lock_guard<std::mutex> lock(s_effectsConfigsMutex);
+            s_effectsConfigs[writer] = cfg;
+        }
 
         w->setEffectsConfig(cfg);
     } catch (...) {
@@ -425,10 +461,13 @@ BEATSYNC_API int bs_video_apply_effects(void* writer, const char* inputVideo,
         auto* w = static_cast<BeatSync::VideoWriter*>(writer);
 
         // Get stored config and update beat times
-        auto it = s_effectsConfigs.find(writer);
         BeatSync::EffectsConfig cfg;
-        if (it != s_effectsConfigs.end()) {
-            cfg = it->second;
+        {
+            std::lock_guard<std::mutex> lock(s_effectsConfigsMutex);
+            auto it = s_effectsConfigs.find(writer);
+            if (it != s_effectsConfigs.end()) {
+                cfg = it->second;
+            }
         }
 
         cfg.beatTimesInOutput.clear();
@@ -441,7 +480,10 @@ BEATSYNC_API int bs_video_apply_effects(void* writer, const char* inputVideo,
             }
         }
         w->setEffectsConfig(cfg);
-        s_effectsConfigs[writer] = cfg;
+        {
+            std::lock_guard<std::mutex> lock(s_effectsConfigsMutex);
+            s_effectsConfigs[writer] = cfg;
+        }
 
         bool success = w->applyEffects(inputVideo, outputVideo);
         return success ? 0 : -1;
