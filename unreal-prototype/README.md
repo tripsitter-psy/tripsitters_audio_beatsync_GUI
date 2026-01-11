@@ -1,8 +1,8 @@
-TripSitter — Unreal Prototype (UE5.3)
+TripSitter — Unreal Prototype (UE5.7.1)
 
 Overview
 --------
-This folder contains a small Unreal Engine prototype skeleton and plugin scaffold to migrate the TripSitter GUI from wxWidgets to Unreal (recommended UE5.3 LTS).
+This folder contains a small Unreal Engine prototype skeleton and plugin scaffold to migrate the TripSitter GUI from wxWidgets to Unreal (recommended UE5.7.1).
 
 Goals
 - Provide a minimal, easy-to-open UE plugin that demonstrates invoking the existing processing pipeline (initially via launching FFmpeg / VideoWriter subprocesses).
@@ -18,12 +18,12 @@ What I added
 Prerequisites
 
 Windows (prototype)
-- Unreal Engine 5.3 (LTS). Install via Epic Games Launcher.
+- Unreal Engine 5.7.1 (recommended). Install via Epic Games Launcher.
 - Visual Studio 2022 (Desktop development with C++ workload).
 - FFmpeg: For the prototype we will bundle an LGPL shared build (DLLs) in package stage. See license notes below.
 
 macOS (prototype)
-- Unreal Engine 5.3 (LTS). Install via Epic Games Launcher or the Epic Games App (ensure Editor + Mac support installed).
+- Unreal Engine 5.7.1 (recommended). Install via Epic Games Launcher or the Epic Games App (ensure Editor + Mac support installed).
 - Xcode + Command Line Tools (install via `xcode-select --install`).
 - Homebrew (optional, for dependencies): https://brew.sh/
 - Recommended packages: `brew install cmake ninja pkg-config ffmpeg`
@@ -31,7 +31,7 @@ macOS (prototype)
 - When building the shared backend on macOS the library will be copied to `unreal-prototype/ThirdParty/beatsync/lib/Mac/libbeatsync_backend.dylib` for the plugin to load.
 
 Quick start
-1. Create a new UE5.3 project (Blank C++ or Blueprint).
+1. Create a new UE5.7.1 project (Blank C++ or Blueprint).
 2. Copy the `unreal-prototype/` folder into your project root, or copy the `Source/TripSitterUE` folder into `<YourProject>/Plugins/TripSitterUE/Source/TripSitterUE` and add `TripSitterUE.uplugin` under `<YourProject>/Plugins/TripSitterUE/`.
 3. In the Editor, open the project, build plugin (Editor -> Plugins -> locate TripSitterUE), then restart the editor if required.
 4. The plugin includes a small FFmpeg wrapper stub (currently invokes an external ffmpeg process) — use for early E2E testing.
@@ -52,7 +52,7 @@ You can run the editor automation smoke test (implemented as `TripSitter.Beatsyn
 
   ```powershell
   # Replace paths below with your UE installation and project paths
-  "C:\Program Files\Epic Games\UE_5.3\Engine\Binaries\Win64\UE5Editor-Cmd.exe" "C:\Path\To\YourProject\YourProject.uproject" -ExecCmds="Automation RunTests TripSitter.Beatsync.EditorSmoke; Quit" -unattended -nopause -nullrhi -abslog="BeatsyncAutomation.log"
+  "C:\Program Files\Epic Games\UE_5.7.1\Engine\Binaries\Win64\UE5Editor-Cmd.exe" "C:\Path\To\YourProject\YourProject.uproject" -ExecCmds="Automation RunTests TripSitter.Beatsync.EditorSmoke; Quit" -unattended -nopause -nullrhi -abslog="BeatsyncAutomation.log"
   ```
 
 - Helper script: there's a small PowerShell helper `unreal-prototype/scripts/run-unreal-automation.ps1` to simplify invoking the Editor automation runner. Example usage:
@@ -63,7 +63,30 @@ You can run the editor automation smoke test (implemented as `TripSitter.Beatsyn
 
 CI note (important)
 
-- Running Unreal Editor automation tests in CI requires a self-hosted Windows runner with Unreal Engine 5.3 installed (GitHub-hosted runners do not provide UE). See the CI template at `.github/workflows/unreal-editor-automation-template.yml` for a commented example job that you can copy into a self-hosted runner environment.
+- Running Unreal Editor automation tests in CI requires a self-hosted Windows runner with Unreal Engine 5.7.1 installed (GitHub-hosted runners do not provide UE). See the CI template at `.github/workflows/unreal-editor-automation-template.yml` for a commented example job that you can copy into a self-hosted runner environment.
+
+Windows DLL smoke test (GitHub Actions)
+
+- We added a lightweight workflow (`.github/workflows/dll-smoke.yml`) that runs on `windows-latest` for quick validation of the Beatsync shared library.
+  - The job clones & bootstraps `vcpkg`, downloads a small FFmpeg build, configures CMake with the vcpkg toolchain, builds the `dll_loader_smoke` target, and runs it.
+  - `dll_loader_smoke` attempts to load the copied DLL from `unreal-prototype/ThirdParty/beatsync/lib/x64/` and verifies the exported C API (`bs_resolve_ffmpeg_path`, `bs_create_audio_analyzer`, `bs_destroy_audio_analyzer`).
+  - This provides a fast, deterministic guard against regressions that break the plugin loader.
+
+Local run (developer)
+
+- To reproduce locally on Windows:
+  - Ensure you have Visual Studio 2022 + CMake installed.
+  - Install or download a portable FFmpeg build and set `FFMPEG_ROOT` to its root (the folder that contains `bin/` and `lib/`).
+  - Configure & build the smoke target:
+
+  ```powershell
+  cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DFFMPEG_ROOT="C:\path\to\ffmpeg"
+  cmake --build build --config Release --target dll_loader_smoke
+  $env:PATH = "C:\path\to\ffmpeg\bin;$env:PATH"
+  ./build/bin/Release/dll_loader_smoke.exe
+  ```
+
+- The job is intended to be fast and small; add an editor automation job later when you have self-hosted runners with UE installed.
 
 Next steps / TODOs
 - Implement plugin bindings to call AudioAnalyzer/VideoWriter directly (as a library) rather than shelling out.

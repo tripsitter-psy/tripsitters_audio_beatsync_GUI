@@ -16,7 +16,7 @@ Usage examples
   PowerShell:
   ```powershell
   Set-ExecutionPolicy Bypass -Scope Process -Force
-  .\scripts\provision-runner-windows.ps1 -RepoUrl "https://github.com/<owner>/<repo>" -RunnerName "ue5-runner" -Labels "self-hosted,windows,ue5-5.3" -UE5Root "C:\Program Files\Epic Games\UE_5.3"
+  .\scripts\provision-runner-windows.ps1 -RepoUrl "https://github.com/<owner>/<repo>" -RunnerName "ue5-runner" -Labels "self-hosted,windows,ue5-5.7" -UE5Root "C:\Program Files\Epic Games\UE_5.7.1"
   ```
 
 - macOS:
@@ -44,7 +44,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 macOS example (Bash):
 ```bash
 # Pass PAT as 5th arg or set GITHUB_PAT env var
-./scripts/provision-runner-macos.sh "https://github.com/<owner>/<repo>" ue5-mac-runner "self-hosted,macos,ue5-5.3" /opt/actions-runner "<YOUR_PAT>"
+./scripts/provision-runner-macos.sh "https://github.com/<owner>/<repo>" ue5-mac-runner "self-hosted,macos,ue5-5.7" /opt/actions-runner "<YOUR_PAT>"
 ```
 
 Verification
