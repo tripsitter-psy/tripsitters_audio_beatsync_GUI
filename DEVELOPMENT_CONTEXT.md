@@ -8,6 +8,31 @@
 
 ---
 
+## ⚠️ CRITICAL: GUI Architecture
+
+**THE GUI IS UNREAL ENGINE, NOT WXWIDGETS.**
+
+| Component | Location | Framework |
+|-----------|----------|-----------|
+| **GUI (ACTIVE)** | `C:\Users\samue\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\` | Unreal Engine Slate |
+| **Backend DLL** | This repo (`BeatSyncEditor`) | C++ / CMake |
+| **Legacy GUI (DO NOT USE)** | `src/GUI/` in this repo | wxWidgets (DEPRECATED) |
+
+**Rules:**
+1. **DO NOT** add wxWidgets to vcpkg.json
+2. **DO NOT** set BUILD_GUI=ON in CMake
+3. **DO NOT** modify files in `src/GUI/` for GUI work
+4. **ALL GUI changes** must be made in the UE plugin at `Plugins\TripSitterUE\`
+5. The `src/GUI/` folder is a legacy backup only (see `backups/ui-windows-20260110/`)
+
+**If you need to do GUI work:**
+- Edit `STripSitterMainWidget.cpp` (main UI)
+- Edit `SWaveformViewer.cpp` (waveform display)
+- Edit `BeatsyncLoader.cpp` (DLL bridge)
+- These files are in the UE plugin, NOT this repo
+
+---
+
 ## Project Structure (Where Everything Lives)
 
 ```
@@ -219,11 +244,12 @@ This creates a music video that switches between different clips on each beat!
 - At runtime enable tracing by setting either `BEATSYNC_ENABLE_TRACING=1` or `BEATSYNC_TRACE_OUT=/path/to/trace.log` (if unset, traces are written to the platform temp directory as `beatsync-trace.log`).
 - Run the tracing smoke test locally:
   - Configure with `-DUSE_TRACING=ON`, build, then run `ctest -R tracing -V` to run `tests/test_tracing.cpp`.
+  - Or use the helper scripts: `./scripts/run_tracing_local.sh` (Linux/macOS) or `./scripts/run_tracing_local.ps1` (Windows) — these build with tracing enabled and place `beatsync-trace.log` in the build directory.
 - Viewing traces:
   - Use the AI Toolkit trace viewer (`ai-mlstudio.tracing.open`) in VS Code for OTLP-compatible traces, or simply open the `beatsync-trace.log` file in an editor — spans are logged as `START`/`END` lines with timestamps and durations.
 - Tip: Enable tracing only when debugging (it is lightweight but produces file output). If tracing exposes a race or file removal issue, run the unit test under the debugger and inspect the trace file for START/END spans to find the culprit.
 
-**CI:** There is a new workflow **Tracing smoke tests** (`.github/workflows/tracing-smoke.yml`) that runs on PRs and can be triggered manually; it builds the project with `-DUSE_TRACING=ON` and runs `ctest -R tracing -V` on Linux and Windows.
+**CI:** There is a new workflow **Tracing smoke tests** (`.github/workflows/tracing-smoke.yml`) that runs on PRs and can be triggered manually; it builds the project with `-DUSE_TRACING=ON`, runs `ctest -R tracing -V` on Linux and Windows, and uploads `beatsync-trace.log` as an artifact for debugging.
 
 
 ### Self-hosted GPU runner checklist ✅
@@ -267,6 +293,26 @@ You can also trigger an automated sanity check from the GitHub UI using the **GP
 ctest -R onnx_detector_regression -V
 ```
 
+**Helper-process test:** To avoid the whole-test harness being crashed by ONNX runtime heap corruptions, we've added `tests/onnx_inference_helper.cpp` which runs the model in an isolated process. Use:
+
+```bash
+ctest -R onnx_inference_helper -V
+```
+
+If the helper process crashes, capture a full dump with ProcDump (Sysinternals):
+
+```powershell
+procdump -e -ma -x . "build\tests\Debug\test_onnx_inference_helper.exe"
+```
+
+We've also added a helper script to test using official Microsoft ONNX Runtime binaries:
+
+```powershell
+# Downloads and runs helper test with specified official runtime version (default 1.18.1)
+.\scripts\run_official_onnx_test.ps1 -Version 1.18.1
+```
+
+Upload the resulting `.dmp` file if you want me to analyze the crash stack.
 
 ### PR guidance for GPU changes
 - We added a lightweight PR check that scans diffs for GPU/ONNX-related changes. If such changes are detected, the check will fail unless the PR is labeled **`test-cuda`**.

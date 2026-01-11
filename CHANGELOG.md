@@ -22,3 +22,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `cmake/FetchOnnxRuntime.cmake` to automatically download official ONNX Runtime binaries during configure
 - Added optional SHA256 verification for official ONNX Runtime download and CI caching for the downloaded archive to improve supply-chain safety and speed CI runs
 - Temporarily pinned `onnxruntime` to `>= 1.18.1` in `vcpkg.json` to avoid regressions introduced in vcpkg's 1.23.2 build (see https://github.com/microsoft/vcpkg/issues/49349)
+- Reverted wxWidgets GUI build changes: `BUILD_GUI` now defaults to OFF and attempting to enable the legacy wxWidgets GUI will fail with an explicit error (UI work should be done in the TripSitterUE Unreal plugin).
