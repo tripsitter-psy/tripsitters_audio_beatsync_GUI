@@ -1,0 +1,37 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Application/SlateApplication.h"
+#include "Widgets/SWindow.h"
+
+/**
+ * Main application class for TripSitter desktop application
+ */
+class FTripSitterApplication
+{
+public:
+    FTripSitterApplication();
+
+    /** Initialize the application */
+    bool Initialize();
+
+    /** Run the application main loop */
+    int32 Run();
+
+    /** Shutdown the application */
+    void Shutdown();
+
+private:
+    /** Create the main window */
+    TSharedPtr<SWindow> CreateMainWindow();
+
+    /** Handle window close requests */
+    void OnWindowClosed(const TSharedRef<SWindow>& Window);
+
+private:
+    /** Main application window */
+    TSharedPtr<SWindow> MainWindow;
+
+    /** Application instance */
+    TSharedPtr<FSlateApplication> SlateApp;
+};

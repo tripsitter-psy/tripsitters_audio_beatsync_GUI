@@ -1,0 +1,17 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.7",
+	"Category": "Programs",
+	"Description": "TripSitter Beat Sync Editor - Desktop Application",
+	"Modules": [
+		{
+			"Name": "TripSitter",
+			"Type": "Program",
+			"LoadingPhase": "PreDefault"
+		}
+	],
+	"Plugins": [],
+	"TargetPlatforms": [
+		"Win64"
+	]
+}
