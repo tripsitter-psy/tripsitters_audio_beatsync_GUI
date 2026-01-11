@@ -76,8 +76,10 @@ jobs:
 
       - name: Check certificate availability
         id: cert-check
+        env:
+          CERT: ${{ secrets.CODESIGN_CERTIFICATE_BASE64 }}
         run: |
-          if [ -n "${{ secrets.CODESIGN_CERTIFICATE_BASE64 }}" ]; then
+          if [ -n "$CERT" ]; then
             echo "has_cert=true" >> $GITHUB_OUTPUT
           else
             echo "has_cert=false" >> $GITHUB_OUTPUT

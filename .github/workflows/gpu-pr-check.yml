@@ -1,0 +1,42 @@
+name: GPU PR Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  detect-gpu-changes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect GPU-related changes
+        id: detect
+        continue-on-error: true
+        run: |
+          python3 tools/check_gpu_changes.py --base ${{ github.event.pull_request.base.ref }} || exit 1
+
+      - name: Notify PR about missing test-cuda label
+        if: steps.detect.conclusion == 'failure' && contains(github.event.pull_request.labels.*.name, 'test-cuda') == false
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            :wave: I detected GPU/ONNX-related changes in this PR but the **`test-cuda`** label is missing.
+
+            Please add the **`test-cuda`** label so the gated CUDA integration workflow can run on a GPU-enabled self-hosted runner and validate GPU changes.
+
+            *How-to:* add the label in the PR sidebar or run `python tools/check_gpu_changes.py --base ${GITHUB_BASE_REF}` to see which files triggered this.
+
+            <!-- gpu-pr-check -->
+          edit-mode: replace
+
+      - name: Fail if GPU changes detected but PR not labeled
+        if: steps.detect.conclusion == 'failure' && contains(github.event.pull_request.labels.*.name, 'test-cuda') == false
+        run: |
+          echo "GPU/ONNX related changes detected in this PR but label 'test-cuda' is missing." >&2
+          echo "Please add the 'test-cuda' label so CI can run GPU tests on an appropriate runner." >&2
+          exit 1

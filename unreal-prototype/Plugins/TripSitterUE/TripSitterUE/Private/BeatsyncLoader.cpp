@@ -303,20 +303,7 @@ void FBeatsyncLoader::SetEffectsConfig(void* writer, const FEffectsConfig& confi
     auto TransitionTypeAnsi = StringCast<ANSICHAR>(*config.TransitionType);
     auto ColorPresetAnsi = StringCast<ANSICHAR>(*config.ColorPreset);
 
-    struct bs_effects_config_t {
-        int enableTransitions;
-        const char* transitionType;
-        double transitionDuration;
-        int enableColorGrade;
-        const char* colorPreset;
-        int enableVignette;
-        double vignetteStrength;
-        int enableBeatFlash;
-        double flashIntensity;
-        int enableBeatZoom;
-        double zoomIntensity;
-        int effectBeatDivisor;
-    } cfg;
+    bs_effects_config_t cfg;
 
     cfg.enableTransitions = config.bEnableTransitions ? 1 : 0;
     cfg.transitionType = TransitionTypeAnsi.Get();

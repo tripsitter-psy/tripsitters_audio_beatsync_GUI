@@ -1,0 +1,107 @@
+name: CUDA Integration Tests (Gated)
+
+# This workflow tests ONNX Runtime with CUDA GPU acceleration.
+# It is GATED and only runs:
+#   1. On manual dispatch (workflow_dispatch)
+#   2. When labeled with 'test-cuda'
+#
+# Requirements:
+#   - GitHub-hosted runner with NVIDIA GPU (or self-hosted with CUDA)
+#   - CUDA toolkit installed
+#   - onnxruntime-gpu vcpkg package built
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for running CUDA integration tests'
+        required: true
+        default: 'Manual testing of CUDA/GPU acceleration'
+  pull_request:
+    types: [labeled]
+
+jobs:
+  cuda-integration:
+    name: CUDA Integration Tests
+    runs-on: [self-hosted, windows, gpu]
+    # Only run if manually dispatched OR if 'test-cuda' label is present
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'test-cuda'))
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for NVIDIA GPU
+        id: check_gpu
+        shell: powershell
+        run: |
+          $gpu = Get-WmiObject Win32_VideoController | Where-Object { $_.Name -match 'NVIDIA' }
+          if ($gpu) {
+            Write-Host "Found NVIDIA GPU: $($gpu.Name)"
+            "has_gpu=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            Write-Host "No NVIDIA GPU found on this host. Skipping CUDA test steps."
+            "has_gpu=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+      - name: Notice when GPU is absent
+        if: steps.check_gpu.outputs.has_gpu == 'false'
+        run: |
+          Write-Host "::notice::No NVIDIA GPU detected on runner - CUDA integration steps will be skipped. Use a self-hosted runner with label 'gpu' to run these tests."
+      - name: Setup vcpkg
+        if: steps.check_gpu.outputs.has_gpu == 'true'
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git
+          .\vcpkg\bootstrap-vcpkg.bat
+
+      - name: Install dependencies (with CUDA ONNX Runtime)
+        if: steps.check_gpu.outputs.has_gpu == 'true'
+        run: |
+          .\vcpkg\vcpkg.exe install onnxruntime-gpu:x64-windows --clean-after-build
+        timeout-minutes: 120
+
+      - name: Configure CMake
+        if: steps.check_gpu.outputs.has_gpu == 'true'
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DBUILD_TESTS=ON `
+            -DBUILD_GUI=OFF `
+            -DUSE_ONNX=ON
+
+      - name: Build
+        if: steps.check_gpu.outputs.has_gpu == 'true'
+        run: cmake --build build --config Release -j 2
+
+      - name: Run CUDA-enabled ONNX tests
+        if: steps.check_gpu.outputs.has_gpu == 'true'
+        env:
+          BEATSYNC_ONNX_USE_CUDA: "1"
+        run: |
+          Write-Host "Running CUDA-enabled tests..."
+          ctest --test-dir build -C Release --output-on-failure -L cuda
+
+      - name: Run CPU fallback tests (for comparison)
+        if: steps.check_gpu.outputs.has_gpu == 'true'
+        run: |
+          Write-Host "Running CPU-only tests for comparison..."
+          ctest --test-dir build -C Release --output-on-failure -R onnx_detector -E cuda
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cuda-integration-test-logs
+          path: build/Testing
+
+      - name: Summary
+        shell: bash
+        run: |
+          echo "## CUDA Integration Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This is a GATED test for GPU-accelerated ONNX inference." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment variables:**" >> $GITHUB_STEP_SUMMARY
+          echo "- \`BEATSYNC_ONNX_USE_CUDA=1\` enables CUDA provider" >> $GITHUB_STEP_SUMMARY
+          echo "- Without this, tests use CPU-only inference" >> $GITHUB_STEP_SUMMARY

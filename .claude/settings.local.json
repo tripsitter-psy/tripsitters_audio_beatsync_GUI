@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"Test-Path ''C:\\\\Users\\\\samue\\\\Desktop\\\\BeatSyncEditor\\\\src\\\\backend''\")",
+      "Bash(powershell -Command:*)",
+      "Bash(powershell -NoProfile -Command \"cd ''C:\\\\Users\\\\samue\\\\Desktop\\\\BeatSyncEditor\\\\build\\\\bin\\\\Release''; .\\\\backend_smoke.exe 2>&1\")",
+      "Bash(powershell:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(gh pr create:*)",
+      "Bash(cmake:*)",
+      "Bash(ls:*)",
+      "Bash(powershell.exe -Command \"$WshShell = New-Object -ComObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut\\([Environment]::GetFolderPath\\(''Desktop''\\) + ''\\\\MyProject UE.lnk''\\); $Shortcut.TargetPath = ''C:\\\\Users\\\\samue\\\\OneDrive\\\\Documents\\\\Unreal Projects\\\\MyProject\\\\MyProject.uproject''; $Shortcut.Save\\(\\)\")",
+      "Bash(powershell.exe -Command \"Start-Process ''C:\\\\Program Files\\\\Epic Games\\\\UE_5.7\\\\Engine\\\\Binaries\\\\Win64\\\\UnrealEditor.exe'' -ArgumentList ''\"\"C:\\\\Users\\\\samue\\\\OneDrive\\\\Documents\\\\Unreal Projects\\\\MyProject\\\\MyProject.uproject\"\"''\")",
+      "Bash(reg query HKEY_CLASSES_ROOT.uproject)",
+      "Bash(where:*)",
+      "Bash(reg query:*)",
+      "Bash(dir \"C:\\\\Program Files\\\\Epic Games\")",
+      "Bash(dir \"C:\\\\Program Files\\\\Epic Games\\\\UE_5.7\")",
+      "Bash(dir:*)",
+      "Bash(findstr:*)",
+      "Bash(assoc:*)",
+      "Bash(ftype:*)",
+      "Bash(cmd /c assoc .uproject)",
+      "Bash(cmd /c ftype:*)",
+      "Bash(cmd /c \"reg query HKEY_CLASSES_ROOT /f uproject /s 2>&1 | findstr /v Microsoft\")",
+      "Bash(cmd /c \"reg query \"\"HKEY_CLASSES_ROOT\\\\.uproject\"\" 2>&1\")",
+      "Bash(cmd /c:*)",
+      "Bash(powershell.exe -Command \"Start-Process -FilePath ''C:\\\\Program Files\\\\Epic Games\\\\Launcher\\\\Engine\\\\Binaries\\\\Win64\\\\UnrealVersionSelector.exe'' -ArgumentList ''/fileassociations'' -Verb RunAs -Wait\")",
+      "Bash(powershell.exe -Command \"Copy-Item ''c:\\\\Users\\\\samue\\\\Desktop\\\\BeatSyncEditor\\\\assets\\\\wallpaper.png'' ''C:\\\\Users\\\\samue\\\\OneDrive\\\\Documents\\\\Unreal Projects\\\\MyProject\\\\Plugins\\\\TripSitterUE\\\\Resources\\\\''; Copy-Item ''c:\\\\Users\\\\samue\\\\Desktop\\\\BeatSyncEditor\\\\assets\\\\asset for top hedder final.png'' ''C:\\\\Users\\\\samue\\\\OneDrive\\\\Documents\\\\Unreal Projects\\\\MyProject\\\\Plugins\\\\TripSitterUE\\\\Resources\\\\TitleHeader.png''\")",
+      "Bash(powershell.exe -Command \"Remove-Item -Recurse -Force ''C:\\\\Users\\\\samue\\\\OneDrive\\\\Documents\\\\Unreal Projects\\\\MyProject\\\\Intermediate''\")",
+      "Bash(powershell.exe -Command \"Remove-Item -Recurse -Force ''C:\\\\Users\\\\samue\\\\OneDrive\\\\Documents\\\\Unreal Projects\\\\MyProject\\\\Binaries''\")",
+      "Bash(powershell.exe -Command \"Get-Process | Where-Object {$_ProcessName -like ''*UnrealEditor*''} | Stop-Process -Force\")",
+      "Bash(powershell.exe -Command \"Stop-Process -Name UnrealEditor -Force -ErrorAction SilentlyContinue\")",
+      "Bash(taskkill:*)",
+      "Bash(powershell.exe -Command \"Remove-Item -Recurse -Force ''C:\\\\Users\\\\samue\\\\OneDrive\\\\Documents\\\\Unreal Projects\\\\MyProject\\\\Intermediate''; Remove-Item -Recurse -Force ''C:\\\\Users\\\\samue\\\\OneDrive\\\\Documents\\\\Unreal Projects\\\\MyProject\\\\Binaries''\")",
+      "Bash(cmd.exe /c \"taskkill /F /IM UnrealEditor.exe\")",
+      "Bash(tasklist:*)",
+      "Bash(gh issue view:*)"
+    ]
+  }
+}

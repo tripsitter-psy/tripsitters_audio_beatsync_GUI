@@ -234,7 +234,9 @@ bool FBeatsyncLoader::AnalyzeAudio(void* handle, const FString& path, FBeatGrid&
     outGrid.BPM = grid.bpm;
     outGrid.Duration = grid.duration;
     outGrid.Beats.Empty();
-    outGrid.Beats.Append(grid.beats, grid.count);
+    if (grid.count > 0 && grid.beats != nullptr) {
+        outGrid.Beats.Append(grid.beats, grid.count);
+    }
 
     if (GApi.free_beatgrid) GApi.free_beatgrid(&grid);
     return true;
@@ -258,31 +260,34 @@ void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
 
     if (cb)
     {
-        // Store the callback data as a shared pointer
-        TSharedPtr<CallbackData> data = MakeShared<CallbackData>();
+        // Allocate callback data on heap for stable pointer
+        CallbackData* data = new CallbackData();
         data->Func = cb;
-        GCallbackStorage.Add(writer, data);
+        GCallbackStorage.Add(writer, TSharedPtr<CallbackData>(data));  // Store shared ptr to manage lifetime
 
         auto trampoline = [](double progress, void* user_data) {
-            // user_data is a pointer to the shared_ptr in GCallbackStorage
-            TSharedPtr<CallbackData>* sharedDataPtr = reinterpret_cast<TSharedPtr<CallbackData>*>(user_data);
-            if (!sharedDataPtr) return;
+            CallbackData* data = reinterpret_cast<CallbackData*>(user_data);
+            if (!data || !data->Func) return;
 
-            // Get a local copy of the shared pointer under lock to ensure thread safety
-            TSharedPtr<CallbackData> localData;
+            // Guard validity under lock
             {
                 FScopeLock Lock(&GCallbackStorageMutex);
-                localData = *sharedDataPtr;  // This increments the reference count
-            }  // Lock released here
-
-            // Now we have a safe reference that won't be freed even if DestroyVideoWriter runs
-            if (localData.IsValid() && localData->Func) {
-                localData->Func(progress);
+                // Check if data is still valid (not freed)
+                bool isValid = false;
+                for (auto& pair : GCallbackStorage) {
+                    if (pair.Value.Get() == data) {
+                        isValid = true;
+                        break;
+                    }
+                }
+                if (!isValid) return;
             }
+
+            data->Func(progress);
         };
 
-        // Pass pointer to the shared_ptr as user_data
-        GApi.video_set_progress(writer, trampoline, &GCallbackStorage[writer]);
+        // Pass stable pointer to heap-allocated data
+        GApi.video_set_progress(writer, trampoline, data);
     }
     else
     {

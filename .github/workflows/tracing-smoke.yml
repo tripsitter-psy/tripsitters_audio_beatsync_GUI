@@ -1,0 +1,75 @@
+name: Tracing smoke tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch: {}
+
+jobs:
+  linux:
+    name: Linux tracing smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Qt & deps (skip heavy deps)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build git
+      - name: Configure (with tracing)
+        run: |
+          mkdir -p build && cd build
+          cmake .. -G Ninja -DUSE_TRACING=ON
+      - name: Build
+        run: |
+          cd build
+          cmake --build . --config Debug -- -j$(nproc)
+      - name: Run tracing smoke test
+        run: |
+          cd build
+          # Write trace output into the build dir so we can collect it as an artifact
+          export BEATSYNC_TRACE_OUT="${PWD}/beatsync-trace.log"
+          ctest -R tracing -V --output-on-failure
+
+      - name: Upload tracing logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: beatsync-trace
+          path: build/beatsync-trace.log
+
+  windows:
+    name: Windows tracing smoke
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System'
+      - name: Configure (with tracing)
+        shell: powershell
+        run: |
+          mkdir build
+          cd build
+          cmake .. -G "Visual Studio 17 2022" -A x64 -DUSE_TRACING=ON
+      - name: Build
+        shell: powershell
+        run: |
+          cd build
+          cmake --build . --config Debug -- /m
+      - name: Run tracing smoke test
+        shell: powershell
+        run: |
+          cd build
+          # Write trace output into the build dir so we can collect it as an artifact
+          $traceOut = Join-Path $PWD 'beatsync-trace.log'
+          $env:BEATSYNC_TRACE_OUT = $traceOut
+          ctest -C Debug -R tracing -V --output-on-failure
+
+      - name: Upload tracing logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: beatsync-trace
+          path: build\beatsync-trace.log

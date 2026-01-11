@@ -1,39 +1,50 @@
+// TripSitter - Beat Sync Editor Module
+
 using UnrealBuildTool;
+using System.IO;
 
 public class TripSitter : ModuleRules
 {
     public TripSitter(ReadOnlyTargetRules Target) : base(Target)
     {
-        PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+        // Include paths for this program
+        PublicIncludePaths.Add("Programs/TripSitter");
+        PrivateIncludePaths.Add("Programs/TripSitter/Private");
 
-        // For Program targets, we need minimal dependencies
-        PublicDependencyModuleNames.AddRange(new string[] {
+        // For RequiredProgramMainCPPInclude.h - only include path, not full dependency
+        PublicIncludePathModuleNames.Add("Launch");
+
+        // Core dependencies (matching SlateViewer pattern - NO Launch!)
+        PrivateDependencyModuleNames.AddRange(new string[] {
+            "AppFramework",
             "Core",
-            "CoreUObject",
             "ApplicationCore",
+            "Projects",
             "Slate",
             "SlateCore",
-            "StandaloneRenderer"
+            "StandaloneRenderer",
+            "ImageWrapper"
         });
 
-        // Enable exceptions for C++ code
-        bEnableExceptions = true;
+        // Beatsync backend DLL path - relative to Engine folder
+        // The DLL will need to be deployed alongside the executable
+        string BeatsyncLib = Path.Combine(EngineDirectory, "Source", "Programs", "TripSitter", "ThirdParty", "beatsync", "lib", "x64");
+        if (Directory.Exists(BeatsyncLib))
+        {
+            PublicIncludePaths.Add(Path.Combine(BeatsyncLib, "..", "..", "include"));
+            PublicAdditionalLibraries.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.lib"));
+            RuntimeDependencies.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.dll"));
+        }
 
-        // Enable Slate UI
-        bUsesSlate = true;
-
-        // Add include paths for our backend
-        PublicIncludePaths.AddRange(new string[] {
-            "$(ProjectDir)/ThirdParty/beatsync/include"
-        });
-
-        // Add library paths and dependencies
-        PublicAdditionalLibraries.Add("$(ProjectDir)/ThirdParty/beatsync/lib/beatsync.lib");
-
-        // Copy DLLs to output directory
-        RuntimeDependencies.Add("$(ProjectDir)/ThirdParty/beatsync/bin/beatsync.dll");
-
-        // Enable C++17
-        CppStandard = CppStandardVersion.Cpp17;
+        // Windows application icon resource
+        if (Target.Platform == UnrealTargetPlatform.Win64)
+        {
+            string ResourcePath = Path.Combine(ModuleDirectory, "Private", "Windows", "Resources", "TripSitter.rc");
+            if (File.Exists(ResourcePath))
+            {
+                // UBT should pick up .rc files automatically, but we can also add via AdditionalCompilerArguments
+                // For now, rely on auto-detection since .rc is in the source tree
+            }
+        }
     }
 }

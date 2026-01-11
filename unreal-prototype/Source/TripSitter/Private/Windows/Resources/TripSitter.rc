@@ -1,0 +1,4 @@
+// TripSitter Windows Resource File - Application Icon
+// ID 123 matches IDICON_UEGame used by UE for app icons
+
+123 ICON "TripSitter.ico"

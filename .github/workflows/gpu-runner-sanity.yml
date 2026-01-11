@@ -1,0 +1,34 @@
+name: GPU Runner Sanity
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux (self-hosted GPU)
+    runs-on: [self-hosted, gpu, linux, x64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run GPU runner check script (Linux)
+        env:
+          REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x scripts/check_gpu_runner.sh
+          ./scripts/check_gpu_runner.sh
+  windows:
+    name: Windows (self-hosted GPU)
+    runs-on: [self-hosted, gpu, windows, x64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run GPU runner check script (Windows)
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check_gpu_runner.ps1 -GithubRepo "${{ github.repository }}"
