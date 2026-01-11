@@ -10,5 +10,5 @@
     "onnxruntime",
     "essentia"
   ],
-  "builtin-baseline": "2024-12-09"
+  "builtin-baseline": "a48bbf436be0867d0eadc42077f280f3123e3698"
 }
