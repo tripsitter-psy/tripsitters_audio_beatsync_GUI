@@ -158,6 +158,16 @@ if(TARGET beatsync_backend_shared)
     target_sources(beatsync_backend_shared PRIVATE ${OPTIONAL_SOURCES})
 endif()
 
+# CLI executable (always built - does not require wxWidgets)
+add_executable(beatsync src/main.cpp)
+target_link_libraries(beatsync PRIVATE
+    beatsync_backend_static
+    avformat avcodec avutil swresample swscale avfilter
+)
+if(USE_ONNX AND onnxruntime_FOUND)
+    target_link_libraries(beatsync PRIVATE onnxruntime::onnxruntime)
+endif()
+
 # GUI targets (skip when building backend-only)
 if(NOT BEATSYNC_SKIP_GUI)
     set(GUI_SOURCES
@@ -169,17 +179,6 @@ if(NOT BEATSYNC_SKIP_GUI)
         src/GUI/PsychedelicTheme.cpp
         src/utils/LogArchiver.cpp
     )
-
-    # CLI executable (existing)
-    add_executable(beatsync src/main.cpp)
-    # Link against the backend library and required FFmpeg libs
-    target_link_libraries(beatsync PRIVATE
-        beatsync_backend_static
-        avformat avcodec avutil swresample swscale avfilter
-    )
-    if(USE_ONNX AND onnxruntime_FOUND)
-        target_link_libraries(beatsync PRIVATE onnxruntime::onnxruntime)
-    endif()
 
     # GUI executable (NEW)
     if(WIN32)
@@ -298,7 +297,7 @@ if(NOT BEATSYNC_SKIP_GUI)
     if(APPLE)
         install(TARGETS TripSitter BUNDLE DESTINATION .)
     else()
-        install(TARGETS TripSitter RUNTIME DESTINATION .)
+        install(TARGETS TripSitter RUNTIME DESTINATION bin)
     endif()
     install(DIRECTORY ${CMAKE_SOURCE_DIR}/assets DESTINATION .)
 endif() # NOT BEATSYNC_SKIP_GUI

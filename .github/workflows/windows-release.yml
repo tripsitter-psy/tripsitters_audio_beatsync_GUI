@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@0ad4b8fadaa221de228637b11dc3c579563dbe522
+        uses: actions/checkout@34e1148
 
       - name: Install build tools
         run: |

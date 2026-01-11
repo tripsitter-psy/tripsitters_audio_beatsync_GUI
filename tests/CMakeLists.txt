@@ -50,12 +50,10 @@ set_tests_properties(transition_library PROPERTIES WORKING_DIRECTORY "${CMAKE_SO
 add_executable(test_transition_chaining
     catch_main.cpp
     test_transition_chaining.cpp
-    ../src/video/VideoWriter.cpp
-    ../src/video/TransitionLibrary.cpp
 )
 
-target_include_directories(test_transition_chaining PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(test_transition_chaining PRIVATE Catch2::Catch2)
+target_include_directories(test_transition_chaining PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/backend)
+target_link_libraries(test_transition_chaining PRIVATE Catch2::Catch2 beatsync_backend_static avformat avcodec avutil swresample swscale avfilter)
 add_test(NAME transition_chaining COMMAND test_transition_chaining)
 set_tests_properties(transition_chaining PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 

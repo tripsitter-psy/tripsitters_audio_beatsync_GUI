@@ -44,7 +44,7 @@ public:
 
     void DoWork();
     void RequestCancel() { bCancelRequested.AtomicSet(true); }
-    bool IsCancelled() const { return bCancelRequested.load(); }
+    bool IsCancelled() const { return bCancelRequested; }
 
     FORCEINLINE TStatId GetStatId() const
     {

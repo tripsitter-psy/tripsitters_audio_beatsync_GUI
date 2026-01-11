@@ -73,5 +73,9 @@ public:
     static bool IsInitialized();
 
 private:
+    struct CallbackData
+    {
+        FProgressCb Func;
+    };
     // Internal state handled in .cpp
 };

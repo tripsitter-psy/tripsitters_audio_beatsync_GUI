@@ -243,7 +243,7 @@ void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
         GCallbackStorage.Add(writer, MoveTemp(data));
 
         auto trampoline = [](double progress, void* user_data) {
-            FOnBeatsyncProcessingProgress LocalFunc;
+            FProgressCb LocalFunc;
             {
                 FScopeLock Lock(&GCallbackStorageMutex);
                 CallbackData* d = reinterpret_cast<CallbackData*>(user_data);
@@ -251,8 +251,8 @@ void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
                     LocalFunc = d->Func;  // Copy to avoid holding lock during callback
                 }
             }  // Lock released here
-            if (LocalFunc.IsBound()) {
-                LocalFunc.Execute(progress);
+            if (LocalFunc) {
+                LocalFunc(progress);
             }
         };
 

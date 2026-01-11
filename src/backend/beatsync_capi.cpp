@@ -564,7 +564,14 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
         int dstLinesize[4] = { srcW * 3, 0, 0, 0 };
 
         // Convert frame to RGB24
-        sws_scale(swsCtx, frame->data, frame->linesize, 0, srcH, dstData, dstLinesize);
+        int ret = sws_scale(swsCtx, frame->data, frame->linesize, 0, srcH, dstData, dstLinesize);
+        if (ret < 0) {
+            sws_freeContext(swsCtx);
+            av_frame_free(&frame);
+            free(rgbData);
+            s_lastError = "Failed to scale frame";
+            return -1;
+        }
 
         sws_freeContext(swsCtx);
         av_frame_free(&frame);

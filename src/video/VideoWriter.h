@@ -10,6 +10,7 @@
 struct AVFormatContext;
 struct AVCodecContext;
 struct SwsContext;
+class VideoWriterTestAccess;  // Test access helper
 
 namespace BeatSync {
 
@@ -169,6 +170,9 @@ public:
     bool applyEffects(const std::string& inputVideo, const std::string& outputVideo);
 
 private:
+    // Allow test access to private methods
+    friend class ::VideoWriterTestAccess;
+
     std::string m_lastError;
     std::function<void(double)> m_progressCallback;
 

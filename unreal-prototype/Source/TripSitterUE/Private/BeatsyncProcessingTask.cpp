@@ -61,7 +61,7 @@ void FBeatsyncProcessingTask::DoWork()
     // Step 1: Analyze audio
     ReportProgress(0.05f, TEXT("Analyzing audio..."));
 
-    if (bCancelRequested.load())
+    if (bCancelRequested)
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
@@ -113,7 +113,7 @@ void FBeatsyncProcessingTask::DoWork()
 
     ReportProgress(0.2f, FString::Printf(TEXT("Found %d beats at %.1f BPM"), BeatGrid.Beats.Num(), BeatGrid.BPM));
 
-    if (bCancelRequested.load())
+    if (bCancelRequested)
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
@@ -151,13 +151,9 @@ void FBeatsyncProcessingTask::DoWork()
     }
 
     // Set up progress callback for video processing
-    auto SharedThis = std::shared_ptr<FBeatsyncProcessingTask>(this, [](FBeatsyncProcessingTask*){}); // Dummy deleter to prevent deletion
-    std::weak_ptr<FBeatsyncProcessingTask> WeakThis = SharedThis;
-    FBeatsyncLoader::SetProgressCallback(Writer, [WeakThis](double Prog) {
-        if (auto Task = WeakThis.lock()) {
-            if (!Task->bCancelRequested.load()) {
-                Task->ReportProgress(0.2f + 0.5f * static_cast<float>(Prog), TEXT("Processing video..."));
-            }
+    FBeatsyncLoader::SetProgressCallback(Writer, [this](double Prog) {
+        if (!bCancelRequested) {
+            ReportProgress(0.2f + 0.5f * static_cast<float>(Prog), TEXT("Processing video..."));
         }
     });
 
@@ -198,7 +194,7 @@ void FBeatsyncProcessingTask::DoWork()
         return;
     }
 
-    if (bCancelRequested.load())
+    if (bCancelRequested)
     {
         if (Span) FBeatsyncLoader::SpanAddEvent(Span, TEXT("cancelled-after-cut"));
         FBeatsyncLoader::DestroyVideoWriter(Writer);
@@ -238,7 +234,7 @@ void FBeatsyncProcessingTask::DoWork()
         }
     }
 
-    if (bCancelRequested.load())
+    if (bCancelRequested)
     {
         FBeatsyncLoader::DestroyVideoWriter(Writer);
         IFileManager::Get().Delete(*CurrentVideoPath, false, true, true);
