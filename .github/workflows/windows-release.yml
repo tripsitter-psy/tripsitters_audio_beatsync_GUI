@@ -30,18 +30,31 @@ jobs:
 
       - name: Install build tools
         run: |
-          choco install -y nsis
-          choco install -y 7zip
+          choco install -y nsis 7zip
+          # Add NSIS to PATH for subsequent steps
+          $nsisPath = "C:\Program Files (x86)\NSIS"
+          if (Test-Path $nsisPath) {
+            echo "$nsisPath" >> $env:GITHUB_PATH
+          }
         shell: powershell
 
       - name: Verify NSIS installation
         run: |
-          $mak = Get-Command makensis -ErrorAction SilentlyContinue
-          if (-not $mak) {
-            Write-Error "makensis not found"
+          # Check standard NSIS install locations
+          $nsisLocations = @(
+            "C:\Program Files (x86)\NSIS\makensis.exe",
+            "C:\Program Files\NSIS\makensis.exe"
+          )
+          $makensis = $nsisLocations | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $makensis) {
+            $makensis = Get-Command makensis -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          }
+          if (-not $makensis) {
+            Write-Error "makensis not found in standard locations or PATH"
             exit 1
           }
-          makensis -VERSION
+          Write-Host "Found makensis at: $makensis"
+          & $makensis /VERSION
         shell: powershell
 
       - name: Setup vcpkg
