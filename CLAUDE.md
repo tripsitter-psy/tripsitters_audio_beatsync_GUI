@@ -1,5 +1,7 @@
 # Claude Code Instructions for BeatSyncEditor
 
+> **Path Convention**: All user-specific paths use `%USERPROFILE%` (for documentation/display) or `$env:USERPROFILE` (for PowerShell commands) instead of hardcoded usernames.
+
 ## Critical Build Instructions
 
 **NEVER mention or attempt to use wxWidgets.** The GUI has been fully migrated to Unreal Engine.
@@ -47,7 +49,7 @@ BeatSyncEditor/
 
 **IMPORTANT**: The actual running Unreal project is at:
 ```
-C:\Users\samue\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\
+%USERPROFILE%\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\
 ```
 
 Changes to `unreal-prototype/` in this repo need to be synced/copied there, OR edit files directly in the MyProject location. The UE Editor compiles from the MyProject location, not from this repo.
@@ -63,34 +65,37 @@ Changes to `unreal-prototype/` in this repo need to be synced/copied there, OR e
 ## C API (`beatsync_capi.h`)
 
 ### Core Functions
-- `bs_init()` / `bs_shutdown()` - Library lifecycle
-- `bs_get_version()` - Returns version string
+- `const char* bs_get_version()` - Returns version string
+- `int bs_init()` / `void bs_shutdown()` - Library lifecycle
 
 ### Audio Analysis
-- `bs_create_audio_analyzer()` / `bs_destroy_audio_analyzer()`
-- `bs_analyze_audio()` - Detect beats, returns `bs_beatgrid_t`
-- `bs_get_waveform()` - Get downsampled peaks for visualization
-- `bs_free_beatgrid()` / `bs_free_waveform()` - Memory cleanup
+- `void* bs_create_audio_analyzer()` / `void bs_destroy_audio_analyzer(void* analyzer)`
+- `int bs_analyze_audio(void* analyzer, const char* filepath, bs_beatgrid_t* outGrid)` - Detect beats, returns `bs_beatgrid_t`
+- `int bs_get_waveform(void* analyzer, const char* filepath, float** outPeaks, size_t* outCount, double* outDuration)` - Get downsampled peaks for visualization
+- `void bs_free_beatgrid(bs_beatgrid_t* grid)` / `void bs_free_waveform(float* peaks)` - Memory cleanup
 
 ### Video Processing
-- `bs_create_video_writer()` / `bs_destroy_video_writer()`
-- `bs_video_cut_at_beats()` - Cut single video at beat times
-- `bs_video_cut_at_beats_multi()` - Cut multiple videos, cycling through
-- `bs_video_concatenate()` - Join video files
-- `bs_video_add_audio_track()` - Mux audio into video
-- `bs_video_set_progress_callback()` - Progress reporting
+- `void* bs_create_video_writer()` / `void bs_destroy_video_writer(void* writer)`
+- `const char* bs_video_get_last_error(void* writer)` - Get last error message
+- `const char* bs_resolve_ffmpeg_path()` - Get resolved FFmpeg path
+- `void bs_video_set_progress_callback(void* writer, bs_progress_cb cb, void* user_data)` - Set progress callback
+- `int bs_video_cut_at_beats(void* writer, const char* inputVideo, const double* beatTimes, size_t count, const char* outputVideo, double clipDuration)` - Cut single video at beat times
+- `int bs_video_cut_at_beats_multi(void* writer, const char** inputVideos, size_t videoCount, const double* beatTimes, size_t beatCount, const char* outputVideo, double clipDuration)` - Cut multiple videos, cycling through
+- `int bs_video_concatenate(const char** inputs, size_t count, const char* outputVideo)` - Join video files
+- `int bs_video_add_audio_track(void* writer, const char* inputVideo, const char* audioFile, const char* outputVideo, int trimToShortest, double audioStart, double audioEnd)` - Mux audio into video
 
 ### Effects
-- `bs_video_set_effects_config()` - Configure transitions, color grading, vignette, beat flash/zoom
-- `bs_video_apply_effects()` - Apply configured effects with beat times
+- `void bs_video_set_effects_config(void* writer, const bs_effects_config_t* config)` - Configure transitions, color grading, vignette, beat flash/zoom
+- `int bs_video_apply_effects(void* writer, const char* inputVideo, const char* outputVideo, const double* beatTimes, size_t beatCount)` - Apply configured effects with beat times
 
 ### Frame Extraction
-- `bs_video_extract_frame()` - Extract RGB frame at timestamp (for preview)
-- `bs_free_frame_data()` - Free extracted frame
+- `int bs_video_extract_frame(const char* videoPath, double timestamp, unsigned char** outData, int* outWidth, int* outHeight)` - Extract RGB frame at timestamp (for preview)
+- `void bs_free_frame_data(unsigned char* data)` - Free extracted frame
 
 ### Tracing (optional)
-- `bs_initialize_tracing()` / `bs_shutdown_tracing()`
-- `bs_start_span()` / `bs_end_span()` / `bs_span_set_error()` / `bs_span_add_event()`
+- `int bs_initialize_tracing(const char* service_name)` / `void bs_shutdown_tracing()` - Tracing lifecycle
+- `bs_span_t bs_start_span(const char* name)` / `void bs_end_span(bs_span_t span)` - Span management
+- `void bs_span_set_error(bs_span_t span, const char* msg)` / `void bs_span_add_event(bs_span_t span, const char* event)` - Span operations
 
 ## Unreal Plugin Components
 
@@ -121,7 +126,7 @@ Changes to `unreal-prototype/` in this repo need to be synced/copied there, OR e
 
 The UI uses a custom display font "Corpta" for headings. Located at:
 - Source: `unreal-prototype/Source/TripSitterUE/Resources/Corpta.otf`
-- Deployed: `C:\Users\samue\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Resources\Corpta.otf`
+- Deployed: `%USERPROFILE%\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Resources\Corpta.otf`
 
 Font is loaded at runtime via `FSlateFontInfo(AbsolutePath, Size)`. Falls back to `FCoreStyle::GetDefaultFontStyle()` if not found.
 
@@ -134,7 +139,7 @@ Defined in `vcpkg.json`:
   - **Note**: `avutil` removed from features list - now included in core as of FFmpeg 8.0.1
 - `onnxruntime` (AI beat detection)
 
-Baseline: `25b458671af03578e6a34edd8f0d1ac85e084df4` (vcpkg submodule HEAD)
+Baseline: `3cac76fe5fd1e00031f31c6b52d942cf9f5de8c3` (vcpkg submodule HEAD)
 
 ## Current Status (January 2026)
 
@@ -161,7 +166,7 @@ Baseline: `25b458671af03578e6a34edd8f0d1ac85e084df4` (vcpkg submodule HEAD)
 ## Common Issues & Fixes
 
 ### UE Plugin won't compile after source changes
-The UE Editor compiles from `C:\Users\samue\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\`, not from this repo. Either:
+The UE Editor compiles from `%USERPROFILE%\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\`, not from this repo. Either:
 1. Edit files directly in the MyProject location, OR
 2. Copy changed files from `unreal-prototype/` to the MyProject plugin folder
 
@@ -195,11 +200,11 @@ build/Release/beatsync_backend_shared.dll
 unreal-prototype/ThirdParty/beatsync/lib/x64/beatsync_backend_shared.dll
 
 # Force UE plugin recompile (run in PowerShell)
-Remove-Item -Recurse -Force 'C:\Users\samue\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Intermediate' -ErrorAction SilentlyContinue
-Remove-Item -Recurse -Force 'C:\Users\samue\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Binaries' -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force "$env:USERPROFILE\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Intermediate" -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force "$env:USERPROFILE\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Binaries" -ErrorAction SilentlyContinue
 
 # Copy font to deployed plugin
-Copy-Item 'unreal-prototype\Source\TripSitterUE\Resources\Corpta.otf' 'C:\Users\samue\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Resources\'
+Copy-Item 'unreal-prototype\Source\TripSitterUE\Resources\Corpta.otf' "$env:USERPROFILE\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Resources\"
 ```
 
 ## Git Workflow
