@@ -35,7 +35,7 @@ To prep for the roadmap’s AI features, a minimal scaffold is included:
 - **Configurable Sensitivity**: Adjust beat detection sensitivity (0.0-1.0)
 - **Detailed Output**: Beat timestamps, BPM, and analysis statistics
 
-Unreal prototype (UE5.3) — automation tests
+Unreal prototype (UE5.7.1) — automation tests
 
 - There is a small Unreal prototype under `unreal-prototype/` that includes an Editor automation smoke test `TripSitter.Beatsync.EditorSmoke`. See `unreal-prototype/README.md` for instructions on running the test locally and for a CI job template that can run the test on a self-hosted Windows runner with UE5 installed.
 

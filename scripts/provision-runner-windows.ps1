@@ -7,7 +7,7 @@ IMPORTANT: Runner registration requires a repository/org-specific token; the scr
 param(
     [Parameter(Mandatory=$true)][string]$RepoUrl,
     [string]$RunnerName = "ue5-runner",
-    [string]$Labels = "self-hosted,windows,ue5-5.3",
+    [string]$Labels = "self-hosted,windows,ue5-5.7",
     [string]$WorkDir = "C:\actions-runner",
     [string]$UE5Root,
     [string]$GithubPat = $env:GITHUB_PAT,

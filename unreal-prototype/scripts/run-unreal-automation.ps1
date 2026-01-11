@@ -7,7 +7,13 @@ param(
 # Resolve UE path
 if (-not $UEPath) {
     if ($env:UE5_ROOT) { $UEPath = $env:UE5_ROOT }
-    elseif (Test-Path "C:\Program Files\Epic Games\UE_5.3") { $UEPath = "C:\Program Files\Epic Games\UE_5.3" }
+    else {
+        # Try common Windows install dirs and allow wildcard for minor versions (e.g., UE_5.7, UE_5.7.1)
+        $candidates = Get-ChildItem "C:\Program Files\Epic Games\" -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'UE_5.7*' }
+        if ($candidates -and $candidates.Count -gt 0) { $UEPath = $candidates[0].FullName }
+        elseif (Test-Path "C:\Program Files\Epic Games\UE_5.7") { $UEPath = "C:\Program Files\Epic Games\UE_5.7" }
+
+    }
 }
 
 if (-not $UEPath) {
