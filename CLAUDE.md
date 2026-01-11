@@ -5,7 +5,7 @@
 **NEVER mention or attempt to use wxWidgets.** The GUI has been fully migrated to Unreal Engine.
 
 Always build with:
-```
+```powershell
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DBEATSYNC_SKIP_GUI=ON
 cmake --build build --config Release
 ```
@@ -22,16 +22,35 @@ BeatSyncEditor/
 │   ├── backend/         # C API wrapper (beatsync_capi.h/.cpp) + tracing
 │   └── tracing/         # OpenTelemetry tracing support
 ├── tests/               # Catch2 unit tests
-├── unreal-prototype/    # Unreal Engine 5 plugin (THE ONLY GUI)
+├── unreal-prototype/    # Unreal Engine 5 plugin source (synced to MyProject)
 │   ├── Source/TripSitterUE/
 │   │   ├── Private/
 │   │   │   ├── BeatsyncLoader.cpp      # DLL loading + C API bindings
 │   │   │   ├── BeatsyncProcessingTask.cpp  # Async background processing
-│   │   │   └── STripSitterMainWidget.cpp   # Main Slate UI widget
-│   │   └── Public/
+│   │   │   ├── STripSitterMainWidget.cpp   # Main Slate UI widget
+│   │   │   ├── SWaveformViewer.cpp     # Waveform visualization widget
+│   │   │   └── TripSitterUEModule.cpp  # Module startup/shutdown
+│   │   ├── Public/
+│   │   │   ├── BeatsyncLoader.h
+│   │   │   ├── STripSitterMainWidget.h
+│   │   │   ├── SWaveformViewer.h
+│   │   │   └── TripSitterUEModule.h
+│   │   └── Resources/
+│   │       ├── Corpta.otf              # Custom display font
+│   │       ├── wallpaper.png           # Background image
+│   │       └── TitleHeader.png         # Title banner
 │   └── ThirdParty/beatsync/  # Built DLLs copied here automatically
 └── vcpkg/               # Package manager submodule
 ```
+
+## Deployed UE Plugin Location
+
+**IMPORTANT**: The actual running Unreal project is at:
+```
+C:\Users\samue\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\
+```
+
+Changes to `unreal-prototype/` in this repo need to be synced/copied there, OR edit files directly in the MyProject location. The UE Editor compiles from the MyProject location, not from this repo.
 
 ## Key Build Targets
 
@@ -84,16 +103,35 @@ BeatSyncEditor/
 - `FAsyncTask` subclass for non-blocking video processing
 - Progress callback updates UI via game thread delegate
 - Stages: Analyze Audio → Cut Video → Apply Effects → Add Audio
+- **IMPORTANT**: Header must be included (not forward declared) in STripSitterMainWidget.h because `FAsyncTask<T>` requires complete type
 
 ### STripSitterMainWidget (UI)
 - Main Slate widget with file selection, beat visualization, effects controls
 - Preview texture from `bs_video_extract_frame()`
 - Async processing with progress bar
+- Custom Corpta font for headings (loaded from Resources/Corpta.otf)
+- **Note**: Help text uses default system font (Corpta lacks some glyphs like `|`)
+
+### SWaveformViewer
+- Custom Slate widget for audio waveform display
+- Supports selection handles, zoom, pan
+- Beat marker overlay
+
+## Custom Font (Corpta)
+
+The UI uses a custom display font "Corpta" for headings. Located at:
+- Source: `unreal-prototype/Source/TripSitterUE/Resources/Corpta.otf`
+- Deployed: `C:\Users\samue\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Resources\Corpta.otf`
+
+Font is loaded at runtime via `FSlateFontInfo(AbsolutePath, Size)`. Falls back to `FCoreStyle::GetDefaultFontStyle()` if not found.
+
+**Corpta font limitations**: Does not include all ASCII glyphs (missing `|` pipe, some punctuation). Use default system font for body text and help strings.
 
 ## vcpkg Dependencies
 
 Defined in `vcpkg.json`:
 - `ffmpeg` (avcodec, avformat, swresample, swscale, avfilter)
+  - **Note**: `avutil` removed from features list - now included in core as of FFmpeg 8.0.1
 - `onnxruntime` (AI beat detection)
 
 Baseline: `25b458671af03578e6a34edd8f0d1ac85e084df4` (vcpkg submodule HEAD)
@@ -110,6 +148,8 @@ Baseline: `25b458671af03578e6a34edd8f0d1ac85e084df4` (vcpkg submodule HEAD)
 - [x] BEATSYNC_SKIP_GUI CMake option
 - [x] Backend DLL builds successfully
 - [x] test_backend_api passes
+- [x] Custom Corpta font integration
+- [x] VideoWriter separator check fix (empty string .back() issue)
 
 ### Pending / Future Work
 - [ ] Test effects pipeline end-to-end with real video
@@ -117,6 +157,27 @@ Baseline: `25b458671af03578e6a34edd8f0d1ac85e084df4` (vcpkg submodule HEAD)
 - [ ] Verify async task completion and UI updates
 - [ ] Add more comprehensive C API tests
 - [ ] ONNX beat detection model integration
+
+## Common Issues & Fixes
+
+### UE Plugin won't compile after source changes
+The UE Editor compiles from `C:\Users\samue\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\`, not from this repo. Either:
+1. Edit files directly in the MyProject location, OR
+2. Copy changed files from `unreal-prototype/` to the MyProject plugin folder
+
+To force recompile: Delete `Intermediate/` and `Binaries/` folders in the plugin directory, then reopen UE Editor.
+
+### "FAsyncTask uses undefined class" error
+The `FBeatsyncProcessingTask` class must be fully defined (not forward declared) when used with `FAsyncTask<T>`. Ensure `#include "BeatsyncProcessingTask.h"` is in STripSitterMainWidget.h.
+
+### Font shows garbled characters
+The Corpta font is missing some ASCII glyphs. Use `FCoreStyle::GetDefaultFontStyle()` for body text and help strings that contain punctuation like `|`.
+
+### vcpkg baseline errors
+Use the vcpkg submodule HEAD commit as baseline: `25b458671af03578e6a34edd8f0d1ac85e084df4`
+
+### "avutil feature not found" error
+FFmpeg 8.0.1 moved avutil to core. Remove "avutil" from the features list in vcpkg.json.
 
 ## Quick Reference
 
@@ -132,4 +193,18 @@ cmake --build build --config Release --target test_backend_api
 # DLL output location
 build/Release/beatsync_backend_shared.dll
 unreal-prototype/ThirdParty/beatsync/lib/x64/beatsync_backend_shared.dll
+
+# Force UE plugin recompile (run in PowerShell)
+Remove-Item -Recurse -Force 'C:\Users\samue\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Intermediate' -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force 'C:\Users\samue\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Binaries' -ErrorAction SilentlyContinue
+
+# Copy font to deployed plugin
+Copy-Item 'unreal-prototype\Source\TripSitterUE\Resources\Corpta.otf' 'C:\Users\samue\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Resources\'
 ```
+
+## Git Workflow
+
+Current branch: `ci/nsis-smoke-test`
+Remote: `https://github.com/tripsitter-psy/tripsitters_audio_beatsync_GUI.git`
+
+Commit style: `type: description` (e.g., `feat:`, `fix:`, `ci:`)
