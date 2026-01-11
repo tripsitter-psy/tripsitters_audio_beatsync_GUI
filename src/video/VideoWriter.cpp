@@ -711,8 +711,13 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 
                 // Attempt audio concat of all input audio streams
                 if (inputVideos.size() >= 1) {
+                    // Get current filter content to check if we need a separator
+                    std::string fc = fcEsc.str();
+                    // Only add separator if there's existing content and it doesn't already end with ';'
+                    if (!fc.empty() && fc.back() != ';') {
+                        fcEsc << ";";
+                    }
                     // append audio concat part: [0:a][1:a]...[N-1:a]concat=n=N:v=0:a=1[aout]
-                    fcEsc << ";";
                     for (size_t i = 0; i < inputVideos.size(); ++i) {
                         fcEsc << "[" << i << ":a]";
                     }

@@ -68,16 +68,18 @@ target_link_libraries(test_backend_api PRIVATE Catch2::Catch2 beatsync_backend_s
 add_test(NAME backend_api COMMAND test_backend_api)
 set_tests_properties(backend_api PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
-# Verify wallpaper is packaged into build outputs or app bundle
-add_executable(test_wallpaper_installed
-    test_wallpaper_installed.cpp
-)
+# Verify wallpaper is packaged into build outputs or app bundle (GUI tests - skip when BEATSYNC_SKIP_GUI)
+if(NOT BEATSYNC_SKIP_GUI)
+    add_executable(test_wallpaper_installed
+        test_wallpaper_installed.cpp
+    )
 
-target_link_libraries(test_wallpaper_installed PRIVATE Catch2::Catch2)
-# Pass two candidate locations: non-mac build assets path and macOS bundle assets path
-add_test(NAME wallpaper_installed COMMAND test_wallpaper_installed "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets/wallpaper.png" "$<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/assets/wallpaper.png")
-set_tests_properties(wallpaper_installed PROPERTIES WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
+    target_link_libraries(test_wallpaper_installed PRIVATE Catch2::Catch2)
+    # Pass two candidate locations: non-mac build assets path and macOS bundle assets path
+    add_test(NAME wallpaper_installed COMMAND test_wallpaper_installed "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets/wallpaper.png" "$<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/assets/wallpaper.png")
+    set_tests_properties(wallpaper_installed PROPERTIES WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
 
-# Runtime check: launch the GUI executable with --check-wallpaper and assert success when wallpaper found
-add_test(NAME wallpaper_runtime_check COMMAND $<TARGET_FILE:TripSitter> --check-wallpaper)
-set_tests_properties(wallpaper_runtime_check PROPERTIES WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
+    # Runtime check: launch the GUI executable with --check-wallpaper and assert success when wallpaper found
+    add_test(NAME wallpaper_runtime_check COMMAND $<TARGET_FILE:TripSitter> --check-wallpaper)
+    set_tests_properties(wallpaper_runtime_check PROPERTIES WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
+endif()

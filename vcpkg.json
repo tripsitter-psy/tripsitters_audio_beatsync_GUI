@@ -5,10 +5,9 @@
     {
       "name": "ffmpeg",
       "default-features": false,
-      "features": ["avcodec", "avformat", "avutil", "swresample", "swscale"]
+      "features": ["avcodec", "avformat", "swresample", "swscale", "avfilter"]
     },
-    "onnxruntime",
-    "essentia"
+    "onnxruntime"
   ],
-  "builtin-baseline": "a48bbf436be0867d0eadc42077f280f3123e3698"
+  "builtin-baseline": "3cac76fe5fd1e00031f31c6b52d942cf9f5de8c3"
 }
