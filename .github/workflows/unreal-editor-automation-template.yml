@@ -1,5 +1,5 @@
 # TEMPLATE: Run Unreal Editor Automation on a self-hosted runner
-# IMPORTANT: This job requires a self-hosted Windows runner with Unreal Engine 5.3
+# IMPORTANT: This job requires a self-hosted Windows runner with Unreal Engine 5.7.1
 # installed and Visual Studio + required toolchains available. Do NOT run on
 # GitHub-hosted runners since they don't provide UE.
 # Copy this file to `.github/workflows/unreal-editor-automation.yml` and adjust
@@ -12,14 +12,14 @@ on:
 jobs:
   unreal-automation:
     # Replace with your self-hosted runner label that has UE installed
-    runs-on: [self-hosted, windows, ue5-5.3]
+    runs-on: [self-hosted, windows, ue5-5.7]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up environment variables (example)
         run: |
-          echo "UE5_ROOT=C:\\Program Files\\Epic Games\\UE_5.3" >> $GITHUB_ENV
+          echo "UE5_ROOT=C:\\Program Files\\Epic Games\\UE_5.7.1" >> $GITHUB_ENV
 
       - name: Run Editor Automation
         # This runs the helper script included in the repository; ensure runner

@@ -3,12 +3,11 @@
   "version": "1.0.0",
   "dependencies": [
     {
-      "name": "ffmpeg",
-      "default-features": false,
-      "features": ["avcodec", "avformat", "avutil", "swresample", "swscale"]
+      "name": "onnxruntime",
+      "features": ["cuda"],
+      "platform": "windows"
     },
-    "onnxruntime",
-    "essentia"
+    "ffmpeg"
   ],
   "builtin-baseline": "a48bbf436be0867d0eadc42077f280f3123e3698"
 }

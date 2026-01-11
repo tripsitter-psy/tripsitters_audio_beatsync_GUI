@@ -6,7 +6,7 @@
 set -euo pipefail
 REPO_URL="${1:-}"        # e.g. https://github.com/<owner>/<repo>
 RUNNER_NAME="${2:-ue5-mac-runner}"
-LABELS="${3:-self-hosted,macos,ue5-5.3}"
+LABELS="${3:-self-hosted,macos,ue5-5.7}"
 WORKDIR="${4:-/opt/actions-runner}"
 # Optional arg 5: github PAT used to request ephemeral registration token. Falls back to env GITHUB_PAT
 GITHUB_PAT="${5:-${GITHUB_PAT:-}}"
@@ -14,7 +14,7 @@ GITHUB_PAT="${5:-${GITHUB_PAT:-}}"
 RUN_SMOKE="${6:-0}"
 # Optional arg 7: upload provision-result.json as Gist (pass 1 to enable)
 RUN_UPLOAD_GIST="${7:-0}"
-UE_ROOT="${UE5_ROOT:-/Applications/Epic Games/UE_5.3}"
+UE_ROOT="${UE5_ROOT:-/Applications/Epic Games/UE_5.7.1}"
 
 if [[ -z "$REPO_URL" ]]; then
   echo "Usage: $0 <repo_url> [runner_name] [labels] [workdir] [github_pat]"
