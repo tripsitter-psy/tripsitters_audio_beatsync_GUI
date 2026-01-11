@@ -34,10 +34,13 @@ static std::mutex s_effectsConfigsMutex;
 
 // ==================== Version and Init API ====================
 
+// Version constant defined at build time
+const char* const BS_VERSION = BEATSYNC_VERSION;
+
 extern "C" {
 
 BEATSYNC_API const char* bs_get_version() {
-    return "1.0.0";
+    return BS_VERSION;
 }
 
 BEATSYNC_API int bs_init() {
@@ -283,6 +286,8 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
         return -1;
     }
 
+    const double DEFAULT_DURATION = 30.0;  // Configurable fallback duration
+
     // RAII helper to ensure temp files are cleaned up even if an exception is thrown
     struct TempFileCleanup {
         std::vector<std::string>& files;
@@ -312,6 +317,17 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
             return -1;
         }
 
+        // Precompute and cache video durations
+        std::vector<double> durations(videos.size(), 0.0);
+        for (size_t i = 0; i < videos.size(); ++i) {
+            BeatSync::VideoProcessor proc;
+            if (proc.open(videos[i])) {
+                durations[i] = proc.getInfo().duration;
+                proc.close();
+            }
+            // If duration <= 0, we'll use DEFAULT_DURATION later
+        }
+
         // Build segments from beats, cycling through videos
         size_t videoIdx = 0;
 
@@ -328,19 +344,11 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
             double duration = endTime - startTime;
             // Use segment start time as position within the source video (modular approach)
             double sourceStart = 0.0;
-            {
-                BeatSync::VideoProcessor proc;
-                if (proc.open(videos[videoIdx])) {
-                    double srcDur = proc.getInfo().duration;
-                    proc.close();
-                    if (srcDur > 0) {
-                        sourceStart = fmod(startTime, srcDur);
-                    } else {
-                        sourceStart = fmod(startTime, 30.0);  // Fallback
-                    }
-                } else {
-                    sourceStart = fmod(startTime, 30.0);  // Fallback
-                }
+            double cachedDuration = durations[videoIdx];
+            if (cachedDuration > 0) {
+                sourceStart = fmod(startTime, cachedDuration);
+            } else {
+                sourceStart = fmod(startTime, DEFAULT_DURATION);  // Fallback
             }
 
             if (w->copySegmentFast(videos[videoIdx], sourceStart, duration, tempFile)) {
@@ -513,6 +521,8 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
     }
 
     AVFrame* frame = nullptr;  // Declare outside try block for proper cleanup in catch
+    SwsContext* swsCtx = nullptr;  // Declare outside try block for proper cleanup in catch
+    unsigned char* rgbData = nullptr;  // Declare outside try block for proper cleanup in catch
 
     try {
         BeatSync::VideoProcessor vp;
@@ -537,7 +547,7 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
         *outHeight = srcH;
 
         // Create scaler to convert to RGB24
-        SwsContext* swsCtx = sws_getContext(
+        swsCtx = sws_getContext(
             srcW, srcH, static_cast<AVPixelFormat>(frame->format),
             srcW, srcH, AV_PIX_FMT_RGB24,
             SWS_BILINEAR, nullptr, nullptr, nullptr
@@ -551,7 +561,7 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
 
         // Allocate output buffer
         int rgbSize = srcW * srcH * 3;
-        unsigned char* rgbData = static_cast<unsigned char*>(malloc(rgbSize));
+        rgbData = static_cast<unsigned char*>(malloc(rgbSize));
         if (!rgbData) {
             sws_freeContext(swsCtx);
             av_frame_free(&frame);
@@ -582,11 +592,23 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
         if (frame) {
             av_frame_free(&frame);
         }
+        if (swsCtx) {
+            sws_freeContext(swsCtx);
+        }
+        if (rgbData) {
+            free(rgbData);
+        }
         s_lastError = e.what();
         return -1;
     } catch (...) {
         if (frame) {
             av_frame_free(&frame);
+        }
+        if (swsCtx) {
+            sws_freeContext(swsCtx);
+        }
+        if (rgbData) {
+            free(rgbData);
         }
         s_lastError = "Exception during frame extraction";
         return -1;

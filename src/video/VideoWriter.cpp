@@ -710,30 +710,24 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
                 fcEsc << filterComplex;
 
                 // Attempt audio concat of all input audio streams
-                if (inputVideos.size() >= 1) {
-                    // Get current filter content to check if we need a separator
-                    std::string fc = fcEsc.str();
-                    // Only add separator if there's existing content and it doesn't already end with ';'
-                    if (!fc.empty() && fc.back() != ';') {
-                        fcEsc << ";";
-                    }
-                    // append audio concat part: [0:a][1:a]...[N-1:a]concat=n=N:v=0:a=1[aout]
-                    for (size_t i = 0; i < inputVideos.size(); ++i) {
-                        fcEsc << "[" << i << ":a]";
-                    }
-                    fcEsc << "concat=n=" << inputVideos.size() << ":v=0:a=1[aout]";
+                // Get current filter content to check if we need a separator
+                std::string fc = fcEsc.str();
+                // Only add separator if there's existing content and it doesn't already end with ';'
+                if (!fc.empty() && fc.back() != ';') {
+                    fcEsc << ";";
                 }
+                // append audio concat part: [0:a][1:a]...[N-1:a]concat=n=N:v=0:a=1[aout]
+                for (size_t i = 0; i < inputVideos.size(); ++i) {
+                    fcEsc << "[" << i << ":a]";
+                }
+                fcEsc << "concat=n=" << inputVideos.size() << ":v=0:a=1[aout]";
 
                 // Final map: video final label is [t{N-1}], audio is [aout]
                 std::string finalVideoLabel = "[t" + std::to_string(inputVideos.size()-1) + "]";
 
                 cmd << " -filter_complex \"" << fcEsc.str() << "\" -map \"" << finalVideoLabel << "\"";
-                // Map audio if we built [aout], otherwise fall back to first input audio
-                if (inputVideos.size() >= 1) {
-                    cmd << " -map \"[aout]\"";
-                } else {
-                    cmd << " -map 0:a?";
-                }
+                // Map audio using [aout] from the concat filter
+                cmd << " -map \"[aout]\"";
 
                 cmd << " -c:v libx264 -preset fast -crf 18 -c:a aac -b:a 192k -y \"" << outputVideo << "\"";
 

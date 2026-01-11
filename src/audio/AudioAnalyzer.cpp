@@ -180,6 +180,9 @@ AudioAnalyzer::AudioData AudioAnalyzer::loadAudioFile(const std::string& filePat
         AVPacket* packet = av_packet_alloc();
         AVFrame* frame = av_frame_alloc();
 
+        // Buffer for resampled data (reused to avoid allocations)
+        std::vector<float> buffer;
+
         // Read frames and decode
         while (av_read_frame(formatCtx, packet) >= 0) {
             if (packet->stream_index == audioStreamIndex) {
@@ -189,7 +192,9 @@ AudioAnalyzer::AudioData AudioAnalyzer::loadAudioFile(const std::string& filePat
                     while (avcodec_receive_frame(codecCtx, frame) == 0) {
                         // Allocate buffer for resampled data
                         int outSamples = frame->nb_samples;
-                        std::vector<float> buffer(outSamples);
+                        if (buffer.size() < static_cast<size_t>(outSamples)) {
+                            buffer.resize(outSamples);
+                        }
 
                         uint8_t* outData = reinterpret_cast<uint8_t*>(buffer.data());
 
@@ -211,7 +216,9 @@ AudioAnalyzer::AudioData AudioAnalyzer::loadAudioFile(const std::string& filePat
         avcodec_send_packet(codecCtx, nullptr);
         while (avcodec_receive_frame(codecCtx, frame) == 0) {
             int outSamples = frame->nb_samples;
-            std::vector<float> buffer(outSamples);
+            if (buffer.size() < static_cast<size_t>(outSamples)) {
+                buffer.resize(outSamples);
+            }
             uint8_t* outData = reinterpret_cast<uint8_t*>(buffer.data());
 
             int samplesOut = swr_convert(swrCtx, &outData, outSamples,

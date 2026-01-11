@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.15)
 project(TripSitterBeatSync)
 
+# Version configuration - can be overridden with -DBEATSYNC_VERSION=...
+set(BEATSYNC_VERSION "1.0.0" CACHE STRING "BeatSync library version")
+add_definitions(-DBEATSYNC_VERSION="${BEATSYNC_VERSION}")
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -15,35 +19,12 @@ if(FFMPEG_ROOT)
     link_directories(${FFMPEG_ROOT}/lib)
 endif()
 
-# wxWidgets setup
-# On Windows we ship a default path; on macOS/Linux we let find_package find it
-# Set USE_WXUNIVERSAL=ON to use wxUniversal build with custom theming
-option(USE_WXUNIVERSAL "Use wxUniversal build for custom theming" OFF)
-
 # Optional AI / advanced feature flags (stubs included; wire deps when available)
 option(USE_ESSENTIA "Enable Essentia-based beat analyzer" OFF)
 option(USE_BEATNET "Enable BeatNet Python bridge" OFF)
 option(USE_DEMUCS "Enable Demucs stem separation" OFF)
 option(USE_GLTRANSITIONS "Enable GLSL transitions library" OFF)
 option(USE_AUDIOREACTIVE "Enable FFT-driven audio-reactive effects" OFF)
-
-# Option to skip wxWidgets (for building just the backend DLL)
-option(BEATSYNC_SKIP_GUI "Skip wxWidgets GUI (build backend only)" OFF)
-
-if(NOT BEATSYNC_SKIP_GUI)
-    if(WIN32)
-        set(wxWidgets_ROOT_DIR "C:/wxWidgets-3.2.4")
-        if(USE_WXUNIVERSAL)
-            set(wxWidgets_CONFIGURATION mswunivu)
-            set(wxWidgets_LIB_DIR "C:/wxWidgets-3.2.4/lib/vc_x64_dll")
-            add_definitions(-D__WXUNIVERSAL__)
-        else()
-            set(wxWidgets_CONFIGURATION mswu)
-        endif()
-    endif()
-    find_package(wxWidgets REQUIRED COMPONENTS core base adv)
-    include(${wxWidgets_USE_FILE})
-endif()
 
 # Source files
 set(CORE_SOURCES
@@ -57,7 +38,7 @@ set(CORE_SOURCES
 # Backend library target (wrap core sources into a reusable library and expose a C API)
 option(BEATSYNC_BUILD_SHARED "Build beatsync backend as shared library" ON)
 
-# Always provide a static backend for linking by internal targets (TripSitter, beatsync, tests)
+# Always provide a static backend for linking by internal targets (beatsync, tests)
 add_library(beatsync_backend_static STATIC ${CORE_SOURCES} src/backend/beatsync_capi.cpp)
 target_include_directories(beatsync_backend_static PUBLIC ${CMAKE_SOURCE_DIR}/src)
 set_target_properties(beatsync_backend_static PROPERTIES PUBLIC_HEADER "${CMAKE_SOURCE_DIR}/src/backend/beatsync_capi.h")
@@ -168,139 +149,10 @@ if(USE_ONNX AND onnxruntime_FOUND)
     target_link_libraries(beatsync PRIVATE onnxruntime::onnxruntime)
 endif()
 
-# GUI targets (skip when building backend-only)
-if(NOT BEATSYNC_SKIP_GUI)
-    set(GUI_SOURCES
-        src/GUI/MainWindow.cpp
-        src/GUI/BeatVisualizer.cpp
-        src/GUI/VideoPreview.cpp
-        src/GUI/ProcessingThread.cpp
-        src/GUI/SettingsManager.cpp
-        src/GUI/PsychedelicTheme.cpp
-        src/utils/LogArchiver.cpp
-    )
-
-    # GUI executable (NEW)
-    if(WIN32)
-        # Add icon resource only if the file exists. This avoids build failures when a placeholder
-        # or no icon is present in the assets directory.
-        if(EXISTS "${CMAKE_SOURCE_DIR}/assets/icon.rc")
-            set(GUI_ICON_RC "${CMAKE_SOURCE_DIR}/assets/icon.rc")
-            add_executable(TripSitter WIN32 src/GUI_main.cpp ${GUI_SOURCES} ${GUI_ICON_RC})
-        else()
-            add_executable(TripSitter WIN32 src/GUI_main.cpp ${GUI_SOURCES})
-        endif()
-    else()
-        add_executable(TripSitter src/GUI_main.cpp ${GUI_SOURCES})
-    endif()
-
-    # Link GUI executable against backend and required libs
-    target_link_libraries(TripSitter PRIVATE
-        beatsync_backend_static
-        ${wxWidgets_LIBRARIES}
-        avformat avcodec avutil swresample swscale avfilter
-    )
-    if(USE_ONNX AND onnxruntime_FOUND)
-        target_link_libraries(TripSitter PRIVATE onnxruntime::onnxruntime)
-    endif()
-
-    # Optional: link Essentia if requested and available
-    if(USE_ESSENTIA)
-        find_package(Essentia CONFIG QUIET)
-        if(Essentia_FOUND)
-            message(STATUS "Essentia found - enabling Essentia analyzer support")
-            target_link_libraries(beatsync PUBLIC Essentia::essentia)
-            target_link_libraries(TripSitter PUBLIC Essentia::essentia)
-            add_compile_definitions(HAVE_ESSENTIA)
-        else()
-            message(WARNING "USE_ESSENTIA enabled but Essentia package not found. EssentiaAnalyzer will remain a stub.")
-        endif()
-    endif()
-
-    # macOS App Bundle configuration
-    if(APPLE)
-        set_target_properties(TripSitter PROPERTIES
-            MACOSX_BUNDLE TRUE
-            MACOSX_BUNDLE_BUNDLE_NAME "MTV Trip Sitter"
-            MACOSX_BUNDLE_BUNDLE_VERSION "${CPACK_PACKAGE_VERSION_MAJOR}.${CPACK_PACKAGE_VERSION_MINOR}.${CPACK_PACKAGE_VERSION_PATCH}"
-            MACOSX_BUNDLE_SHORT_VERSION_STRING "${CPACK_PACKAGE_VERSION_MAJOR}.${CPACK_PACKAGE_VERSION_MINOR}.${CPACK_PACKAGE_VERSION_PATCH}"
-            MACOSX_BUNDLE_GUI_IDENTIFIER "com.mtv.tripsitter"
-            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/assets/Info.plist.in"
-        )
-    endif()
-
-    # Output directory
-    set_target_properties(beatsync TripSitter PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
-    )
-
-    # Copy assets to build directory
-    if(APPLE)
-        # macOS: Copy assets into app bundle's MacOS folder (next to executable)
-        add_custom_command(TARGET TripSitter POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_SOURCE_DIR}/assets
-            $<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/assets
-        )
-    else()
-        add_custom_command(TARGET TripSitter POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_SOURCE_DIR}/assets
-            ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets
-        )
-    endif()
-
-    # Ensure a specific wallpaper.png is copied and installed when present. This helps packaging
-    # and guarantees the file is present even if the assets directory is pruned by downstream tooling.
-    if(EXISTS "${CMAKE_SOURCE_DIR}/assets/wallpaper.png")
-        if(APPLE)
-            add_custom_command(TARGET TripSitter POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/assets"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_SOURCE_DIR}/assets/wallpaper.png
-                $<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/assets/wallpaper.png
-            )
-        else()
-            add_custom_command(TARGET TripSitter POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_SOURCE_DIR}/assets/wallpaper.png
-                ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets/wallpaper.png
-            )
-        endif()
-        # Also ensure CPack includes the wallpaper explicitly
-        install(FILES ${CMAKE_SOURCE_DIR}/assets/wallpaper.png DESTINATION . OPTIONAL)
-    endif()
-
-    # Backend smoke test executable (quick runtime check)
-    add_executable(backend_smoke src/tools/backend_smoke.cpp)
-    target_include_directories(backend_smoke PRIVATE ${CMAKE_SOURCE_DIR}/src)
-    target_link_libraries(backend_smoke PRIVATE beatsync_backend_static avformat avcodec avutil swresample swscale avfilter)
-    set_target_properties(backend_smoke PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
-
-    # Copy FFmpeg DLLs to output directory (Windows only)
-    if(WIN32)
-        file(GLOB FFMPEG_DLLS "${FFMPEG_ROOT}/bin/*.dll")
-        foreach(DLL ${FFMPEG_DLLS})
-            add_custom_command(TARGET TripSitter POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${DLL}
-                $<TARGET_FILE_DIR:TripSitter>
-            )
-        endforeach()
-
-        # Also install FFmpeg DLLs so they are included by CPack
-        install(FILES ${FFMPEG_DLLS} DESTINATION .)
-    endif()
-
-    # Install TripSitter executable and assets for packaging
-    if(APPLE)
-        install(TARGETS TripSitter BUNDLE DESTINATION .)
-    else()
-        install(TARGETS TripSitter RUNTIME DESTINATION bin)
-    endif()
-    install(DIRECTORY ${CMAKE_SOURCE_DIR}/assets DESTINATION .)
-endif() # NOT BEATSYNC_SKIP_GUI
+# Output directory for beatsync (always available)
+set_target_properties(beatsync PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+)
 
 # Install AI tools if they exist (bundled executables for beat detection)
 # These are built separately with PyInstaller - see scripts/build_ai_tools.py

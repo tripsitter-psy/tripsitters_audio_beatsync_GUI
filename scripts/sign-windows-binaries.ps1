@@ -69,7 +69,15 @@ function Get-CertificateFromEnv {
         # Set restrictive permissions: current user only
         $acl = Get-Acl $tempCert
         $acl.SetAccessRuleProtection($true, $false)  # Remove inherited permissions
-        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($env:USERNAME, "FullControl", "Allow")
+        
+        # Get current Windows identity, fallback to USERNAME env var if it fails
+        try {
+            $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        } catch {
+            $currentUser = $env:USERNAME
+        }
+        
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($currentUser, "FullControl", "Allow")
         $acl.SetAccessRule($rule)
         Set-Acl $tempCert $acl
         

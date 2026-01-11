@@ -6,7 +6,7 @@
 #include "beatsync_capi.h"
 
 // Static storage for callback data to prevent leaks
-static TMap<void*, TSharedPtr<FBeatsyncLoader::CallbackData>> GCallbackStorage;
+static TMap<void*, TUniquePtr<FBeatsyncLoader::CallbackData>> GCallbackStorage;
 static FCriticalSection GCallbackStorageMutex;
 
 // Function pointer types
@@ -200,27 +200,6 @@ void FBeatsyncLoader::DestroyAnalyzer(void* handle)
     GApi.destroy_analyzer(handle);
 }
 
-void* FBeatsyncLoader::CreateVideoWriter()
-{
-    if (!GApi.create_writer) return nullptr;
-    return GApi.create_writer();
-}
-
-void FBeatsyncLoader::DestroyVideoWriter(void* writer)
-{
-    if (!writer) return;
-
-    // Clear callback data under lock before destroying the writer
-    {
-        FScopeLock Lock(&GCallbackStorageMutex);
-        GCallbackStorage.Remove(writer);
-    }
-
-    if (GApi.destroy_writer) {
-        GApi.destroy_writer(writer);
-    }
-}
-
 bool FBeatsyncLoader::AnalyzeAudio(void* handle, const FString& path, FBeatGrid& outGrid)
 {
     if (!GApi.analyze_audio) return false;
@@ -258,31 +237,26 @@ void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
 
     if (cb)
     {
-        // Store the callback data as a shared pointer
-        TSharedPtr<CallbackData> data = MakeShared<CallbackData>();
+        // Store the callback data
+        auto data = MakeUnique<CallbackData>();
         data->Func = cb;
-        GCallbackStorage.Add(writer, data);
+        GCallbackStorage.Add(writer, MoveTemp(data));
 
         auto trampoline = [](double progress, void* user_data) {
-            // user_data is a pointer to the shared_ptr in GCallbackStorage
-            TSharedPtr<CallbackData>* sharedDataPtr = reinterpret_cast<TSharedPtr<CallbackData>*>(user_data);
-            if (!sharedDataPtr) return;
-
-            // Get a local copy of the shared pointer under lock to ensure thread safety
-            TSharedPtr<CallbackData> localData;
+            FProgressCb LocalFunc;
             {
                 FScopeLock Lock(&GCallbackStorageMutex);
-                localData = *sharedDataPtr;  // This increments the reference count
+                CallbackData* d = reinterpret_cast<CallbackData*>(user_data);
+                if (d && d->Func) {
+                    LocalFunc = d->Func;  // Copy to avoid holding lock during callback
+                }
             }  // Lock released here
-
-            // Now we have a safe reference that won't be freed even if DestroyVideoWriter runs
-            if (localData.IsValid() && localData->Func) {
-                localData->Func(progress);
+            if (LocalFunc) {
+                LocalFunc(progress);
             }
         };
 
-        // Pass pointer to the shared_ptr as user_data
-        GApi.video_set_progress(writer, trampoline, &GCallbackStorage[writer]);
+        GApi.video_set_progress(writer, trampoline, GCallbackStorage[writer].Get());
     }
     else
     {
@@ -329,7 +303,20 @@ void FBeatsyncLoader::SetEffectsConfig(void* writer, const FEffectsConfig& confi
     auto TransitionTypeAnsi = StringCast<ANSICHAR>(*config.TransitionType);
     auto ColorPresetAnsi = StringCast<ANSICHAR>(*config.ColorPreset);
 
-    bs_effects_config_t cfg;
+    struct bs_effects_config_t {
+        int enableTransitions;
+        const char* transitionType;
+        double transitionDuration;
+        int enableColorGrade;
+        const char* colorPreset;
+        int enableVignette;
+        double vignetteStrength;
+        int enableBeatFlash;
+        double flashIntensity;
+        int enableBeatZoom;
+        double zoomIntensity;
+        int effectBeatDivisor;
+    } cfg;
 
     cfg.enableTransitions = config.bEnableTransitions ? 1 : 0;
     cfg.transitionType = TransitionTypeAnsi.Get();
