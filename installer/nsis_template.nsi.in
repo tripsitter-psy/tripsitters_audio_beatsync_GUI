@@ -1,0 +1,128 @@
+; NSIS Installer Template for MTV TripSitter
+; This file is configured by CMake/CPack - variables use @VAR@ syntax
+
+!include "MUI2.nsh"
+!include "FileFunc.nsh"
+!include "x64.nsh"
+
+; Basic installer info (populated by CPack)
+Name "@CPACK_NSIS_DISPLAY_NAME@"
+OutFile "@CPACK_TOPLEVEL_DIRECTORY@/@CPACK_OUTPUT_FILE_NAME@"
+InstallDir "$PROGRAMFILES64\@CPACK_PACKAGE_INSTALL_DIRECTORY@"
+InstallDirRegKey HKLM "Software\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_NAME@" "InstallDir"
+
+; Request admin privileges (needed for Program Files installation)
+RequestExecutionLevel admin
+
+; Version info for Windows Explorer
+VIProductVersion "@CPACK_PACKAGE_VERSION_MAJOR@.@CPACK_PACKAGE_VERSION_MINOR@.@CPACK_PACKAGE_VERSION_PATCH@.0"
+VIAddVersionKey "ProductName" "@CPACK_PACKAGE_NAME@"
+VIAddVersionKey "CompanyName" "@CPACK_PACKAGE_VENDOR@"
+VIAddVersionKey "FileDescription" "@CPACK_PACKAGE_DESCRIPTION_SUMMARY@"
+VIAddVersionKey "FileVersion" "@CPACK_PACKAGE_VERSION@"
+VIAddVersionKey "LegalCopyright" "Copyright (C) 2024-2026 MTV"
+
+; Modern UI configuration
+!define MUI_ABORTWARNING
+!define MUI_ICON "@CMAKE_SOURCE_DIR@\assets\icon.ico"
+!define MUI_UNICON "@CMAKE_SOURCE_DIR@\assets\icon.ico"
+
+; Header and welcome images (optional - can be added later)
+; !define MUI_HEADERIMAGE
+; !define MUI_HEADERIMAGE_BITMAP "@CMAKE_SOURCE_DIR@\assets\installer-header.bmp"
+; !define MUI_WELCOMEFINISHPAGE_BITMAP "@CMAKE_SOURCE_DIR@\assets\installer-welcome.bmp"
+
+; Installer pages
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_LICENSE "@CPACK_RESOURCE_FILE_LICENSE@"
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!define MUI_FINISHPAGE_RUN "$INSTDIR\bin\TripSitter.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "Launch MTV TripSitter"
+!insertmacro MUI_PAGE_FINISH
+
+; Uninstaller pages
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+; Language
+!insertmacro MUI_LANGUAGE "English"
+
+; Installer section
+Section "MTV TripSitter" SecMain
+    SetOutPath "$INSTDIR"
+
+    ; Install all files (CPack populates this)
+    @CPACK_NSIS_FULL_INSTALL@
+
+    ; Create uninstaller
+    WriteUninstaller "$INSTDIR\Uninstall.exe"
+
+    ; Registry entries for Add/Remove Programs
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
+        "DisplayName" "@CPACK_NSIS_DISPLAY_NAME@"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
+        "UninstallString" "$INSTDIR\Uninstall.exe"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
+        "DisplayIcon" "$INSTDIR\bin\TripSitter.exe"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
+        "Publisher" "@CPACK_PACKAGE_VENDOR@"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
+        "DisplayVersion" "@CPACK_PACKAGE_VERSION@"
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
+        "NoModify" 1
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
+        "NoRepair" 1
+
+    ; Get installed size
+    ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
+    IntFmt $0 "0x%08X" $0
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
+        "EstimatedSize" "$0"
+
+    ; Store install directory
+    WriteRegStr HKLM "Software\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_NAME@" "InstallDir" "$INSTDIR"
+SectionEnd
+
+; Start Menu shortcuts section
+Section "Start Menu Shortcuts" SecStartMenu
+    CreateDirectory "$SMPROGRAMS\MTV TripSitter"
+    CreateShortCut "$SMPROGRAMS\MTV TripSitter\MTV TripSitter.lnk" "$INSTDIR\bin\TripSitter.exe"
+    CreateShortCut "$SMPROGRAMS\MTV TripSitter\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
+SectionEnd
+
+; Desktop shortcut section (optional)
+Section "Desktop Shortcut" SecDesktop
+    CreateShortCut "$DESKTOP\MTV TripSitter.lnk" "$INSTDIR\bin\TripSitter.exe"
+SectionEnd
+
+; Uninstaller section
+Section "Uninstall"
+    ; Remove Start Menu shortcuts
+    Delete "$SMPROGRAMS\MTV TripSitter\*.lnk"
+    RMDir "$SMPROGRAMS\MTV TripSitter"
+
+    ; Remove Desktop shortcut
+    Delete "$DESKTOP\MTV TripSitter.lnk"
+
+    ; Remove files (CPack populates this)
+    @CPACK_NSIS_DELETE_FILES@
+    @CPACK_NSIS_DELETE_DIRECTORIES@
+
+    ; Remove uninstaller
+    Delete "$INSTDIR\Uninstall.exe"
+
+    ; Remove install directory if empty
+    RMDir "$INSTDIR"
+
+    ; Remove registry entries
+    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@"
+    DeleteRegKey HKLM "Software\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_NAME@"
+SectionEnd
+
+; Section descriptions
+!insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "Core application files (required)"
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecStartMenu} "Create Start Menu shortcuts"
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} "Create Desktop shortcut"
+!insertmacro MUI_FUNCTION_DESCRIPTION_END
