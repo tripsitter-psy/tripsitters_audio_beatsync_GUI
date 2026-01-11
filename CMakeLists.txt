@@ -309,12 +309,44 @@ set(CPACK_PACKAGE_VERSION_MINOR "1")
 set(CPACK_PACKAGE_VERSION_PATCH "0")
 set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${CPACK_PACKAGE_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "MTV TripSitter")
 
 # Platform-specific CPack generators
 if(WIN32)
     set(CPACK_GENERATOR "ZIP;NSIS")
+
+    # NSIS configuration for professional Windows installer
     set(CPACK_NSIS_DISPLAY_NAME "MTV Trip Sitter")
-    set(CPACK_NSIS_CONTACT "support@example.com")
+    set(CPACK_NSIS_PACKAGE_NAME "MTV Trip Sitter")
+    set(CPACK_NSIS_CONTACT "support@tripsitter.dev")
+    set(CPACK_NSIS_HELP_LINK "https://github.com/tripsitter-psy/tripsitters_audio_beatsync_GUI")
+    set(CPACK_NSIS_URL_INFO_ABOUT "https://github.com/tripsitter-psy/tripsitters_audio_beatsync_GUI")
+
+    # Icon for installer
+    if(EXISTS "${CMAKE_SOURCE_DIR}/assets/icon.ico")
+        set(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}/assets/icon.ico")
+        set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}/assets/icon.ico")
+        set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\TripSitter.exe")
+    endif()
+
+    # Start menu and desktop shortcuts
+    set(CPACK_NSIS_CREATE_ICONS_EXTRA
+        "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk' '$INSTDIR\\\\bin\\\\TripSitter.exe'"
+    )
+    set(CPACK_NSIS_DELETE_ICONS_EXTRA
+        "Delete '$SMPROGRAMS\\\\$START_MENU\\\\MTV TripSitter.lnk'"
+    )
+
+    # Add option for desktop shortcut
+    set(CPACK_NSIS_MODIFY_PATH OFF)
+    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+
+    # Request admin rights for installation
+    set(CPACK_NSIS_EXECUTABLES_DIRECTORY "bin")
+
+    # Install to Program Files by default
+    set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES64")
+
 elseif(APPLE)
     set(CPACK_GENERATOR "DragNDrop")
     set(CPACK_DMG_VOLUME_NAME "MTV Trip Sitter")

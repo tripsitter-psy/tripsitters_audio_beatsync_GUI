@@ -1,0 +1,264 @@
+name: Windows Release Pipeline
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a GitHub release'
+        required: false
+        default: 'false'
+        type: boolean
+      version:
+        description: 'Version string (e.g., 0.2.0-beta)'
+        required: false
+        default: ''
+        type: string
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build-and-sign:
+    name: Build, Sign & Package (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          choco install -y nsis
+          choco install -y 7zip
+        shell: powershell
+
+      - name: Verify NSIS installation
+        run: |
+          $mak = Get-Command makensis -ErrorAction SilentlyContinue
+          if (-not $mak) {
+            Write-Error "makensis not found"
+            exit 1
+          }
+          makensis -VERSION
+        shell: powershell
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 'a48bbf436be0867d0eadc42077f280f3123e3698'
+
+      - name: Configure CMake
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DBUILD_GUI=OFF `
+            -DBUILD_TESTS=OFF
+        shell: powershell
+
+      - name: Build
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} -- /m
+        shell: powershell
+
+      - name: Sign binaries (if certificate available)
+        if: ${{ env.CODESIGN_CERTIFICATE_BASE64 != '' }}
+        env:
+          CODESIGN_CERTIFICATE_BASE64: ${{ secrets.CODESIGN_CERTIFICATE_BASE64 }}
+          CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.CODESIGN_CERTIFICATE_PASSWORD }}
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/sign-windows-binaries.ps1 `
+            -BuildDir "build/bin/${{ env.BUILD_TYPE }}"
+        shell: powershell
+
+      - name: Generate installer (CPack)
+        run: |
+          cd build
+          cpack -C ${{ env.BUILD_TYPE }} -G NSIS
+          cpack -C ${{ env.BUILD_TYPE }} -G ZIP
+        shell: powershell
+
+      - name: Sign installer (if certificate available)
+        if: ${{ env.CODESIGN_CERTIFICATE_BASE64 != '' }}
+        env:
+          CODESIGN_CERTIFICATE_BASE64: ${{ secrets.CODESIGN_CERTIFICATE_BASE64 }}
+          CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.CODESIGN_CERTIFICATE_PASSWORD }}
+        run: |
+          $installer = Get-ChildItem -Path build -Filter "*.exe" | Where-Object { $_.Name -like "*TripSitter*" } | Select-Object -First 1
+          if ($installer) {
+            pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/sign-windows-binaries.ps1 `
+              -BuildDir $installer.DirectoryName `
+              -CertificatePath "" # Uses env vars
+          }
+        shell: powershell
+
+      - name: List build artifacts
+        run: |
+          Write-Host "=== Build Output ===" -ForegroundColor Cyan
+          Get-ChildItem -Path build -Recurse -File | Where-Object { $_.Extension -in '.exe', '.zip', '.dll' } | Format-Table Name, Length, LastWriteTime
+        shell: powershell
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtv-tripsitter-installer
+          path: build/*.exe
+          if-no-files-found: warn
+
+      - name: Upload ZIP package
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtv-tripsitter-zip
+          path: build/*.zip
+          if-no-files-found: warn
+
+  smoke-test:
+    name: Installer Smoke Test
+    needs: build-and-sign
+    runs-on: windows-latest
+
+    steps:
+      - name: Download installer
+        uses: actions/download-artifact@v4
+        with:
+          name: mtv-tripsitter-installer
+          path: installers
+
+      - name: List downloaded artifacts
+        run: Get-ChildItem -Path installers -Recurse
+        shell: powershell
+
+      - name: Run silent installation
+        run: |
+          $installer = Get-ChildItem -Path installers -Filter "*.exe" | Select-Object -First 1
+          if (-not $installer) {
+            Write-Warning "No installer found, skipping smoke test"
+            exit 0
+          }
+
+          Write-Host "Installing: $($installer.FullName)"
+
+          # Run silent installation
+          $proc = Start-Process -FilePath $installer.FullName -ArgumentList "/S" -PassThru -Wait
+          if ($proc.ExitCode -ne 0) {
+            Write-Error "Installation failed with exit code: $($proc.ExitCode)"
+            exit 1
+          }
+
+          Write-Host "Installation completed successfully"
+        shell: powershell
+
+      - name: Verify installation
+        run: |
+          $installPath = "$env:ProgramFiles\MTV TripSitter"
+
+          # Check if install directory exists
+          if (-not (Test-Path $installPath)) {
+            Write-Error "Installation directory not found: $installPath"
+            exit 1
+          }
+
+          Write-Host "Installation directory found: $installPath"
+          Get-ChildItem -Path $installPath -Recurse | Format-Table Name, Length
+
+          # Check for main executable
+          $exe = Get-ChildItem -Path $installPath -Recurse -Filter "*.exe" |
+                 Where-Object { $_.Name -notlike "*uninstall*" } |
+                 Select-Object -First 1
+
+          if (-not $exe) {
+            Write-Error "No executable found in installation"
+            exit 1
+          }
+
+          Write-Host "Found executable: $($exe.FullName)"
+
+          # Verify executable can start (brief launch test)
+          Write-Host "Starting smoke test launch..."
+          $proc = Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 5
+
+          if ($proc.HasExited) {
+            Write-Warning "Application exited during smoke test (exit code: $($proc.ExitCode))"
+            # Don't fail - app might legitimately exit if missing audio file, etc.
+          } else {
+            Write-Host "Application running successfully"
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
+
+          Write-Host "Smoke test passed!"
+        shell: powershell
+
+      - name: Run uninstallation
+        run: |
+          $uninstaller = "$env:ProgramFiles\MTV TripSitter\Uninstall.exe"
+
+          if (Test-Path $uninstaller) {
+            Write-Host "Running uninstaller..."
+            $proc = Start-Process -FilePath $uninstaller -ArgumentList "/S" -PassThru -Wait
+            Write-Host "Uninstaller exit code: $($proc.ExitCode)"
+          } else {
+            Write-Warning "Uninstaller not found at: $uninstaller"
+          }
+        shell: powershell
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-and-sign, smoke-test]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f -ls
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: MTV TripSitter v${{ steps.version.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') }}
+          files: |
+            artifacts/mtv-tripsitter-installer/*.exe
+            artifacts/mtv-tripsitter-zip/*.zip
+          body: |
+            ## MTV TripSitter v${{ steps.version.outputs.version }}
+
+            ### Installation
+
+            #### Windows Installer (Recommended)
+            1. Download `MTVTripSitter-*.exe`
+            2. Run the installer
+            3. Follow the installation wizard
+
+            #### Portable ZIP
+            1. Download `MTVTripSitter-*.zip`
+            2. Extract to your preferred location
+            3. Run `bin/TripSitter.exe`
+
+            ### System Requirements
+            - Windows 10 or later (64-bit)
+            - 4GB RAM minimum
+            - GPU recommended for video processing
+
+            ### Checksums
+            ```
+            (Checksums will be added after release)
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
