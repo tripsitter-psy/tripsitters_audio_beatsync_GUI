@@ -163,12 +163,31 @@ bool FBeatsyncLoader::Initialize()
     GApi.video_extract_frame = (bs_video_extract_frame_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_extract_frame"));
     GApi.free_frame_data = (bs_free_frame_data_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_frame_data"));
 
-    // Check required symbols
+    // Check required symbols - audio analyzer
     if (!GApi.create_analyzer || !GApi.destroy_analyzer || !GApi.analyze_audio) {
         UE_LOG(LogTemp, Error, TEXT("Required audio analyzer symbols not found in Beatsync DLL"));
         FPlatformProcess::FreeDllHandle(GApi.DllHandle);
         GApi.DllHandle = nullptr;
         return false;
+    }
+
+    // Check required symbols - video writer (critical for video processing)
+    if (!GApi.create_video_writer || !GApi.destroy_video_writer) {
+        UE_LOG(LogTemp, Error, TEXT("Required video writer symbols not found in Beatsync DLL"));
+        FPlatformProcess::FreeDllHandle(GApi.DllHandle);
+        GApi.DllHandle = nullptr;
+        return false;
+    }
+
+    // Log optional symbol availability for debugging
+    if (!GApi.video_cut_at_beats) {
+        UE_LOG(LogTemp, Warning, TEXT("Optional symbol bs_video_cut_at_beats not found"));
+    }
+    if (!GApi.video_add_audio_track) {
+        UE_LOG(LogTemp, Warning, TEXT("Optional symbol bs_video_add_audio_track not found"));
+    }
+    if (!GApi.video_extract_frame) {
+        UE_LOG(LogTemp, Warning, TEXT("Optional symbol bs_video_extract_frame not found"));
     }
 
     UE_LOG(LogTemp, Log, TEXT("Beatsync DLL loaded successfully: %s"), *DllPath);
