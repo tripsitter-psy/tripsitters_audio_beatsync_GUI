@@ -26,13 +26,19 @@ bool InitializeTracing(const std::string& serviceName) {
     std::string endpoint = env ? env : "http://localhost:4318";
 
     try {
-        // Create OTLP exporter (gRPC) -- configuration may be extended if needed
-        auto exporter = std::unique_ptr<sdktrace::SpanExporter>(new exporters::otlp::OtlpGrpcExporter());
+        // Create OTLP exporter (gRPC) with configured endpoint
+        exporters::otlp::OtlpGrpcExporterOptions options;
+        options.endpoint = endpoint;
+        auto exporter = std::unique_ptr<sdktrace::SpanExporter>(new exporters::otlp::OtlpGrpcExporter(options));
         auto processor = std::unique_ptr<sdktrace::SpanProcessor>(new sdktrace::SimpleSpanProcessor(std::move(exporter)));
-        auto provider = std::make_shared<sdktrace::TracerProvider>(std::move(processor));
+        
+        // Create resource with service name
+        auto resource = sdk::resource::Resource::Create({{"service.name", serviceName}});
+        auto provider = std::make_shared<sdktrace::TracerProvider>(resource, std::move(processor));
+        
         trace::Provider::SetTracerProvider(provider);
         g_provider = provider;
-        std::clog << "BeatSync: Tracing initialized (OTLP endpoint=" << endpoint << ")\n";
+        std::clog << "BeatSync: Tracing initialized (OTLP endpoint=" << endpoint << ", service=" << serviceName << ")\n";
         return true;
     } catch (const std::exception& e) {
         std::cerr << "BeatSync: Failed to initialize tracing: " << e.what() << "\n";
@@ -42,8 +48,13 @@ bool InitializeTracing(const std::string& serviceName) {
 
 void ShutdownTracing() {
     if (g_provider) {
-        // Reset provider to disable tracing and allow shutdown/flush
-        trace::Provider::SetTracerProvider(nullptr);
+        // Shutdown the provider to flush any pending spans
+        auto status = g_provider->Shutdown();
+        if (!status.ok()) {
+            std::cerr << "BeatSync: Warning - tracing shutdown failed: " << status.message() << "\n";
+        }
+        // Set to no-op provider instead of nullptr
+        trace::Provider::SetTracerProvider(std::make_shared<trace::NoopTracerProvider>());
         g_provider.reset();
         std::clog << "BeatSync: Tracing shutdown" << std::endl;
     }

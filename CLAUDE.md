@@ -4,15 +4,13 @@
 
 ## Critical Build Instructions
 
-**NEVER mention or attempt to use wxWidgets.** The GUI has been fully migrated to Unreal Engine.
+The GUI is implemented in Unreal Engine (TripSitter standalone app). The C++ backend provides the core audio/video processing.
 
-Always build with:
+Build the backend with:
 ```powershell
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DBEATSYNC_SKIP_GUI=ON
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build --config Release
 ```
-
-The `BEATSYNC_SKIP_GUI=ON` flag is the standard build configuration.
 
 ## Project Architecture
 
@@ -150,7 +148,7 @@ Baseline: [configured in vcpkg.json](vcpkg.json) (vcpkg submodule HEAD)
 - [x] STripSitterMainWidget with preview support
 - [x] vcpkg baseline fix (onnxruntime issue)
 - [x] FFmpeg 8.0.1 feature fix (avutil now in core)
-- [x] BEATSYNC_SKIP_GUI CMake option
+- [x] Deprecated wxWidgets GUI removed (src/GUI deleted)
 - [x] Backend DLL builds successfully
 - [x] test_backend_api passes
 - [x] Custom Corpta font integration
@@ -179,7 +177,7 @@ The `FBeatsyncProcessingTask` class must be fully defined (not forward declared)
 The Corpta font is missing some ASCII glyphs. Use `FCoreStyle::GetDefaultFontStyle()` for body text and help strings that contain punctuation like `|`.
 
 ### vcpkg baseline errors
-Use the vcpkg submodule HEAD commit as baseline: `25b458671af03578e6a34edd8f0d1ac85e084df4`
+Check the `"builtin-baseline"` value in vcpkg.json for the current baseline commit hash to use with the vcpkg submodule.
 
 ### "avutil feature not found" error
 FFmpeg 8.0.1 moved avutil to core. Remove "avutil" from the features list in vcpkg.json.
@@ -188,7 +186,7 @@ FFmpeg 8.0.1 moved avutil to core. Remove "avutil" from the features list in vcp
 
 ```powershell
 # Build backend DLL
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DBEATSYNC_SKIP_GUI=ON
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build --config Release --target beatsync_backend_shared
 
 # Build and run tests

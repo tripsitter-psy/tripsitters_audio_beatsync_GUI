@@ -1,6 +1,7 @@
 #include "BeatsyncProcessingTask.h"
 #include "Async/Async.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformProcess.h"
 #include "Misc/Paths.h"
 #include <memory>
 
@@ -151,9 +152,13 @@ void FBeatsyncProcessingTask::DoWork()
     }
 
     // Set up progress callback for video processing
-    FBeatsyncLoader::SetProgressCallback(Writer, [this](double Prog) {
-        if (!bCancelRequested) {
-            ReportProgress(0.2f + 0.5f * static_cast<float>(Prog), TEXT("Processing video..."));
+    // Note: bCancelRequested is a member of this task object which outlives the callback
+    // since we destroy the Writer (and its callback) before task destruction
+    auto LocalOnProgress = OnProgress;
+    const FThreadSafeBool* CancelFlag = &bCancelRequested;
+    FBeatsyncLoader::SetProgressCallback(Writer, [LocalOnProgress, CancelFlag](double Prog) {
+        if (!(*CancelFlag)) {
+            LocalOnProgress.ExecuteIfBound(0.2f + 0.5f * static_cast<float>(Prog), TEXT("Processing video..."));
         }
     });
 
@@ -162,9 +167,18 @@ void FBeatsyncProcessingTask::DoWork()
 
     double ClipDuration = FilteredBeats.Num() > 1 ? (FilteredBeats[1] - FilteredBeats[0]) : 1.0;
 
-    // Create temp file for video-only output
-    FString TempVideoPath = Params.OutputPath + TEXT(".temp_video.mp4");
-    FString TempEffectsPath = Params.OutputPath + TEXT(".temp_effects.mp4");
+    // Create temp files in system temp directory (not next to output)
+    FString TempDir = FPaths::Combine(FPlatformProcess::UserTempDir(), TEXT("TripSitter"));
+    
+    // Ensure the TripSitter temp directory exists
+    IFileManager::Get().MakeDirectory(*TempDir, true);
+    
+    // Generate unique temp filenames
+    FString TempBaseName = FString::Printf(TEXT("temp_%d"), FMath::Rand());
+    FString TempVideoPath = FPaths::Combine(TempDir, TempBaseName + TEXT("_video.mp4"));
+    FString TempEffectsPath = FPaths::Combine(TempDir, TempBaseName + TEXT("_effects.mp4"));
+
+    UE_LOG(LogTemp, Log, TEXT("TripSitter: Using temp directory: %s"), *TempDir);
 
     // Cut video
     if (Params.bIsMultiClip && Params.VideoPaths.Num() > 1)

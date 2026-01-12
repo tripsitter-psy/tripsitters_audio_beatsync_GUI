@@ -11,13 +11,19 @@
 
 param(
     [switch]$ToEngine,
-    [switch]$ToRepo,
-    [switch]$Force
+    [switch]$ToRepo
 )
 
 $RepoRoot = $PSScriptRoot | Split-Path -Parent
 $RepoSource = Join-Path $RepoRoot "unreal-prototype\Source\TripSitterUE"
-$EngineSource = "C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter"
+$EngineSource = $env:TRIPSITTER_ENGINE_PATH
+if (-not $EngineSource) {
+    $EngineSource = Read-Host "Enter the path to the Unreal Engine source directory (e.g., C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter)"
+}
+if (-not (Test-Path $EngineSource)) {
+    Write-Error "Engine source path '$EngineSource' does not exist. Set TRIPSITTER_ENGINE_PATH environment variable or provide a valid path."
+    exit 1
+}
 
 # Files to sync (relative to Private folder)
 $SourceFiles = @(
@@ -132,6 +138,12 @@ Files synced:
     Write-Host "`nEngine-only files (not synced):" -ForegroundColor Gray
     foreach ($f in $EngineOnlyFiles) { Write-Host "  - $f" -ForegroundColor Gray }
     exit 0
+}
+
+# Check for mutual exclusivity of switches
+if ($ToEngine -and $ToRepo) {
+    Write-Error "Cannot specify both -ToEngine and -ToRepo switches. Choose one direction for sync: use -ToEngine to copy from repo to Engine (Sync-ToEngine function) or -ToRepo to copy from Engine to repo (Sync-ToRepo function)."
+    throw
 }
 
 if ($ToEngine) {

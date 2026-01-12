@@ -34,7 +34,7 @@ jobs:
 
             Please add the **`test-cuda`** label so the gated CUDA integration workflow can run on a GPU-enabled self-hosted runner and validate GPU changes.
 
-            *How-to:* add the label in the PR sidebar or run `python tools/check_gpu_changes.py --base ${GITHUB_BASE_REF}` to see which files triggered this.
+            *How-to:* add the label in the PR sidebar or run `python tools/check_gpu_changes.py --base ${{ github.base_ref }}` to see which files triggered this.
 
             <!-- gpu-pr-check -->
           edit-mode: replace

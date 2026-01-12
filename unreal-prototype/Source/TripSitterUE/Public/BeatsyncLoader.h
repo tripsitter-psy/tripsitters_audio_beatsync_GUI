@@ -14,20 +14,20 @@ struct FBeatGrid
 struct FEffectsConfig
 {
     bool bEnableTransitions = false;
-    FString TransitionType;
-    double TransitionDuration = 0.0;
+    FString TransitionType = TEXT("fade");
+    float TransitionDuration = 0.0f;
 
     bool bEnableColorGrade = false;
-    FString ColorPreset;
+    FString ColorPreset = TEXT("warm");
 
     bool bEnableVignette = false;
-    double VignetteStrength = 0.0;
+    float VignetteStrength = 0.0f;
 
     bool bEnableBeatFlash = false;
-    double FlashIntensity = 0.0;
+    float FlashIntensity = 0.0f;
 
     bool bEnableBeatZoom = false;
-    double ZoomIntensity = 0.0;
+    float ZoomIntensity = 0.0f;
 
     int32 EffectBeatDivisor = 1;
 };

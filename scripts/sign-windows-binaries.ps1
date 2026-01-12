@@ -123,12 +123,13 @@ if (-not $password -or $password -eq '') {
 
 # Import certificate to store securely
 $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
-$certObject = Import-PfxCertificate -FilePath $cert -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword
-$thumbprint = $certObject.Thumbprint
-
-Write-Host "Imported certificate with thumbprint: $thumbprint"
 
 try {
+    $certObject = Import-PfxCertificate -FilePath $cert -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword
+    $thumbprint = $certObject.Thumbprint
+
+    Write-Host "Imported certificate with thumbprint: $thumbprint"
+
     # Find files to sign
     $filesToSign = @()
     $extensions = @("*.exe", "*.dll")
@@ -194,8 +195,10 @@ try {
     }
 } finally {
     # Clean up certificate from store and temp file
-    Remove-Item "Cert:\CurrentUser\My\$thumbprint" -ErrorAction SilentlyContinue
-    if ($cert -eq (Join-Path $env:TEMP "codesign_cert.pfx")) {
+    if ($thumbprint -and (Test-Path "Cert:\CurrentUser\My\$thumbprint")) {
+        Remove-Item "Cert:\CurrentUser\My\$thumbprint" -ErrorAction SilentlyContinue
+    }
+    if ($cert -and (Test-Path $cert) -and ($cert -eq (Join-Path $env:TEMP "codesign_cert.pfx"))) {
         Remove-Item $cert -Force -ErrorAction SilentlyContinue
     }
 }

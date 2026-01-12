@@ -33,10 +33,12 @@
 #include "IDesktopPlatform.h"
 #else
 // Windows native file dialog for standalone builds
+#if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <commdlg.h>
 #include <shlobj.h>
 #include "Windows/HideWindowsPlatformTypes.h"
+#endif
 #endif
 
 #define LOCTEXT_NAMESPACE "TripSitterMainWidget"
@@ -757,12 +759,16 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 						return SNew(STextBlock).Text(FText::FromString(*Item));
 					})
 					.OnSelectionChanged_Lambda([this](TSharedPtr<FString> Item, ESelectInfo::Type) {
-						BeatRate = BeatRateOptions.Find(Item);
+						int32 Index = BeatRateOptions.Find(Item);
+						if (Index != INDEX_NONE) {
+							BeatRate = static_cast<EBeatRate>(Index);
+						}
 					})
 					[
 						SNew(STextBlock)
 						.Text_Lambda([this]() {
-							return FText::FromString(BeatRateOptions.IsValidIndex(BeatRate) ? *BeatRateOptions[BeatRate] : TEXT("Select..."));
+							int32 Index = static_cast<int32>(BeatRate);
+							return FText::FromString(BeatRateOptions.IsValidIndex(Index) ? *BeatRateOptions[Index] : TEXT("Select..."));
 						})
 					]
 				]
@@ -789,12 +795,16 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 						return SNew(STextBlock).Text(FText::FromString(*Item));
 					})
 					.OnSelectionChanged_Lambda([this](TSharedPtr<FString> Item, ESelectInfo::Type) {
-						AnalysisMode = AnalysisModeOptions.Find(Item);
+						int32 Index = AnalysisModeOptions.Find(Item);
+						if (Index != INDEX_NONE) {
+							AnalysisMode = static_cast<EAnalysisMode>(Index);
+						}
 					})
 					[
 						SNew(STextBlock)
 						.Text_Lambda([this]() {
-							return FText::FromString(AnalysisModeOptions.IsValidIndex(AnalysisMode) ? *AnalysisModeOptions[AnalysisMode] : TEXT("Select..."));
+							int32 Index = static_cast<int32>(AnalysisMode);
+							return FText::FromString(AnalysisModeOptions.IsValidIndex(Index) ? *AnalysisModeOptions[Index] : TEXT("Select..."));
 						})
 					]
 				]
@@ -829,12 +839,16 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 						return SNew(STextBlock).Text(FText::FromString(*Item));
 					})
 					.OnSelectionChanged_Lambda([this](TSharedPtr<FString> Item, ESelectInfo::Type) {
-						Resolution = ResolutionOptions.Find(Item);
+						int32 Index = ResolutionOptions.Find(Item);
+						if (Index != INDEX_NONE) {
+							Resolution = static_cast<EResolution>(Index);
+						}
 					})
 					[
 						SNew(STextBlock)
 						.Text_Lambda([this]() {
-							return FText::FromString(ResolutionOptions.IsValidIndex(Resolution) ? *ResolutionOptions[Resolution] : TEXT("Select..."));
+							int32 Index = static_cast<int32>(Resolution);
+							return FText::FromString(ResolutionOptions.IsValidIndex(Index) ? *ResolutionOptions[Index] : TEXT("Select..."));
 						})
 					]
 				]
@@ -861,12 +875,16 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 						return SNew(STextBlock).Text(FText::FromString(*Item));
 					})
 					.OnSelectionChanged_Lambda([this](TSharedPtr<FString> Item, ESelectInfo::Type) {
-						FPS = FPSOptions.Find(Item);
+						int32 Index = FPSOptions.Find(Item);
+						if (Index != INDEX_NONE) {
+							FPS = static_cast<EFPS>(Index);
+						}
 					})
 					[
 						SNew(STextBlock)
 						.Text_Lambda([this]() {
-							return FText::FromString(FPSOptions.IsValidIndex(FPS) ? *FPSOptions[FPS] : TEXT("Select..."));
+							int32 Index = static_cast<int32>(FPS);
+							return FText::FromString(FPSOptions.IsValidIndex(Index) ? *FPSOptions[Index] : TEXT("Select..."));
 						})
 					]
 				]
@@ -1473,7 +1491,7 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	Params.VideoPaths = VideoPaths;
 	Params.OutputPath = OutputPath;
 	Params.bIsMultiClip = bIsMultiClip;
-	Params.BeatRate = BeatRate;
+	Params.BeatRate = static_cast<int32>(BeatRate);
 
 	// Get selection range for audio trimming
 	if (WaveformViewer.IsValid() && WaveformViewer->GetDuration() > 0)
@@ -1496,15 +1514,31 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	Params.EffectsConfig.bEnableColorGrade = bEnableColorGrade;
 	Params.EffectsConfig.bEnableTransitions = bEnableTransitions;
 	Params.EffectsConfig.TransitionDuration = TransitionDuration;
-	Params.EffectsConfig.EffectBeatDivisor = 1 << BeatRate;
+	Params.EffectsConfig.EffectBeatDivisor = 1 << static_cast<int32>(BeatRate);
 
 	// Map color preset index to string
-	static const TCHAR* ColorPresetNames[] = { TEXT("warm"), TEXT("cool"), TEXT("vintage"), TEXT("vibrant") };
-	Params.EffectsConfig.ColorPreset = ColorPresetOptions.IsValidIndex(ColorPreset) ? ColorPresetNames[ColorPreset] : TEXT("warm");
+	if (ColorPresetOptions.IsValidIndex(ColorPreset))
+	{
+		Params.EffectsConfig.ColorPreset = *ColorPresetOptions[ColorPreset];
+		FString Lower = Params.EffectsConfig.ColorPreset.ToLower();
+		Params.EffectsConfig.ColorPreset = Lower;
+	}
+	else
+	{
+		Params.EffectsConfig.ColorPreset = TEXT("warm");
+	}
 
 	// Map transition type index to string
-	static const TCHAR* TransitionTypeNames[] = { TEXT("fade"), TEXT("dissolve"), TEXT("wipe"), TEXT("zoom") };
-	Params.EffectsConfig.TransitionType = TransitionOptions.IsValidIndex(TransitionType) ? TransitionTypeNames[TransitionType] : TEXT("fade");
+	if (TransitionOptions.IsValidIndex(TransitionType))
+	{
+		Params.EffectsConfig.TransitionType = *TransitionOptions[TransitionType];
+		FString Lower = Params.EffectsConfig.TransitionType.ToLower();
+		Params.EffectsConfig.TransitionType = Lower;
+	}
+	else
+	{
+		Params.EffectsConfig.TransitionType = TEXT("fade");
+	}
 
 	// Create and start async task
 	ProcessingTask = MakeUnique<FAsyncTask<FBeatsyncProcessingTask>>(
@@ -1579,9 +1613,15 @@ FReply STripSitterMainWidget::OnCancelClicked()
 	{
 		bIsProcessing = false;
 		StatusText = TEXT("Cancelled");
-		StatusTextBlock->SetText(FText::FromString(StatusText));
+		if (StatusTextBlock.IsValid())
+		{
+			StatusTextBlock->SetText(FText::FromString(StatusText));
+		}
 		Progress = 0.0f;
-		ProgressBar->SetPercent(Progress);
+		if (ProgressBar.IsValid())
+		{
+			ProgressBar->SetPercent(Progress);
+		}
 	}
 	return FReply::Handled();
 }

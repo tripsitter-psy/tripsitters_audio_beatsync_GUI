@@ -71,16 +71,18 @@ BEATSYNC_API void bs_free_waveform(float* peaks);
 
 // Effects configuration for video processing
 // NOTE: String fields (transitionType, colorPreset) are caller-owned and must remain
-// valid for the duration of the bs_video_set_effects_config() call. The implementation
-// does not copy these strings - callers should ensure the memory remains accessible
-// until the function returns.
+// valid from the bs_video_set_effects_config() call until bs_video_apply_effects()
+// finishes or the configuration is replaced. The implementation does not copy these
+// strings - callers should ensure the memory remains accessible during this period.
+// To free the configuration, call bs_video_set_effects_config() with a nullptr or
+// replace it with a new configuration.
 typedef struct {
     int enableTransitions;
-    const char* transitionType;  // "fade", "wipe", "dissolve", "zoom" - caller-owned, must remain valid during call
+    const char* transitionType;  // "fade", "wipe", "dissolve", "zoom" - caller-owned, must remain valid until bs_video_apply_effects() finishes
     double transitionDuration;
 
     int enableColorGrade;
-    const char* colorPreset;     // "warm", "cool", "vintage", "vibrant" - caller-owned, must remain valid during call
+    const char* colorPreset;     // "warm", "cool", "vintage", "vibrant" - caller-owned, must remain valid until bs_video_apply_effects() finishes
 
     int enableVignette;
     double vignetteStrength;

@@ -15,10 +15,12 @@ TEST_CASE("Tracing writes start and end records to file", "[tracing]") {
     tracing::ShutdownTracing();
 
     REQUIRE(std::filesystem::exists(tmp));
-    std::ifstream in(tmp.string());
-    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    REQUIRE(content.find("START test-span") != std::string::npos);
-    REQUIRE(content.find("END test-span") != std::string::npos);
+    {
+        std::ifstream in(tmp.string());
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(content.find("START test-span") != std::string::npos);
+        REQUIRE(content.find("END test-span") != std::string::npos);
+    }
     // Cleanup
     try { std::filesystem::remove(tmp); } catch(...) { /* best-effort cleanup */ }
 }

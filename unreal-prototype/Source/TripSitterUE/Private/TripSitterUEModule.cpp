@@ -51,12 +51,14 @@ static void CallBackendInitTracing(const FString& ServiceName)
     void* Symbol = FPlatformProcess::GetDllExport(BeatsyncDllHandle, TEXT("bs_initialize_tracing"));
     if (!Symbol) {
         UE_LOG(LogTemp, Warning, TEXT("TripSitterUEModule: bs_initialize_tracing not found in backend"));
+        FPlatformProcess::FreeDllHandle(BeatsyncDllHandle);
+        BeatsyncDllHandle = nullptr;
         return;
     }
 
     bs_init_tracing_t Init = reinterpret_cast<bs_init_tracing_t>(Symbol);
-    FString UTF8 = ServiceName;
-    Init(TCHAR_TO_ANSI(*UTF8));
+    FString ServiceNameUTF8 = ServiceName;
+    Init(TCHAR_TO_UTF8(*ServiceNameUTF8));
 }
 
 static void CallBackendShutdownTracing()

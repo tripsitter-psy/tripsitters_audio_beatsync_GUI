@@ -22,17 +22,17 @@ if(BUILD_TESTS)
         GIT_TAG v3.4.0
     )
     FetchContent_MakeAvailable(catch2)
+
+    add_executable(test_logarchiver_catch2
+        catch_main.cpp
+        test_deflate_catch2.cpp
+        ../src/utils/LogArchiver.cpp
+    )
+
+    target_include_directories(test_logarchiver_catch2 PRIVATE ${CMAKE_SOURCE_DIR}/src/utils)
+    target_link_libraries(test_logarchiver_catch2 PRIVATE Catch2::Catch2)
+    add_test(NAME logarchiver_catch2 COMMAND test_logarchiver_catch2)
 endif()
-
-add_executable(test_logarchiver_catch2
-    catch_main.cpp
-    test_deflate_catch2.cpp
-    ../src/utils/LogArchiver.cpp
-)
-
-target_include_directories(test_logarchiver_catch2 PRIVATE ${CMAKE_SOURCE_DIR}/src/utils)
-target_link_libraries(test_logarchiver_catch2 PRIVATE Catch2::Catch2)
-add_test(NAME logarchiver_catch2 COMMAND test_logarchiver_catch2)
 
 # Transition library tests
 add_executable(test_transition_library
@@ -68,22 +68,5 @@ target_link_libraries(test_backend_api PRIVATE Catch2::Catch2 beatsync_backend_s
 add_test(NAME backend_api COMMAND test_backend_api)
 set_tests_properties(backend_api PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
-# Verify wallpaper is packaged into build outputs or app bundle (GUI tests - skip when BEATSYNC_SKIP_GUI)
-if(NOT BEATSYNC_SKIP_GUI)
-    add_executable(test_wallpaper_installed
-        test_wallpaper_installed.cpp
-    )
-
-    target_link_libraries(test_wallpaper_installed PRIVATE Catch2::Catch2)
-    # Pass candidate locations: non-mac build assets path and macOS bundle assets path (if applicable)
-    if(APPLE)
-        add_test(NAME wallpaper_installed COMMAND test_wallpaper_installed "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets/wallpaper.png" "$<TARGET_BUNDLE_CONTENT_DIR:TripSitter>/MacOS/assets/wallpaper.png")
-    else()
-        add_test(NAME wallpaper_installed COMMAND test_wallpaper_installed "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/assets/wallpaper.png")
-    endif()
-    set_tests_properties(wallpaper_installed PROPERTIES WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
-
-    # Runtime check: launch the GUI executable with --check-wallpaper and assert success when wallpaper found
-    add_test(NAME wallpaper_runtime_check COMMAND $<TARGET_FILE:TripSitter> --check-wallpaper)
-    set_tests_properties(wallpaper_runtime_check PROPERTIES WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
-endif()
+# GUI wallpaper tests removed - wxWidgets GUI has been deprecated and deleted
+# The GUI is now implemented in Unreal Engine (TripSitter standalone app)

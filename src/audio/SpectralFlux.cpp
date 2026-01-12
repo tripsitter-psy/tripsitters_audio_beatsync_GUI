@@ -54,6 +54,11 @@ static void fft(std::vector<std::complex<double>>& a) {
 // Hann window
 static void applyHann(std::vector<double>& buf) {
     int N = (int)buf.size();
+    if (N < 2) {
+        // For N == 1, Hann window is 1.0; for N == 0, no operation needed
+        if (N == 1) buf[0] *= 1.0;
+        return;
+    }
     for (int n = 0; n < N; ++n) buf[n] *= 0.5 * (1 - cos(2.0 * PI * n / (N - 1)));
 }
 
@@ -84,10 +89,11 @@ static std::vector<double> gaussianSmooth(const std::vector<double>& in, double 
 
 std::vector<double> detectBeatsFromWaveform(const std::vector<float>& samples, int sampleRate,
                                             int windowSize, int hopSize,
-                                            double smoothSigma, double thresholdFactor) {
+                                            double smoothSigma, double thresholdFactor,
+                                            double minBeatDistanceSeconds) {
     TRACE_FUNC();
     std::vector<double> beats;
-    if (samples.empty() || sampleRate <= 0) return beats;
+    if (samples.empty() || sampleRate <= 0 || windowSize <= 0 || hopSize <= 0) return beats;
 
     int N = windowSize;
     int H = hopSize;
@@ -157,12 +163,11 @@ std::vector<double> detectBeatsFromWaveform(const std::vector<float>& samples, i
         }
     }
 
-    // Convert frame indices to time and perform simple pruning (minimum distance 0.25s)
-    double minDist = 0.25; // seconds
+    // Convert frame indices to time and perform simple pruning (minimum distance minBeatDistanceSeconds)
     double lastT = -1e9;
     for (double p : peaks) {
         double t = p * H / double(sampleRate);
-        if (t - lastT >= minDist) {
+        if (t - lastT >= minBeatDistanceSeconds) {
             beats.push_back(t);
             lastT = t;
         }

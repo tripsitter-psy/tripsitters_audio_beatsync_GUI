@@ -19,7 +19,7 @@ if (!(Test-Path $EngineSymlink)) {
 }
 
 # Verify UBT exists
-$UBTPath = Join-Path $UEPath "Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.exe"
+$UBTPath = Join-Path $UEPath "Engine\Binaries\DOTNET\UnrealBuildTool\UnrealBuildTool.exe"
 if (!(Test-Path $UBTPath)) {
     $UBTPath = Join-Path $UEPath "Engine\Binaries\Win64\UnrealBuildTool.exe"
     if (!(Test-Path $UBTPath)) {

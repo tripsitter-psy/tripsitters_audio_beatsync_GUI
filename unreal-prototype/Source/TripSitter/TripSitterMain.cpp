@@ -5,7 +5,12 @@
 int32 main(int32 argc, char* argv[])
 {
     // Initialize the engine
-    GEngineLoop.PreInit(argc, argv);
+    int32 PreInitResult = GEngineLoop.PreInit(argc, argv);
+    if (PreInitResult != 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Engine PreInit failed with error code: %d"), PreInitResult);
+        return PreInitResult;
+    }
 
     // Create and run the application
     FTripSitterApplication App;

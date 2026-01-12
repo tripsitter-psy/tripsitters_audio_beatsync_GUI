@@ -139,7 +139,7 @@ if(TARGET beatsync_backend_shared)
     target_sources(beatsync_backend_shared PRIVATE ${OPTIONAL_SOURCES})
 endif()
 
-# CLI executable (always built - does not require wxWidgets)
+# CLI executable
 add_executable(beatsync src/main.cpp)
 target_link_libraries(beatsync PRIVATE
     beatsync_backend_static
@@ -181,7 +181,7 @@ install(FILES
 include(InstallRequiredSystemLibraries)
 set(CPACK_PACKAGE_NAME "MTVTripSitter")
 set(CPACK_PACKAGE_VENDOR "MTV")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "MTV Trip Sitter - Audio Beat Sync GUI")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "MTV Trip Sitter - Audio Beat Sync")
 set(CPACK_PACKAGE_VERSION_MAJOR "0")
 set(CPACK_PACKAGE_VERSION_MINOR "1")
 set(CPACK_PACKAGE_VERSION_PATCH "0")
@@ -204,12 +204,12 @@ if(WIN32)
     if(EXISTS "${CMAKE_SOURCE_DIR}/assets/icon.ico")
         set(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}/assets/icon.ico")
         set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}/assets/icon.ico")
-        set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\TripSitter.exe")
+        set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\beatsync.exe")
     endif()
 
     # Start menu and desktop shortcuts
     set(CPACK_NSIS_CREATE_ICONS_EXTRA
-        "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk' '$INSTDIR\\\\bin\\\\TripSitter.exe'"
+        "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk' '$INSTDIR\\\\bin\\\\beatsync.exe'"
     )
     set(CPACK_NSIS_DELETE_ICONS_EXTRA
         "Delete '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk'"

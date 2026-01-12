@@ -1,6 +1,7 @@
 #include "BeatsyncProcessingTask.h"
 #include "Async/Async.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformProcess.h"
 #include "Misc/Paths.h"
 
 FBeatsyncProcessingTask::FBeatsyncProcessingTask(const FBeatsyncProcessingParams& InParams,
@@ -17,8 +18,9 @@ void FBeatsyncProcessingTask::ReportProgress(float Progress, const FString& Stat
     if (OnProgress.IsBound())
     {
         // Marshal to game thread for UI updates
-        AsyncTask(ENamedThreads::GameThread, [this, Progress, Status]() {
-            OnProgress.ExecuteIfBound(Progress, Status);
+        auto LocalOnProgress = OnProgress;
+        AsyncTask(ENamedThreads::GameThread, [LocalOnProgress, Progress, Status]() {
+            LocalOnProgress.ExecuteIfBound(Progress, Status);
         });
     }
 }
@@ -41,8 +43,9 @@ void FBeatsyncProcessingTask::DoWork()
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Backend not loaded");
-        AsyncTask(ENamedThreads::GameThread, [this, Result]() {
-            OnComplete.ExecuteIfBound(Result);
+        auto LocalOnComplete = OnComplete;
+        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+            LocalOnComplete.ExecuteIfBound(Result);
         });
         return;
     }
@@ -54,8 +57,9 @@ void FBeatsyncProcessingTask::DoWork()
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
-        AsyncTask(ENamedThreads::GameThread, [this, Result]() {
-            OnComplete.ExecuteIfBound(Result);
+        auto LocalOnComplete = OnComplete;
+        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+            LocalOnComplete.ExecuteIfBound(Result);
         });
         return;
     }
@@ -65,8 +69,9 @@ void FBeatsyncProcessingTask::DoWork()
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Failed to create analyzer");
-        AsyncTask(ENamedThreads::GameThread, [this, Result]() {
-            OnComplete.ExecuteIfBound(Result);
+        auto LocalOnComplete = OnComplete;
+        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+            LocalOnComplete.ExecuteIfBound(Result);
         });
         return;
     }
@@ -79,8 +84,9 @@ void FBeatsyncProcessingTask::DoWork()
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Failed to analyze audio or no beats found");
-        AsyncTask(ENamedThreads::GameThread, [this, Result]() {
-            OnComplete.ExecuteIfBound(Result);
+        auto LocalOnComplete = OnComplete;
+        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+            LocalOnComplete.ExecuteIfBound(Result);
         });
         return;
     }
@@ -94,15 +100,17 @@ void FBeatsyncProcessingTask::DoWork()
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
-        AsyncTask(ENamedThreads::GameThread, [this, Result]() {
-            OnComplete.ExecuteIfBound(Result);
+        auto LocalOnComplete = OnComplete;
+        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+            LocalOnComplete.ExecuteIfBound(Result);
         });
         return;
     }
 
     // Step 2: Apply beat rate filter
     TArray<double> FilteredBeats;
-    int32 BeatDivisor = 1 << Params.BeatRate; // 1, 2, 4, 8
+    int32 ClampedBeatRate = FMath::Clamp(Params.BeatRate, 0, 3); // Clamp to safe range to prevent overflow
+    int32 BeatDivisor = 1 << ClampedBeatRate; // 1, 2, 4, 8
     for (int32 i = 0; i < BeatGrid.Beats.Num(); i += BeatDivisor)
     {
         FilteredBeats.Add(BeatGrid.Beats[i]);
@@ -115,17 +123,22 @@ void FBeatsyncProcessingTask::DoWork()
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Failed to create video writer");
-        AsyncTask(ENamedThreads::GameThread, [this, Result]() {
-            OnComplete.ExecuteIfBound(Result);
+        auto LocalOnComplete = OnComplete;
+        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+            LocalOnComplete.ExecuteIfBound(Result);
         });
         return;
     }
 
     // Set up progress callback for video processing
-    FBeatsyncLoader::SetProgressCallback(Writer, [this](double Prog) {
-        if (!bCancelRequested)
+    // Note: bCancelRequested is a member of this task object which outlives the callback
+    // since we destroy the Writer (and its callback) before task destruction
+    auto LocalOnProgress = OnProgress;
+    const FThreadSafeBool* CancelFlag = &bCancelRequested;
+    FBeatsyncLoader::SetProgressCallback(Writer, [LocalOnProgress, CancelFlag](double Prog) {
+        if (!(*CancelFlag))
         {
-            ReportProgress(0.2f + 0.5f * static_cast<float>(Prog), TEXT("Processing video..."));
+            LocalOnProgress.ExecuteIfBound(0.2f + 0.5f * static_cast<float>(Prog), TEXT("Processing video..."));
         }
     });
 
@@ -165,8 +178,9 @@ void FBeatsyncProcessingTask::DoWork()
         Result.ErrorMessage = ErrorMsg.IsEmpty() ? TEXT("Failed to cut video") : ErrorMsg;
         FBeatsyncLoader::DestroyVideoWriter(Writer);
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
-        AsyncTask(ENamedThreads::GameThread, [this, Result]() {
-            OnComplete.ExecuteIfBound(Result);
+        auto LocalOnComplete = OnComplete;
+        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+            LocalOnComplete.ExecuteIfBound(Result);
         });
         return;
     }
@@ -177,8 +191,9 @@ void FBeatsyncProcessingTask::DoWork()
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
-        AsyncTask(ENamedThreads::GameThread, [this, Result]() {
-            OnComplete.ExecuteIfBound(Result);
+        auto LocalOnComplete = OnComplete;
+        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+            LocalOnComplete.ExecuteIfBound(Result);
         });
         return;
     }
@@ -212,8 +227,9 @@ void FBeatsyncProcessingTask::DoWork()
         IFileManager::Get().Delete(*CurrentVideoPath, false, true, true);
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
-        AsyncTask(ENamedThreads::GameThread, [this, Result]() {
-            OnComplete.ExecuteIfBound(Result);
+        auto LocalOnComplete = OnComplete;
+        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+            LocalOnComplete.ExecuteIfBound(Result);
         });
         return;
     }
@@ -247,7 +263,8 @@ void FBeatsyncProcessingTask::DoWork()
 
     ReportProgress(1.0f, bSuccess ? TEXT("Complete!") : TEXT("Failed"));
 
-    AsyncTask(ENamedThreads::GameThread, [this, Result]() {
-        OnComplete.ExecuteIfBound(Result);
+    auto LocalOnComplete = OnComplete;
+    AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+        LocalOnComplete.ExecuteIfBound(Result);
     });
 }

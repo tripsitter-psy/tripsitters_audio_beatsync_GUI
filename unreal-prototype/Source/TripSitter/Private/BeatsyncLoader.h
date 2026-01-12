@@ -32,9 +32,6 @@ struct FEffectsConfig
     int32 EffectBeatDivisor = 1;
 };
 
-// Progress callback delegate
-DECLARE_DELEGATE_TwoParams(FOnBeatsyncProgress, double /*Progress*/, void* /*UserData*/);
-
 class FBeatsyncLoader
 {
 public:

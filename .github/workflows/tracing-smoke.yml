@@ -35,7 +35,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: beatsync-trace
+          name: beatsync-trace-linux
           path: build/beatsync-trace.log
 
   windows:
@@ -71,5 +71,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: beatsync-trace
+          name: beatsync-trace-windows
           path: build\beatsync-trace.log

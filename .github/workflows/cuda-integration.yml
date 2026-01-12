@@ -18,7 +18,7 @@ on:
         required: true
         default: 'Manual testing of CUDA/GPU acceleration'
   pull_request:
-    types: [labeled]
+    types: [labeled, opened, synchronize, reopened, edited]
 
 jobs:
   cuda-integration:
@@ -47,6 +47,7 @@ jobs:
 
       - name: Notice when GPU is absent
         if: steps.check_gpu.outputs.has_gpu == 'false'
+        shell: powershell
         run: |
           Write-Host "::notice::No NVIDIA GPU detected on runner - CUDA integration steps will be skipped. Use a self-hosted runner with label 'gpu' to run these tests."
       - name: Setup vcpkg

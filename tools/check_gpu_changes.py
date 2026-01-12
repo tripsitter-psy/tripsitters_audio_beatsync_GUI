@@ -32,7 +32,7 @@ try:
     files = [f for f in res.stdout.splitlines() if f.strip()]
 except Exception as e:
     print('Error running git diff:', e)
-    sys.exit(0)
+    sys.exit(1)
 
 matched = []
 for f in files:

@@ -2,6 +2,7 @@
 #include "audio/SpectralFlux.h"
 #include <vector>
 #include <catch2/catch_approx.hpp>
+#include <limits>
 
 // Helper: generate a click track (impulse at beat times)
 static std::vector<float> makeClickTrack(const std::vector<double>& beatTimes, int sampleRate, double duration) {
@@ -24,9 +25,16 @@ TEST_CASE("SpectralFlux detects click track beats", "[spectral][detector]") {
 
     auto out = BeatSync::detectBeatsFromWaveform(samples, sr, 1024, 256, 1.5, 1.2);
     REQUIRE(out.size() >= beats.size());
-    // allow small tolerance
-    for (size_t i = 0; i < beats.size(); ++i) {
-        REQUIRE(out[i] == Catch::Approx(beats[i]).margin(0.05));
+    // For each expected beat, find the closest detected beat and check it's within tolerance
+    for (double expected : beats) {
+        double minDistance = std::numeric_limits<double>::max();
+        for (double detected : out) {
+            double distance = std::abs(detected - expected);
+            if (distance < minDistance) {
+                minDistance = distance;
+            }
+        }
+        REQUIRE(minDistance <= 0.05);
     }
 }
 

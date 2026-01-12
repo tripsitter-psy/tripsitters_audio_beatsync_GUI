@@ -117,10 +117,10 @@ protected:
 
 	// Selection handle interaction
 	enum class EDragMode { None, DragStart, DragEnd, Pan, DragEffectStart, DragEffectEnd };
-	mutable EDragMode CurrentDragMode = EDragMode::None;
-	mutable double DragStartTime = 0.0;
-	mutable FVector2D LastMousePos = FVector2D::ZeroVector;
-	mutable int32 DragEffectIndex = -1;
+	EDragMode CurrentDragMode = EDragMode::None;
+	double DragStartTime = 0.0;
+	FVector2D LastMousePos = FVector2D::ZeroVector;
+	int32 DragEffectIndex = -1;
 
 	// Handle hit testing
 	static constexpr float HandleWidth = 10.0f;
@@ -131,7 +131,7 @@ protected:
 	FOnEffectRegionChanged OnEffectRegionChanged;
 
 	// Context menu position
-	mutable double ContextMenuTime = 0.0;
+	double ContextMenuTime = 0.0;
 
 	// Helper functions
 	double PixelToTime(float X, float Width) const;

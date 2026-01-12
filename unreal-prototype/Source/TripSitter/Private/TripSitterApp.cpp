@@ -23,7 +23,11 @@ int RunTripSitter(const TCHAR* CommandLine)
 	FSlateApplication::InitializeAsStandaloneApplication(GetStandardStandaloneRenderer());
 
 	// Initialize the beatsync backend DLL
-	FBeatsyncLoader::Initialize();
+	if (!FBeatsyncLoader::Initialize())
+	{
+		UE_LOG(LogTemp, Error, TEXT("Failed to initialize beatsync backend. Beat sync features will be disabled."));
+		// Continue with application startup but beatsync features will be unavailable
+	}
 
 	// Create main application window with TripSitter UI
 	TSharedRef<SWindow> MainWindow = SNew(SWindow)

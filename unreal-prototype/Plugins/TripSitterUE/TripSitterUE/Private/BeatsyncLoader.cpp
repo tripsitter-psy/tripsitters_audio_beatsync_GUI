@@ -84,8 +84,6 @@ bool FBeatsyncLoader::Initialize()
     // macOS:   <repo>/unreal-prototype/ThirdParty/beatsync/lib/Mac/libbeatsync_backend.dylib
     // Linux:   <repo>/unreal-prototype/ThirdParty/beatsync/lib/Linux/libbeatsync_backend.so
 
-    FString ModuleDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()); // ProjectDir points to UE project when running in editor; for prototype use ModuleDirectory fallback
-
     FString Filename;
     FString Subdir;
 #if PLATFORM_WINDOWS
@@ -101,10 +99,9 @@ bool FBeatsyncLoader::Initialize()
 
     FString DllPath = FPaths::Combine(FPaths::ProjectDir(), TEXT(".."), TEXT("unreal-prototype"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("lib"), Subdir, Filename);
 
-    // If ProjectDir is empty in some contexts, try module relative path
+    // If ProjectDir path doesn't exist, try plugin's ThirdParty directory
     if (!FPaths::FileExists(DllPath)) {
-        FString Relative = FPaths::Combine(FPaths::ConvertRelativePathToFull(FPaths::EngineDir()), TEXT(".."));
-        DllPath = FPaths::Combine(Relative, TEXT("unreal-prototype"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("lib"), Subdir, Filename);
+        DllPath = FPaths::Combine(FPaths::ProjectPluginsDir(), TEXT("TripSitterUE"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("lib"), Subdir, Filename);
     }
 
     if (!FPaths::FileExists(DllPath)) {
@@ -213,7 +210,9 @@ bool FBeatsyncLoader::AnalyzeAudio(void* handle, const FString& path, FBeatGrid&
     outGrid.BPM = grid.bpm;
     outGrid.Duration = grid.duration;
     outGrid.Beats.Empty();
-    outGrid.Beats.Append(grid.beats, grid.count);
+    if (grid.beats != nullptr && grid.count > 0) {
+        outGrid.Beats.Append(grid.beats, grid.count);
+    }
 
     if (GApi.free_beatgrid) GApi.free_beatgrid(&grid);
     return true;

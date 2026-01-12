@@ -39,14 +39,16 @@ if [ "$available_gb" -lt 10 ]; then
   echo "WARNING: Less than 10GB free in TEMP. nvcc and builds may fail with 'ptxas' or 'No space left' errors." >&2
 fi
 
-# Optional GitHub runner check (requires GITHUB_TOKEN and REPO in OWNER/REPO form)
-if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${REPO:-}" ]; then
-  echo "Checking GitHub self-hosted runners for repo: $REPO"
-  api="https://api.github.com/repos/$REPO/actions/runners"
-  if curl -sS -H "Authorization: token $GITHUB_TOKEN" "$api" >/tmp/_runners.json; then
+# Optional GitHub runner check (requires GITHUB_TOKEN and GITHUB_REPOSITORY in OWNER/REPO form)
+if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+  echo "Checking GitHub self-hosted runners for repo: $GITHUB_REPOSITORY"
+  api="https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners"
+  RUNNERS_JSON=$(mktemp) || { echo "Failed to create temp file"; exit 1; }
+  trap "rm -f '$RUNNERS_JSON'" EXIT
+  if curl -sS -H "Authorization: token $GITHUB_TOKEN" "$api" >"$RUNNERS_JSON"; then
     echo "Runners in repo (name => labels):"
-    jq -r '.runners[] | "\(.name) => \(.labels[].name)"' /tmp/_runners.json || true
-    if jq -e '.runners[] | any(.labels[]; .name=="gpu")' /tmp/_runners.json >/dev/null 2>&1; then
+    jq -r '.runners[] | "\(.name) => \(.labels | map(.name) | join(", "))"' "$RUNNERS_JSON" || true
+    if jq -e '.runners | any(.labels[]?.name == "gpu")' "$RUNNERS_JSON" >/dev/null 2>&1; then
       echo "Found runner with 'gpu' label."
     else
       echo "WARNING: No runner with 'gpu' label found in repo runners." >&2
@@ -55,7 +57,7 @@ if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${REPO:-}" ]; then
     echo "WARNING: Failed to query GitHub API for runners." >&2
   fi
 else
-  echo "No GITHUB_TOKEN/REPO set — skipping GitHub runner label check. Set REPO='owner/repo' and export GITHUB_TOKEN to enable."
+  echo "No GITHUB_TOKEN/GITHUB_REPOSITORY set — skipping GitHub runner label check. Set GITHUB_REPOSITORY='owner/repo' and export GITHUB_TOKEN to enable."
 fi
 
 echo "Validation done. Review warnings above and fix as needed."

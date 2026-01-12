@@ -75,13 +75,20 @@ struct FBeatsyncApi
 
 static FBeatsyncApi GApi;
 
-// Static callback wrapper for progress
-static TFunction<void(double)>* GCurrentProgressCallback = nullptr;
+static FBeatsyncApi GApi;
+
+// Per-writer progress callbacks to avoid race conditions and leaks
+static TMap<void*, TUniquePtr<TFunction<void(double)>>> GProgressCallbacks;
+static FCriticalSection GProgressCallbacksLock;
+
 static void StaticProgressCallback(double Progress, void* UserData)
 {
-    if (GCurrentProgressCallback && *GCurrentProgressCallback)
-    {
-        (*GCurrentProgressCallback)(Progress);
+    FScopeLock Lock(&GProgressCallbacksLock);
+    if (UserData) {
+        TUniquePtr<TFunction<void(double)>>* CallbackPtr = GProgressCallbacks.Find(UserData);
+        if (CallbackPtr && *CallbackPtr && **CallbackPtr) {
+            (**CallbackPtr)(Progress);
+        }
     }
 }
 
@@ -200,9 +207,9 @@ void FBeatsyncLoader::Shutdown()
         FPlatformProcess::FreeDllHandle(GApi.DllHandle);
         GApi = FBeatsyncApi();
     }
-    if (GCurrentProgressCallback) {
-        delete GCurrentProgressCallback;
-        GCurrentProgressCallback = nullptr;
+    {
+        FScopeLock Lock(&GProgressCallbacksLock);
+        GProgressCallbacks.Empty();
     }
 }
 
@@ -277,11 +284,13 @@ void FBeatsyncLoader::SetProgressCallback(void* Handle, TFunction<void(double)> 
 {
     if (!GApi.video_set_progress_callback || !Handle) return;
 
-    if (GCurrentProgressCallback) {
-        delete GCurrentProgressCallback;
+    {
+        FScopeLock Lock(&GProgressCallbacksLock);
+        // Replace or add the callback for this handle
+        GProgressCallbacks.Add(Handle, MakeUnique<TFunction<void(double)>>(MoveTemp(Callback)));
     }
-    GCurrentProgressCallback = new TFunction<void(double)>(MoveTemp(Callback));
-    GApi.video_set_progress_callback(Handle, StaticProgressCallback, nullptr);
+    
+    GApi.video_set_progress_callback(Handle, StaticProgressCallback, Handle);
 }
 
 bool FBeatsyncLoader::CutVideoAtBeats(void* Handle, const FString& InputVideo, const TArray<double>& BeatTimes, const FString& OutputVideo, double ClipDuration)

@@ -24,9 +24,41 @@ class SWaveformViewer;
 template<typename T> class SComboBox;
 
 /**
- * Main TripSitter UI Widget - Slate implementation
+ * TripSitter Main Widget - Slate implementation
  * Replicates the wxWidgets GUI in Unreal Engine
  */
+
+// Configuration enums
+enum class EBeatRate : uint8
+{
+    Every = 0,
+    Every2nd = 1,
+    Every4th = 2,
+    Every8th = 3
+};
+
+enum class EAnalysisMode : uint8
+{
+    Energy = 0,
+    AIBeat = 1,
+    AIStems = 2
+};
+
+enum class EResolution : uint8
+{
+    HD1080 = 0,
+    HD720 = 1,
+    UHD4K = 2,
+    QHD2K = 3
+};
+
+enum class EFPS : uint8
+{
+    FPS24 = 0,
+    FPS30 = 1,
+    FPS60 = 2
+};
+
 class STripSitterMainWidget : public SCompoundWidget
 {
 public:
@@ -44,10 +76,10 @@ private:
 	bool bIsMultiClip = false;   // True when a folder with multiple videos is selected
 
 	// Processing config
-	int32 BeatRate = 0;        // 0=Every, 1=Every 2nd, 2=Every 4th, 3=Every 8th
-	int32 AnalysisMode = 0;    // 0=Energy, 1=AI Beat, 2=AI+Stems
-	int32 Resolution = 0;      // 0=1080p, 1=720p, 2=4K, 3=2K
-	int32 FPS = 1;             // 0=24, 1=30, 2=60
+	EBeatRate BeatRate = EBeatRate::Every;        // Every, Every 2nd, Every 4th, Every 8th
+	EAnalysisMode AnalysisMode = EAnalysisMode::Energy;    // Energy, AI Beat, AI+Stems
+	EResolution Resolution = EResolution::HD1080;      // 1080p, 720p, 4K, 2K
+	EFPS FPS = EFPS::FPS30;             // 24, 30, 60
 
 	// Effects
 	bool bEnableVignette = false;

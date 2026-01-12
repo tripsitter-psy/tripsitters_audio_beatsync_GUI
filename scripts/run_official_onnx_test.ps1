@@ -17,7 +17,18 @@ $outDir = Join-Path $env:TEMP ("onnxruntime_$Version")
 $zipPath = Join-Path $env:TEMP $zipName
 
 Write-Host "Downloading $url..."
-Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+try {
+    Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+} catch {
+    Write-Error "Failed to download $url : $($_.Exception.Message)"
+    exit 1
+}
+
+# Verify download succeeded
+if (!(Test-Path $zipPath) -or (Get-Item $zipPath).Length -eq 0) {
+    Write-Error "Downloaded file $zipPath is missing or empty"
+    exit 1
+}
 
 if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force }
 Write-Host "Extracting to $outDir"
@@ -38,7 +49,11 @@ cmake -S . -B build -DUSE_TRACING=ON
 cmake --build build --config Debug -- /m
 
 Write-Host "Running helper test (official ONNX $Version)"
-cd build
-ctest -C Debug -R onnx_inference_helper -V --output-on-failure
+Push-Location build
+try {
+    ctest -C Debug -R onnx_inference_helper -V --output-on-failure
+} finally {
+    Pop-Location
+}
 
 Write-Host "Done. If the helper crashed, consider running ProcDump to capture a full .dmp file."

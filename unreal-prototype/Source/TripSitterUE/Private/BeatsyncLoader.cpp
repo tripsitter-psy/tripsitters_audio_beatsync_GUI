@@ -267,23 +267,23 @@ void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
 
         auto trampoline = [](double progress, void* user_data) {
             CallbackData* data = reinterpret_cast<CallbackData*>(user_data);
-            if (!data || !data->Func) return;
+            if (!data) return;
 
-            // Guard validity under lock
+            TFunction<void(double)> localFunc;
             {
                 FScopeLock Lock(&GCallbackStorageMutex);
-                // Check if data is still valid (not freed)
-                bool isValid = false;
+                // Check if data is still valid and copy the function
                 for (auto& pair : GCallbackStorage) {
                     if (pair.Value.Get() == data) {
-                        isValid = true;
+                        localFunc = data->Func;
                         break;
                     }
                 }
-                if (!isValid) return;
             }
 
-            data->Func(progress);
+            if (localFunc) {
+                localFunc(progress);
+            }
         };
 
         // Pass stable pointer to heap-allocated data

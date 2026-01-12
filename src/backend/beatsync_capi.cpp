@@ -333,15 +333,25 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
 
         for (size_t i = 0; i < beatCount; ++i) {
             double startTime = beatTimes[i];
-            double endTime = (i + 1 < beatCount) ? beatTimes[i + 1] : (startTime + clipDuration);
+            double endTime;
+            const double MIN_SEGMENT_DURATION = 0.1; // Minimum 100ms segment
+            
+            if (i + 1 < beatCount) {
+                endTime = beatTimes[i + 1];
+            } else {
+                // Last segment: use clipDuration if positive, otherwise minimum duration
+                endTime = startTime + std::max(clipDuration, MIN_SEGMENT_DURATION);
+            }
 
-            if (clipDuration > 0) {
-                endTime = startTime + clipDuration;
+            double duration = endTime - startTime;
+            // Ensure duration is positive
+            if (duration <= 0) {
+                duration = MIN_SEGMENT_DURATION;
+                endTime = startTime + duration;
             }
 
             std::string tempFile = std::string(outputVideo) + "_seg" + std::to_string(i) + ".mp4";
 
-            double duration = endTime - startTime;
             // Use segment start time as position within the source video (modular approach)
             double sourceStart = 0.0;
             double cachedDuration = durations[videoIdx];
@@ -353,6 +363,13 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
 
             if (w->copySegmentFast(videos[videoIdx], sourceStart, duration, tempFile)) {
                 tempFiles.push_back(tempFile);
+            } else {
+                std::cerr << "Failed to copy segment: videoIdx=" << videoIdx 
+                         << ", sourceStart=" << sourceStart 
+                         << ", duration=" << duration 
+                         << ", tempFile=" << tempFile << std::endl;
+                s_lastError = "Failed to copy video segment " + std::to_string(i);
+                return -1; // Propagate failure instead of silently continuing
             }
 
             videoIdx = (videoIdx + 1) % videos.size();

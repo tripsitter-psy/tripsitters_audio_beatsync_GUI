@@ -49,8 +49,8 @@ BEATSYNC_API void bs_free_beatgrid(bs_beatgrid_t* grid);
 // VideoWriter
 BEATSYNC_API void* bs_create_video_writer();
 BEATSYNC_API void bs_destroy_video_writer(void* writer);
-BEATSYNC_API const char* bs_video_get_last_error(void* writer); // returned string is owned by library (valid until next call)
-BEATSYNC_API const char* bs_resolve_ffmpeg_path(); // returned string is owned by library
+BEATSYNC_API const char* bs_video_get_last_error(void* writer); // Returns a pointer to an error string owned by the library and valid until the next call for the same writer; not thread-safe—caller must synchronize access to the writer or copy the string immediately
+BEATSYNC_API const char* bs_resolve_ffmpeg_path(); // Returns a pointer to a static library-owned string that is immutable and thread-safe
 BEATSYNC_API void bs_video_set_progress_callback(void* writer, bs_progress_cb cb, void* user_data);
 BEATSYNC_API int bs_video_cut_at_beats(void* writer, const char* inputVideo, const double* beatTimes, size_t count, const char* outputVideo, double clipDuration);
 // Multi-video version: cycles through inputVideos for each beat

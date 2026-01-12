@@ -28,23 +28,18 @@ public class TripSitter : ModuleRules
 
         // Beatsync backend DLL path - relative to Engine folder
         // The DLL will need to be deployed alongside the executable
-        string BeatsyncLib = Path.Combine(EngineDirectory, "Source", "Programs", "TripSitter", "ThirdParty", "beatsync", "lib", "x64");
+        string archFolder = Target.Architecture switch
+        {
+            UnrealArch.X64 => "x64",
+            UnrealArch.Arm64 => "arm64",
+            _ => "x64" // Default fallback
+        };
+        string BeatsyncLib = Path.Combine(EngineDirectory, "Source", "Programs", "TripSitter", "ThirdParty", "beatsync", "lib", archFolder);
         if (Directory.Exists(BeatsyncLib))
         {
             PublicIncludePaths.Add(Path.Combine(BeatsyncLib, "..", "..", "include"));
             PublicAdditionalLibraries.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.lib"));
             RuntimeDependencies.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.dll"));
-        }
-
-        // Windows application icon resource
-        if (Target.Platform == UnrealTargetPlatform.Win64)
-        {
-            string ResourcePath = Path.Combine(ModuleDirectory, "Private", "Windows", "Resources", "TripSitter.rc");
-            if (File.Exists(ResourcePath))
-            {
-                // UBT should pick up .rc files automatically, but we can also add via AdditionalCompilerArguments
-                // For now, rely on auto-detection since .rc is in the source tree
-            }
         }
     }
 }

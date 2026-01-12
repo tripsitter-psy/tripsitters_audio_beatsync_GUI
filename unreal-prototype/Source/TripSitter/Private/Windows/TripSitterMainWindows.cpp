@@ -8,6 +8,10 @@
  */
 int WINAPI WinMain(_In_ HINSTANCE hInInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR, _In_ int nCmdShow)
 {
-	RunTripSitter(GetCommandLineW());
-	return 0;
+	UNREFERENCED_PARAMETER(hInInstance);
+	UNREFERENCED_PARAMETER(hPrevInstance);
+	UNREFERENCED_PARAMETER(nCmdShow);
+	// LPSTR parameter is unused as we get command line via GetCommandLineW()
+
+	return RunTripSitter(GetCommandLineW());
 }

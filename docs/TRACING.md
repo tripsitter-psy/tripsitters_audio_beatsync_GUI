@@ -38,9 +38,8 @@ This repository includes optional OpenTelemetry tracing support for the backend 
 - `unreal-prototype/Source/TripSitterUE/Private/TripSitterUEModule.*` - calls backend tracing init/shutdown on module startup/shutdown
 - `tools/tracing/docker-compose.yml` and helper scripts - start OTLP collector + Jaeger
 
-If you want, I can now:
+## Future Work
+
 - Add more spans to backend hot paths (currently several key functions are instrumented)
 - Add CI smoke test that verifies a trace is emitted when running a small analyze+cut workflow
 - Integrate AI Toolkit trace viewer commands into the repository docs
-
-Which of those would you like next?

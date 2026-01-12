@@ -28,7 +28,7 @@ This creates a symlink from `Engine` -> `C:\Program Files\Epic Games\UE_5.7\Engi
 
 ```bash
 # Generate project files
-"C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealBuildTool.exe" TripSitter Win64 Development -Project="TripSitter.uproject"
+"C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\DotNET\UnrealBuildTool.exe" -projectfiles -project="TripSitter.uproject" -game -engine
 
 # Build the program
 "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealBuildTool.exe" TripSitter Win64 Development -Project="TripSitter.uproject"

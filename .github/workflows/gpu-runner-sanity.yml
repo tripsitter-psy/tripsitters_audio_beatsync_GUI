@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run GPU runner check script (Linux)
         env:
-          REPO: ${{ github.repository }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           chmod +x scripts/check_gpu_runner.sh
@@ -31,4 +31,4 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check_gpu_runner.ps1 -GithubRepo "${{ github.repository }}"
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check_gpu_runner.ps1

@@ -88,5 +88,4 @@ This project is a desktop application for beat-syncing videos to audio using Unr
 ---
 
 *Last updated: January 12, 2026*
-*Maintained by: Development Team*</content>
-<parameter name="filePath">c:\Users\samue\Desktop\BeatSyncEditor\TODO.md
+*Maintained by: Development Team*

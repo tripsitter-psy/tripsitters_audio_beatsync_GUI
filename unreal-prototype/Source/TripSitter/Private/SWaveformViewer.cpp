@@ -371,7 +371,7 @@ FReply SWaveformViewer::OnMouseButtonDown(const FGeometry& MyGeometry, const FPo
 				SelectedEffectRegion = i;
 				LastMousePos = LocalPos;
 				Invalidate(EInvalidateWidget::Paint);
-				return FReply::Handled().CaptureMouse(SharedThis(const_cast<SWaveformViewer*>(this)));
+				return FReply::Handled().CaptureMouse(SharedThis(this));
 			}
 			else if (IsOverEffectEndHandle(i, LocalPos.X, Width))
 			{
@@ -380,7 +380,7 @@ FReply SWaveformViewer::OnMouseButtonDown(const FGeometry& MyGeometry, const FPo
 				SelectedEffectRegion = i;
 				LastMousePos = LocalPos;
 				Invalidate(EInvalidateWidget::Paint);
-				return FReply::Handled().CaptureMouse(SharedThis(const_cast<SWaveformViewer*>(this)));
+				return FReply::Handled().CaptureMouse(SharedThis(this));
 			}
 		}
 
@@ -389,13 +389,13 @@ FReply SWaveformViewer::OnMouseButtonDown(const FGeometry& MyGeometry, const FPo
 		{
 			CurrentDragMode = EDragMode::DragStart;
 			LastMousePos = LocalPos;
-			return FReply::Handled().CaptureMouse(SharedThis(const_cast<SWaveformViewer*>(this)));
+			return FReply::Handled().CaptureMouse(SharedThis(this));
 		}
 		else if (IsOverEndHandle(LocalPos.X, Width))
 		{
 			CurrentDragMode = EDragMode::DragEnd;
 			LastMousePos = LocalPos;
-			return FReply::Handled().CaptureMouse(SharedThis(const_cast<SWaveformViewer*>(this)));
+			return FReply::Handled().CaptureMouse(SharedThis(this));
 		}
 		else
 		{
@@ -446,7 +446,7 @@ FReply SWaveformViewer::OnMouseButtonDown(const FGeometry& MyGeometry, const FPo
 		// Pan with middle mouse
 		CurrentDragMode = EDragMode::Pan;
 		LastMousePos = LocalPos;
-		return FReply::Handled().CaptureMouse(SharedThis(const_cast<SWaveformViewer*>(this)));
+		return FReply::Handled().CaptureMouse(SharedThis(this));
 	}
 
 	return FReply::Unhandled();

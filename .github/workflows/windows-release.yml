@@ -109,7 +109,7 @@ jobs:
           CODESIGN_CERTIFICATE_BASE64: ${{ secrets.CODESIGN_CERTIFICATE_BASE64 }}
           CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.CODESIGN_CERTIFICATE_PASSWORD }}
         run: |
-          $installer = Get-ChildItem -Path build -Filter "*.exe" | Where-Object { $_.Name -like "TripSitter*-Setup*.exe" -or ($_.Name -like "*TripSitter*.exe" -and $_.Name -notlike "*uninstall*" -and $_.Name -notlike "*Uninstall*") } | Select-Object -First 1
+          $installer = Get-ChildItem -Path build -Filter "*.exe" | Where-Object { $_.Name -like "TripSitter*-Setup*.exe" -or ($_.Name -like "*TripSitter*.exe" -and $_.Name -notlike "*uninstall*" -and $_.Name -notlike "*Uninstall*") } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if ($installer) {
             pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/sign-windows-binaries.ps1 `
               -BuildDir $installer.DirectoryName
@@ -253,7 +253,12 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum mtv-tripsitter-installer/*.exe mtv-tripsitter-zip/*.zip > checksums.txt
+          # Create empty checksums.txt file
+          touch checksums.txt
+          # Find and checksum installer files
+          find mtv-tripsitter-installer -name "*.exe" -type f -exec sha256sum {} \; >> checksums.txt 2>/dev/null || true
+          # Find and checksum zip files
+          find mtv-tripsitter-zip -name "*.zip" -type f -exec sha256sum {} \; >> checksums.txt 2>/dev/null || true
           echo "Generated checksums:"
           cat checksums.txt
 
