@@ -35,6 +35,10 @@ void SWaveformViewer::SetSelectionRange(double InStart, double InEnd)
 {
 	SelectionStart = FMath::Clamp(InStart, 0.0, Duration);
 	SelectionEnd = FMath::Clamp(InEnd, SelectionStart, Duration);
+
+	// Re-clamp all effect regions to stay within new selection bounds
+	ClampEffectRegionsToSelection();
+
 	Invalidate(EInvalidateWidget::Paint);
 }
 
@@ -79,10 +83,13 @@ void SWaveformViewer::SetScrollPosition(double Position)
 // Effect region management
 int32 SWaveformViewer::AddEffectRegion(const FString& EffectName, double StartTime, double EndTime, FLinearColor Color)
 {
+	// Constrain effect region to within track selection bounds
+	double EffectiveSelEnd = (SelectionEnd < 0) ? Duration : SelectionEnd;
+
 	FEffectRegion Region;
 	Region.EffectName = EffectName;
-	Region.StartTime = FMath::Clamp(StartTime, 0.0, Duration);
-	Region.EndTime = FMath::Clamp(EndTime, Region.StartTime, Duration);
+	Region.StartTime = FMath::Clamp(StartTime, SelectionStart, EffectiveSelEnd);
+	Region.EndTime = FMath::Clamp(EndTime, Region.StartTime, EffectiveSelEnd);
 	Region.Color = Color;
 	Region.bEnabled = true;
 
@@ -119,9 +126,24 @@ void SWaveformViewer::SetEffectRegionRange(int32 Index, double StartTime, double
 {
 	if (EffectRegions.IsValidIndex(Index))
 	{
-		EffectRegions[Index].StartTime = FMath::Clamp(StartTime, 0.0, Duration);
-		EffectRegions[Index].EndTime = FMath::Clamp(EndTime, EffectRegions[Index].StartTime, Duration);
+		// Constrain effect region to within track selection bounds
+		double EffectiveSelEnd = (SelectionEnd < 0) ? Duration : SelectionEnd;
+		EffectRegions[Index].StartTime = FMath::Clamp(StartTime, SelectionStart, EffectiveSelEnd);
+		EffectRegions[Index].EndTime = FMath::Clamp(EndTime, EffectRegions[Index].StartTime, EffectiveSelEnd);
 		Invalidate(EInvalidateWidget::Paint);
+	}
+}
+
+void SWaveformViewer::ClampEffectRegionsToSelection()
+{
+	double EffectiveSelEnd = (SelectionEnd < 0) ? Duration : SelectionEnd;
+
+	for (FEffectRegion& Region : EffectRegions)
+	{
+		// Clamp start to be within selection
+		Region.StartTime = FMath::Clamp(Region.StartTime, SelectionStart, EffectiveSelEnd);
+		// Clamp end to be within selection (and after start)
+		Region.EndTime = FMath::Clamp(Region.EndTime, Region.StartTime, EffectiveSelEnd);
 	}
 }
 
@@ -400,6 +422,9 @@ FReply SWaveformViewer::OnMouseButtonDown(const FGeometry& MyGeometry, const FPo
 				SelectionEnd = FMath::Clamp(ClickTime, SelectionStart + 0.1, Duration);
 			}
 
+			// Re-clamp effect regions when selection changes
+			ClampEffectRegionsToSelection();
+
 			SelectedEffectRegion = -1; // Deselect any effect region
 
 			if (OnSelectionChanged.IsBound())
@@ -463,6 +488,9 @@ FReply SWaveformViewer::OnMouseMove(const FGeometry& MyGeometry, const FPointerE
 		double EffectiveEnd = (SelectionEnd < 0) ? Duration : SelectionEnd;
 		SelectionStart = FMath::Clamp(NewTime, 0.0, EffectiveEnd - 0.1);
 
+		// Re-clamp effect regions when selection changes
+		ClampEffectRegionsToSelection();
+
 		if (OnSelectionChanged.IsBound())
 		{
 			OnSelectionChanged.Execute(SelectionStart, SelectionEnd);
@@ -475,6 +503,9 @@ FReply SWaveformViewer::OnMouseMove(const FGeometry& MyGeometry, const FPointerE
 	{
 		double NewTime = PixelToTime(LocalPos.X, Width);
 		SelectionEnd = FMath::Clamp(NewTime, SelectionStart + 0.1, Duration);
+
+		// Re-clamp effect regions when selection changes
+		ClampEffectRegionsToSelection();
 
 		if (OnSelectionChanged.IsBound())
 		{
@@ -497,7 +528,10 @@ FReply SWaveformViewer::OnMouseMove(const FGeometry& MyGeometry, const FPointerE
 	{
 		double NewTime = PixelToTime(LocalPos.X, Width);
 		double EndTime = EffectRegions[DragEffectIndex].EndTime;
-		EffectRegions[DragEffectIndex].StartTime = FMath::Clamp(NewTime, 0.0, EndTime - 0.1);
+		// Constrain effect region to within track selection bounds
+		double EffectiveSelEnd = (SelectionEnd < 0) ? Duration : SelectionEnd;
+		double MinBound = SelectionStart;
+		EffectRegions[DragEffectIndex].StartTime = FMath::Clamp(NewTime, MinBound, EndTime - 0.1);
 		Invalidate(EInvalidateWidget::Paint);
 		LastMousePos = LocalPos;
 		return FReply::Handled();
@@ -506,7 +540,10 @@ FReply SWaveformViewer::OnMouseMove(const FGeometry& MyGeometry, const FPointerE
 	{
 		double NewTime = PixelToTime(LocalPos.X, Width);
 		double StartTime = EffectRegions[DragEffectIndex].StartTime;
-		EffectRegions[DragEffectIndex].EndTime = FMath::Clamp(NewTime, StartTime + 0.1, Duration);
+		// Constrain effect region to within track selection bounds
+		double EffectiveSelEnd = (SelectionEnd < 0) ? Duration : SelectionEnd;
+		double MaxBound = EffectiveSelEnd;
+		EffectRegions[DragEffectIndex].EndTime = FMath::Clamp(NewTime, StartTime + 0.1, MaxBound);
 		Invalidate(EInvalidateWidget::Paint);
 		LastMousePos = LocalPos;
 		return FReply::Handled();

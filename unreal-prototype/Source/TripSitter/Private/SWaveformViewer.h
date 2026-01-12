@@ -151,4 +151,7 @@ protected:
 
 	// Show context menu for adding effects
 	void ShowEffectContextMenu(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent);
+
+	// Clamp all effect regions to stay within current selection bounds
+	void ClampEffectRegionsToSelection();
 };

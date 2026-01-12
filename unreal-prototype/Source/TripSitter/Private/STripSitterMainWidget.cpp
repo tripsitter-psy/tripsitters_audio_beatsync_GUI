@@ -1594,14 +1594,20 @@ FReply STripSitterMainWidget::OnPreviewFrameClicked()
 	if (PreviewVideoPath.IsEmpty())
 	{
 		StatusText = TEXT("Please select a video file first");
-		StatusTextBlock->SetText(FText::FromString(StatusText));
+		if (StatusTextBlock.IsValid())
+		{
+			StatusTextBlock->SetText(FText::FromString(StatusText));
+		}
 		return FReply::Handled();
 	}
 
 	if (!FBeatsyncLoader::IsInitialized())
 	{
 		StatusText = TEXT("ERROR: Backend not loaded");
-		StatusTextBlock->SetText(FText::FromString(StatusText));
+		if (StatusTextBlock.IsValid())
+		{
+			StatusTextBlock->SetText(FText::FromString(StatusText));
+		}
 		return FReply::Handled();
 	}
 
@@ -1612,8 +1618,19 @@ FReply STripSitterMainWidget::OnPreviewFrameClicked()
 		Timestamp = WaveformViewer->GetSelectionStart();
 	}
 
+	// Clamp timestamp to valid range
+	if (Timestamp < 0.0)
+	{
+		Timestamp = 0.0;
+	}
+
 	StatusText = FString::Printf(TEXT("Extracting frame at %.2fs..."), Timestamp);
-	StatusTextBlock->SetText(FText::FromString(StatusText));
+	if (StatusTextBlock.IsValid())
+	{
+		StatusTextBlock->SetText(FText::FromString(StatusText));
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("TripSitter: Attempting to extract frame from %s at %.2fs"), *PreviewVideoPath, Timestamp);
 
 	// Extract frame
 	TArray<uint8> FrameData;
@@ -1624,31 +1641,60 @@ FReply STripSitterMainWidget::OnPreviewFrameClicked()
 
 	if (bSuccess && FrameData.Num() > 0 && Width > 0 && Height > 0)
 	{
-		UpdatePreviewTexture(FrameData, Width, Height);
-		StatusText = FString::Printf(TEXT("Preview: %dx%d at %.2fs"), Width, Height, Timestamp);
-		UE_LOG(LogTemp, Log, TEXT("TripSitter: Extracted preview frame %dx%d at %.2fs"), Width, Height, Timestamp);
+		// Verify the data size matches expectations
+		int32 ExpectedSize = Width * Height * 3;
+		if (FrameData.Num() >= ExpectedSize)
+		{
+			UpdatePreviewTexture(FrameData, Width, Height);
+			StatusText = FString::Printf(TEXT("Preview: %dx%d at %.2fs"), Width, Height, Timestamp);
+			UE_LOG(LogTemp, Log, TEXT("TripSitter: Extracted preview frame %dx%d at %.2fs"), Width, Height, Timestamp);
+		}
+		else
+		{
+			StatusText = FString::Printf(TEXT("ERROR: Frame data size mismatch (%d vs %d)"), FrameData.Num(), ExpectedSize);
+			UE_LOG(LogTemp, Error, TEXT("TripSitter: Frame data size %d != expected %d"), FrameData.Num(), ExpectedSize);
+		}
 	}
 	else
 	{
 		StatusText = TEXT("ERROR: Failed to extract frame");
-		UE_LOG(LogTemp, Warning, TEXT("TripSitter: Failed to extract preview frame from %s"), *PreviewVideoPath);
+		UE_LOG(LogTemp, Warning, TEXT("TripSitter: Failed to extract preview frame from %s (success=%d, dataSize=%d, w=%d, h=%d)"),
+			*PreviewVideoPath, bSuccess ? 1 : 0, FrameData.Num(), Width, Height);
 	}
 
-	StatusTextBlock->SetText(FText::FromString(StatusText));
+	if (StatusTextBlock.IsValid())
+	{
+		StatusTextBlock->SetText(FText::FromString(StatusText));
+	}
 	return FReply::Handled();
 }
 
 void STripSitterMainWidget::UpdatePreviewTexture(const TArray<uint8>& RGBData, int32 Width, int32 Height)
 {
+	// Validate input
+	if (Width <= 0 || Height <= 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UpdatePreviewTexture: Invalid dimensions %dx%d"), Width, Height);
+		return;
+	}
+
+	int32 ExpectedSize = Width * Height * 3;
+	if (RGBData.Num() < ExpectedSize)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UpdatePreviewTexture: RGB data size %d < expected %d"), RGBData.Num(), ExpectedSize);
+		return;
+	}
+
 	// Store dimensions
 	PreviewWidth = Width;
 	PreviewHeight = Height;
 
 	// Convert RGB24 to BGRA32 for Slate
-	PreviewPixelData.SetNum(Width * Height * 4);
+	int32 PixelCount = Width * Height;
+	PreviewPixelData.SetNum(PixelCount * 4);
 	const uint8* SrcData = RGBData.GetData();
 
-	for (int32 i = 0; i < Width * Height; ++i)
+	for (int32 i = 0; i < PixelCount; ++i)
 	{
 		PreviewPixelData[i * 4 + 0] = SrcData[i * 3 + 2]; // B
 		PreviewPixelData[i * 4 + 1] = SrcData[i * 3 + 1]; // G
