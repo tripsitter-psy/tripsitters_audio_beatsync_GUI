@@ -17,6 +17,7 @@
 #include <cmath>
 #include <mutex>
 #include <unordered_map>
+#include <iostream>
 
 // FFmpeg includes for frame conversion
 extern "C" {
