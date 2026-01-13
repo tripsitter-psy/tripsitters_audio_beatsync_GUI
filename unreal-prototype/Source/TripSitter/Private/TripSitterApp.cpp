@@ -17,7 +17,12 @@ IMPLEMENT_APPLICATION(TripSitter, "TripSitter");
 int RunTripSitter(const TCHAR* CommandLine)
 {
 	// Initialize engine subsystems
-	GEngineLoop.PreInit(CommandLine);
+	int32 PreInitResult = GEngineLoop.PreInit(CommandLine);
+	if (PreInitResult != 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("GEngineLoop.PreInit failed with error code: %d"), PreInitResult);
+		return PreInitResult;
+	}
 
 	// Initialize Slate as a standalone application (NOT a game!)
 	FSlateApplication::InitializeAsStandaloneApplication(GetStandardStandaloneRenderer());
@@ -56,12 +61,10 @@ int RunTripSitter(const TCHAR* CommandLine)
 	}
 
 	// Cleanup
-	FBeatsyncLoader::Shutdown();
-	FCoreDelegates::OnExit.Broadcast();
+	FBeatsyncLoader::Shutdown(); // If depends on Slate/subsystems, keep before Slate shutdown
 	FSlateApplication::Shutdown();
+	GEngineLoop.AppPreExit(); // Broadcasts OnExit internally
 	FModuleManager::Get().UnloadModulesAtShutdown();
-
-	GEngineLoop.AppPreExit();
 	GEngineLoop.AppExit();
 
 	return 0;

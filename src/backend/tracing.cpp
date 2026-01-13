@@ -23,7 +23,8 @@ namespace BeatSync {
 
 bool InitializeTracing(const std::string& serviceName) {
     const char* env = std::getenv("OTEL_EXPORTER_OTLP_ENDPOINT");
-    std::string endpoint = env ? env : "http://localhost:4318";
+    // Use port 4317 for gRPC (OTLP/gRPC default), not 4318 (OTLP/HTTP)
+    std::string endpoint = env ? env : "http://localhost:4317";
 
     try {
         // Create OTLP exporter (gRPC) with configured endpoint

@@ -9,12 +9,36 @@
 static TMap<void*, TSharedPtr<FBeatsyncLoader::CallbackData>> GCallbackStorage;
 static FCriticalSection GCallbackStorageMutex;
 
+// Static trampoline function for progress callbacks - must have stable address
+// Using a proper static function instead of a lambda for guaranteed ABI stability
+static void ProgressCallbackTrampoline(double progress, void* user_data)
+{
+    FBeatsyncLoader::CallbackData* data = reinterpret_cast<FBeatsyncLoader::CallbackData*>(user_data);
+    if (!data) return;
+
+    TFunction<void(double)> localFunc;
+    {
+        FScopeLock Lock(&GCallbackStorageMutex);
+        // Check if data is still valid and copy the function
+        for (auto& pair : GCallbackStorage) {
+            if (pair.Value.Get() == data) {
+                localFunc = data->Func;
+                break;
+            }
+        }
+    }
+
+    if (localFunc) {
+        localFunc(progress);
+    }
+}
+
 // Function pointer types
 using bs_resolve_ffmpeg_path_t = const char* (*)();
 using bs_create_audio_analyzer_t = void* (*)();
 using bs_destroy_audio_analyzer_t = void (*)(void*);
-using bs_analyze_audio_t = int (*)(void*, const char*, void* /*bs_beatgrid_t*/);
-using bs_free_beatgrid_t = void (*)(void* /*bs_beatgrid_t*/);
+using bs_analyze_audio_t = int (*)(void*, const char*, bs_beatgrid_t*);
+using bs_free_beatgrid_t = void (*)(bs_beatgrid_t*);
 using bs_get_waveform_t = int (*)(void*, const char*, float**, size_t*, double*);
 using bs_free_waveform_t = void (*)(float*);
 
@@ -26,7 +50,7 @@ using bs_video_cut_at_beats_t = int (*)(void*, const char*, const double*, size_
 using bs_video_cut_at_beats_multi_t = int (*)(void*, const char**, size_t, const double*, size_t, const char*, double);
 using bs_video_concatenate_t = int (*)(const char**, size_t, const char*);
 using bs_video_add_audio_track_t = int (*)(void*, const char*, const char*, const char*, int, double, double);
-using bs_video_set_effects_config_t = void (*)(void*, const void* /*bs_effects_config_t*/);
+using bs_video_set_effects_config_t = void (*)(void*, const bs_effects_config_t*);
 using bs_video_apply_effects_t = int (*)(void*, const char*, const char*, const double*, size_t);
 using bs_video_extract_frame_t = int (*)(const char*, double, unsigned char**, int*, int*);
 using bs_free_frame_data_t = void (*)(unsigned char*);
@@ -265,29 +289,8 @@ void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
         data->Func = cb;
         GCallbackStorage.Add(writer, TSharedPtr<CallbackData>(data));  // Store shared ptr to manage lifetime
 
-        auto trampoline = [](double progress, void* user_data) {
-            CallbackData* data = reinterpret_cast<CallbackData*>(user_data);
-            if (!data) return;
-
-            TFunction<void(double)> localFunc;
-            {
-                FScopeLock Lock(&GCallbackStorageMutex);
-                // Check if data is still valid and copy the function
-                for (auto& pair : GCallbackStorage) {
-                    if (pair.Value.Get() == data) {
-                        localFunc = data->Func;
-                        break;
-                    }
-                }
-            }
-
-            if (localFunc) {
-                localFunc(progress);
-            }
-        };
-
-        // Pass stable pointer to heap-allocated data
-        GApi.video_set_progress(writer, trampoline, data);
+        // Use the static trampoline function defined at file scope for stable address
+        GApi.video_set_progress(writer, ProgressCallbackTrampoline, data);
     }
     else
     {

@@ -5,7 +5,7 @@ set -euo pipefail
 BUILD_DIR=build
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
-cmake .. -G Ninja -DUSE_TRACING=ON
+cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Debug -DUSE_TRACING=ON
 cmake --build . --config Debug
 # Set trace output inside build dir so it is easy to find
 export BEATSYNC_TRACE_OUT="$PWD/beatsync-trace.log"

@@ -9,8 +9,18 @@ FTripSitterApplication::FTripSitterApplication()
 
 bool FTripSitterApplication::Initialize()
 {
-    // Initialize Slate application
-    SlateApp = FSlateApplication::Create();
+    // Create platform GenericApplication and renderer
+#if PLATFORM_WINDOWS
+    TSharedPtr<FGenericApplication> PlatformApp = FWindowsApplication::CreateWindowsApplication();
+    TSharedRef<FSlateRenderer> Renderer = FSlateApplication::CreateRenderer();
+    SlateApp = FSlateApplication::Create(PlatformApp);
+    FSlateApplication::Get().InitializeRenderer(Renderer);
+#else
+    TSharedPtr<FGenericApplication> PlatformApp = FSlateApplication::CreatePlatformApplication();
+    TSharedRef<FSlateRenderer> Renderer = FSlateApplication::CreateRenderer();
+    SlateApp = FSlateApplication::Create(PlatformApp);
+    FSlateApplication::Get().InitializeRenderer(Renderer);
+#endif
 
     // Create main window
     MainWindow = CreateMainWindow();

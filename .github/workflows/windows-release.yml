@@ -60,7 +60,7 @@ jobs:
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgGitCommitId: 'a48bbf436be0867d0eadc42077f280f3123e3698'
+          vcpkgGitCommitId: '25b458671af03578e6a34edd8f0d1ac85e084df4'
 
       - name: Configure CMake
         run: |
@@ -156,8 +156,8 @@ jobs:
         run: |
           $installer = Get-ChildItem -Path installers -Filter "*.exe" | Select-Object -First 1
           if (-not $installer) {
-            Write-Warning "No installer found, skipping smoke test"
-            exit 0
+            Write-Error "No installer found - packaging may have failed"
+            exit 1
           }
 
           Write-Host "Installing: $($installer.FullName)"

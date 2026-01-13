@@ -4,7 +4,8 @@ Goal: remove Python at runtime from beat detection packaging by providing a nati
 
 1) ONNX-based (recommended for quickest, smallest runtime)
 - Train or locate a small PyTorch model (e.g., TCN / BeatNet) for beat detection.
-- Export to ONNX using a reproducible script (PyTorch -> ONNX). Target an ONNX opset that our ONNX Runtime supports (opset 12 is safe for older runtimes).
+- Export to ONNX using a reproducible script (PyTorch -> ONNX). Target an ONNX opset in the modern, compatible range (opset 15–18 recommended for most users).
+	- If you need to support older ONNX Runtime versions, specify the target runtime version: e.g., ONNX Runtime v1.22+ supports opset 22. Choose a lower opset for legacy compatibility.
 - Validate the ONNX model with onnxruntime (CPU and, optionally, CUDA) in CI.
 - Optionally quantize (INT8 / FP16) to reduce binary size and CPU/GPU memory pressure.
 - Advantages: no Python at runtime; inference via onnxruntime C++ is straightforward and well-supported.

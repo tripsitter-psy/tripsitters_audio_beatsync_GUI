@@ -1,11 +1,14 @@
+
+
 // TripSitter Main Widget - Engine Program version
-// Source: BeatSyncEditor/unreal-prototype/Source/TripSitterUE/Private/STripSitterMainWidget.h
+// Source: BeatSyncEditor/unreal-prototype/Source/TripSitter/Private/STripSitterMainWidget.h
 // Sync script: BeatSyncEditor/scripts/sync_tripsitter_ue.ps1
 // NOTE: Edit here directly for quick iteration, then sync back to repo with -ToRepo flag
 
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Fonts/SlateFontInfo.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Styling/SlateBrush.h"
@@ -13,6 +16,8 @@
 #include "Brushes/SlateDynamicImageBrush.h"
 #include "Async/AsyncWork.h"
 #include "BeatsyncProcessingTask.h"
+
+// ...existing code...
 
 class SEditableTextBox;
 class SProgressBar;

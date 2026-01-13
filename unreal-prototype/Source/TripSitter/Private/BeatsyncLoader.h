@@ -32,6 +32,28 @@ struct FEffectsConfig
     int32 EffectBeatDivisor = 1;
 };
 
+// AI analyzer configuration (ONNX-based neural network inference)
+struct FAIConfig
+{
+    FString BeatModelPath;          // Path to beat detection ONNX model
+    FString StemModelPath;          // Path to stem separation ONNX model (optional)
+    bool bUseStemSeparation = false; // Enable stem separation before beat detection
+    bool bUseDrumsForBeats = true;   // Use drums stem for beat detection (recommended)
+    bool bUseGPU = true;             // Enable GPU acceleration if available
+    int32 GPUDeviceId = 0;           // GPU device ID
+    float BeatThreshold = 0.5f;      // Beat activation threshold (0.0-1.0)
+    float DownbeatThreshold = 0.5f;  // Downbeat activation threshold (0.0-1.0)
+};
+
+// AI analysis result (extended beat grid)
+struct FAIResult
+{
+    TArray<double> Beats;
+    TArray<double> Downbeats;
+    double BPM = 0.0;
+    double Duration = 0.0;
+};
+
 class FBeatsyncLoader
 {
 public:
@@ -76,4 +98,13 @@ public:
     static bool ExtractFrame(const FString& VideoPath, double Timestamp,
                              TArray<uint8>& OutData, int32& OutWidth, int32& OutHeight);
     static void FreeFrameData(uint8* Data);
+
+    // AI Analyzer (ONNX neural network) - GPU accelerated
+    static bool IsAIAvailable();
+    static FString GetAIProviders(); // Returns available execution providers (e.g., "CUDAExecutionProvider, CPUExecutionProvider")
+    static void* CreateAIAnalyzer(const FAIConfig& Config);
+    static void DestroyAIAnalyzer(void* Handle);
+    static bool AIAnalyzeFile(void* Analyzer, const FString& FilePath, FAIResult& OutResult);
+    static bool AIAnalyzeQuick(void* Analyzer, const FString& FilePath, FAIResult& OutResult); // Faster, no stem separation
+    static FString GetAILastError(void* Analyzer);
 };

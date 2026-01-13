@@ -59,7 +59,16 @@ if ($env:GITHUB_REPOSITORY) {
             $hasGpu = $runners | Where-Object { $_.labels.name -contains 'gpu' }
             if ($hasGpu) { Write-Host "Found runner(s) with 'gpu' label." } else { Write-Warning "No runner with 'gpu' label found in repo runners." }
         } catch {
-            Write-Warning "GitHub API request failed: $_"
+            $errorMsg = $_.Exception.Message
+            $statusCode = $null
+            if ($_.Exception.Response) {
+                $statusCode = $_.Exception.Response.StatusCode
+                $statusDesc = $_.Exception.Response.StatusDescription
+                if ($statusCode) {
+                    $errorMsg = "$errorMsg (status: $statusCode $statusDesc)"
+                }
+            }
+            Write-Warning "GitHub API request failed: $errorMsg"
         }
     }
 } else {

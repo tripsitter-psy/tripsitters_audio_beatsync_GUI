@@ -229,33 +229,44 @@ void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
 {
     if (!GApi.video_set_progress) return;
 
-    FScopeLock Lock(&GCallbackStorageMutex);
+    // Trampoline lambda for progress callbacks - copies callback to local var under lock,
+    // then invokes outside lock to prevent deadlock
+    static auto trampoline = [](double progress, void* user_data) {
+        FProgressCb LocalFunc;
+        {
+            FScopeLock Lock(&GCallbackStorageMutex);
+            CallbackData* d = reinterpret_cast<CallbackData*>(user_data);
+            if (d && d->Func) {
+                LocalFunc = d->Func;  // Copy to avoid holding lock during callback
+            }
+        }  // Lock released here
+        if (LocalFunc) {
+            LocalFunc(progress);
+        }
+    };
 
-    // Remove any existing callback for this writer
-    GCallbackStorage.Remove(writer);
+    CallbackData* userPtr = nullptr;
 
+    {
+        FScopeLock Lock(&GCallbackStorageMutex);
+
+        // Remove any existing callback for this writer
+        GCallbackStorage.Remove(writer);
+
+        if (cb)
+        {
+            // Store the callback data
+            auto data = MakeUnique<CallbackData>();
+            data->Func = cb;
+            GCallbackStorage.Add(writer, MoveTemp(data));
+            userPtr = GCallbackStorage[writer].Get();
+        }
+    }  // Lock released here before DLL call
+
+    // Call DLL outside the lock to prevent deadlock
     if (cb)
     {
-        // Store the callback data
-        auto data = MakeUnique<CallbackData>();
-        data->Func = cb;
-        GCallbackStorage.Add(writer, MoveTemp(data));
-
-        auto trampoline = [](double progress, void* user_data) {
-            FProgressCb LocalFunc;
-            {
-                FScopeLock Lock(&GCallbackStorageMutex);
-                CallbackData* d = reinterpret_cast<CallbackData*>(user_data);
-                if (d && d->Func) {
-                    LocalFunc = d->Func;  // Copy to avoid holding lock during callback
-                }
-            }  // Lock released here
-            if (LocalFunc) {
-                LocalFunc(progress);
-            }
-        };
-
-        GApi.video_set_progress(writer, trampoline, GCallbackStorage[writer].Get());
+        GApi.video_set_progress(writer, trampoline, userPtr);
     }
     else
     {

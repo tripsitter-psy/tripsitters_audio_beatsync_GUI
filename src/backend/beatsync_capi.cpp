@@ -35,10 +35,10 @@ static std::mutex s_effectsConfigsMutex;
 
 // ==================== Version and Init API ====================
 
-// Version constant defined at build time
-const char* const BS_VERSION = BEATSYNC_VERSION;
-
+// Version constant defined at build time and exported for consumers
+// Note: BEATSYNC_API is applied so this symbol is visible to DLL consumers
 extern "C" {
+BEATSYNC_API const char* const BS_VERSION = BEATSYNC_VERSION;
 
 BEATSYNC_API const char* bs_get_version() {
     return BS_VERSION;
@@ -448,10 +448,21 @@ BEATSYNC_API int bs_video_add_audio_track(void* writer, const char* inputVideo, 
 // ==================== Effects API ====================
 
 BEATSYNC_API void bs_video_set_effects_config(void* writer, const bs_effects_config_t* config) {
-    if (!writer || !config) return;
+    if (!writer) return;
 
     try {
         auto* w = static_cast<BeatSync::VideoWriter*>(writer);
+
+        // If config is nullptr, reset to default/disabled effects
+        if (!config) {
+            {
+                std::lock_guard<std::mutex> lock(s_effectsConfigsMutex);
+                s_effectsConfigs.erase(writer);
+            }
+            BeatSync::EffectsConfig defaultCfg;  // All effects disabled by default
+            w->setEffectsConfig(defaultCfg);
+            return;
+        }
 
         BeatSync::EffectsConfig cfg;
         cfg.enableTransitions = config->enableTransitions != 0;
@@ -538,29 +549,42 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
         return -1;
     }
 
-    AVFrame* frame = nullptr;  // Declare outside try block for proper cleanup in catch
-    SwsContext* swsCtx = nullptr;  // Declare outside try block for proper cleanup in catch
-    unsigned char* rgbData = nullptr;  // Declare outside try block for proper cleanup in catch
+    // Initialize output params
+    *outData = nullptr;
+    *outWidth = 0;
+    *outHeight = 0;
+
+    SwsContext* swsCtx = nullptr;
+    unsigned char* rgbData = nullptr;
 
     try {
         BeatSync::VideoProcessor vp;
         if (!vp.open(videoPath)) {
-            s_lastError = "Failed to open video file";
+            s_lastError = "Failed to open video file: " + vp.getLastError();
             return -1;
         }
 
         if (!vp.seekToTimestamp(timestamp)) {
-            s_lastError = "Failed to seek to timestamp";
+            s_lastError = "Failed to seek to timestamp: " + vp.getLastError();
             return -1;
         }
 
+        // readFrame returns pointer to internal frame storage owned by VideoProcessor
+        // DO NOT call av_frame_free on this - VideoProcessor destructor handles it
+        AVFrame* frame = nullptr;
         if (!vp.readFrame(&frame) || !frame) {
-            s_lastError = "Failed to read frame";
+            s_lastError = "Failed to read frame: " + vp.getLastError();
             return -1;
         }
 
         int srcW = frame->width;
         int srcH = frame->height;
+
+        if (srcW <= 0 || srcH <= 0) {
+            s_lastError = "Invalid frame dimensions";
+            return -1;
+        }
+
         *outWidth = srcW;
         *outHeight = srcH;
 
@@ -572,7 +596,6 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
         );
 
         if (!swsCtx) {
-            av_frame_free(&frame);
             s_lastError = "Failed to create scaler context";
             return -1;
         }
@@ -582,7 +605,6 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
         rgbData = static_cast<unsigned char*>(malloc(rgbSize));
         if (!rgbData) {
             sws_freeContext(swsCtx);
-            av_frame_free(&frame);
             s_lastError = "Failed to allocate RGB buffer";
             return -1;
         }
@@ -593,23 +615,21 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
 
         // Convert frame to RGB24
         int ret = sws_scale(swsCtx, frame->data, frame->linesize, 0, srcH, dstData, dstLinesize);
+        sws_freeContext(swsCtx);
+        swsCtx = nullptr;
+
         if (ret < 0) {
-            sws_freeContext(swsCtx);
-            av_frame_free(&frame);
             free(rgbData);
             s_lastError = "Failed to scale frame";
             return -1;
         }
 
-        sws_freeContext(swsCtx);
-        av_frame_free(&frame);
+        // VideoProcessor destructor will clean up the frame when vp goes out of scope
+        // We've already copied the pixel data to rgbData, so we're good
 
         *outData = rgbData;
         return 0;
     } catch (const std::exception& e) {
-        if (frame) {
-            av_frame_free(&frame);
-        }
         if (swsCtx) {
             sws_freeContext(swsCtx);
         }
@@ -619,9 +639,6 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
         s_lastError = e.what();
         return -1;
     } catch (...) {
-        if (frame) {
-            av_frame_free(&frame);
-        }
         if (swsCtx) {
             sws_freeContext(swsCtx);
         }
@@ -668,6 +685,430 @@ BEATSYNC_API void bs_span_set_error(bs_span_t span, const char* msg) {
 BEATSYNC_API void bs_span_add_event(bs_span_t span, const char* event) {
     (void)span;
     (void)event;
+}
+
+// ==================== ONNX AI Analysis API ====================
+} // Close extern "C" temporarily for C++ includes
+
+#ifdef USE_ONNX
+#include "../audio/OnnxMusicAnalyzer.h"
+#include "../audio/OnnxBeatDetector.h"
+#include "../audio/OnnxStemSeparator.h"
+#endif
+
+extern "C" { // Resume extern "C" for C API functions
+
+// Thread-local storage for AI-related strings
+static thread_local std::string s_aiLastError;
+static thread_local std::string s_aiModelInfo;
+static thread_local std::string s_aiProviders;
+
+// Note: segment labels are heap-allocated per-result in bs_ai_analyze_* functions
+// and freed by bs_free_ai_result(). No thread-local storage needed.
+
+BEATSYNC_API void* bs_create_ai_analyzer(const bs_ai_config_t* config) {
+#ifndef USE_ONNX
+    s_aiLastError = "ONNX Runtime not available. Rebuild with USE_ONNX=ON";
+    return nullptr;
+#else
+    if (!config || !config->beat_model_path) {
+        s_aiLastError = "Invalid configuration: beat_model_path is required";
+        return nullptr;
+    }
+
+    try {
+        auto* analyzer = new BeatSync::OnnxMusicAnalyzer();
+
+        BeatSync::MusicAnalyzerConfig cfg;
+        cfg.beatModelPath = config->beat_model_path;
+
+        if (config->stem_model_path) {
+            cfg.stemModelPath = config->stem_model_path;
+        }
+
+        cfg.useStemSeparation = config->use_stem_separation != 0;
+        cfg.useDrumsForBeats = config->use_drums_for_beats != 0;
+
+        // Beat detection config
+        cfg.beatConfig.useGPU = config->use_gpu != 0;
+        cfg.beatConfig.gpuDeviceId = config->gpu_device_id;
+        if (config->beat_threshold > 0.0f) {
+            cfg.beatConfig.beatThreshold = config->beat_threshold;
+        }
+        if (config->downbeat_threshold > 0.0f) {
+            cfg.beatConfig.downbeatThreshold = config->downbeat_threshold;
+        }
+
+        // Stem separation config
+        cfg.stemConfig.useGPU = config->use_gpu != 0;
+        cfg.stemConfig.gpuDeviceId = config->gpu_device_id;
+
+        if (!analyzer->initialize(cfg)) {
+            s_aiLastError = analyzer->getLastError();
+            delete analyzer;
+            return nullptr;
+        }
+
+        return analyzer;
+    } catch (const std::exception& e) {
+        s_aiLastError = e.what();
+        return nullptr;
+    } catch (...) {
+        s_aiLastError = "Unknown error creating AI analyzer";
+        return nullptr;
+    }
+#endif
+}
+
+BEATSYNC_API void bs_destroy_ai_analyzer(void* analyzer) {
+#ifdef USE_ONNX
+    if (analyzer) {
+        delete static_cast<BeatSync::OnnxMusicAnalyzer*>(analyzer);
+    }
+#else
+    (void)analyzer;
+#endif
+}
+
+BEATSYNC_API int bs_ai_analyze_file(void* analyzer, const char* audio_path,
+                                     bs_ai_result_t* out_result,
+                                     bs_ai_progress_cb progress_cb, void* user_data) {
+#ifndef USE_ONNX
+    s_aiLastError = "ONNX Runtime not available";
+    return -1;
+#else
+    TRACE_FUNC();
+
+    if (!analyzer || !audio_path || !out_result) {
+        s_aiLastError = "Invalid parameters";
+        return -1;
+    }
+
+    try {
+        auto* a = static_cast<BeatSync::OnnxMusicAnalyzer*>(analyzer);
+
+        // Load audio file using AudioAnalyzer
+        BeatSync::AudioAnalyzer audioLoader;
+        auto audioData = audioLoader.loadAudioFile(audio_path);
+
+        if (audioData.samples.empty()) {
+            s_aiLastError = "Failed to load audio file: " + audioLoader.getLastError();
+            return -1;
+        }
+
+        // Convert mono to stereo (interleaved)
+        std::vector<float> stereoSamples(audioData.samples.size() * 2);
+        for (size_t i = 0; i < audioData.samples.size(); ++i) {
+            stereoSamples[i * 2] = audioData.samples[i];
+            stereoSamples[i * 2 + 1] = audioData.samples[i];
+        }
+
+        // Progress wrapper
+        BeatSync::MusicAnalysisProgress progressWrapper = nullptr;
+        if (progress_cb) {
+            progressWrapper = [progress_cb, user_data](float progress, const std::string& stage, const std::string& message) {
+                return progress_cb(progress, stage.c_str(), message.c_str(), user_data) != 0;
+            };
+        }
+
+        // Run analysis
+        BeatSync::MusicAnalysisResult result = a->analyze(stereoSamples, audioData.sampleRate, progressWrapper);
+
+        // Copy results to C struct
+        memset(out_result, 0, sizeof(bs_ai_result_t));
+
+        // Beats
+        if (!result.beats.empty()) {
+            out_result->beats = static_cast<double*>(malloc(result.beats.size() * sizeof(double)));
+            if (out_result->beats) {
+                memcpy(out_result->beats, result.beats.data(), result.beats.size() * sizeof(double));
+                out_result->beat_count = result.beats.size();
+            }
+        }
+
+        // Downbeats
+        if (!result.downbeats.empty()) {
+            out_result->downbeats = static_cast<double*>(malloc(result.downbeats.size() * sizeof(double)));
+            if (out_result->downbeats) {
+                memcpy(out_result->downbeats, result.downbeats.data(), result.downbeats.size() * sizeof(double));
+                out_result->downbeat_count = result.downbeats.size();
+            }
+        }
+
+        out_result->bpm = result.bpm;
+        out_result->duration = result.duration;
+
+        // Segments
+        if (!result.segments.empty()) {
+            size_t segSize = result.segments.size() * sizeof(out_result->segments[0]);
+            out_result->segments = static_cast<decltype(out_result->segments)>(malloc(segSize));
+
+            if (out_result->segments) {
+                for (size_t i = 0; i < result.segments.size(); ++i) {
+                    out_result->segments[i].start_time = result.segments[i].startTime;
+                    out_result->segments[i].end_time = result.segments[i].endTime;
+                    // Allocate and copy label string
+                    if (!result.segments[i].label.empty()) {
+                        size_t len = result.segments[i].label.size();
+                        char* labelCopy = static_cast<char*>(malloc(len + 1));
+                        memcpy(labelCopy, result.segments[i].label.c_str(), len);
+                        labelCopy[len] = '\0';
+                        out_result->segments[i].label = labelCopy;
+                    } else {
+                        out_result->segments[i].label = nullptr;
+                    }
+                    out_result->segments[i].confidence = result.segments[i].confidence;
+                }
+                out_result->segment_count = result.segments.size();
+            }
+        }
+
+        return 0;
+
+    } catch (const std::exception& e) {
+        s_aiLastError = e.what();
+        return -1;
+    } catch (...) {
+        s_aiLastError = "Unknown error during AI analysis";
+        return -1;
+    }
+#endif
+}
+
+BEATSYNC_API int bs_ai_analyze_samples(void* analyzer,
+                                        const float* samples, size_t sample_count,
+                                        int sample_rate, int num_channels,
+                                        bs_ai_result_t* out_result,
+                                        bs_ai_progress_cb progress_cb, void* user_data) {
+#ifndef USE_ONNX
+    s_aiLastError = "ONNX Runtime not available";
+    return -1;
+#else
+    TRACE_FUNC();
+
+    if (!analyzer || !samples || sample_count == 0 || !out_result) {
+        s_aiLastError = "Invalid parameters";
+        return -1;
+    }
+
+    try {
+        auto* a = static_cast<BeatSync::OnnxMusicAnalyzer*>(analyzer);
+
+        // Prepare samples (ensure stereo interleaved)
+        std::vector<float> stereoSamples;
+        if (num_channels == 1) {
+            // Convert mono to stereo
+            stereoSamples.resize(sample_count * 2);
+            for (size_t i = 0; i < sample_count; ++i) {
+                stereoSamples[i * 2] = samples[i];
+                stereoSamples[i * 2 + 1] = samples[i];
+            }
+        } else if (num_channels == 2) {
+            stereoSamples.assign(samples, samples + sample_count);
+        } else {
+            // Mix down to stereo
+            size_t numFrames = sample_count / num_channels;
+            stereoSamples.resize(numFrames * 2);
+            for (size_t i = 0; i < numFrames; ++i) {
+                float sum = 0.0f;
+                for (int c = 0; c < num_channels; ++c) {
+                    sum += samples[i * num_channels + c];
+                }
+                float avg = sum / num_channels;
+                stereoSamples[i * 2] = avg;
+                stereoSamples[i * 2 + 1] = avg;
+            }
+        }
+
+        // Progress wrapper
+        BeatSync::MusicAnalysisProgress progressWrapper = nullptr;
+        if (progress_cb) {
+            progressWrapper = [progress_cb, user_data](float progress, const std::string& stage, const std::string& message) {
+                return progress_cb(progress, stage.c_str(), message.c_str(), user_data) != 0;
+            };
+        }
+
+        // Run analysis
+        BeatSync::MusicAnalysisResult result = a->analyze(stereoSamples, sample_rate, progressWrapper);
+
+        // Copy results (same as bs_ai_analyze_file)
+        memset(out_result, 0, sizeof(bs_ai_result_t));
+
+        if (!result.beats.empty()) {
+            out_result->beats = static_cast<double*>(malloc(result.beats.size() * sizeof(double)));
+            if (out_result->beats) {
+                memcpy(out_result->beats, result.beats.data(), result.beats.size() * sizeof(double));
+                out_result->beat_count = result.beats.size();
+            }
+        }
+
+        if (!result.downbeats.empty()) {
+            out_result->downbeats = static_cast<double*>(malloc(result.downbeats.size() * sizeof(double)));
+            if (out_result->downbeats) {
+                memcpy(out_result->downbeats, result.downbeats.data(), result.downbeats.size() * sizeof(double));
+                out_result->downbeat_count = result.downbeats.size();
+            }
+        }
+
+        out_result->bpm = result.bpm;
+        out_result->duration = result.duration;
+
+        return 0;
+
+    } catch (const std::exception& e) {
+        s_aiLastError = e.what();
+        return -1;
+    }
+#endif
+}
+
+BEATSYNC_API int bs_ai_analyze_quick(void* analyzer, const char* audio_path,
+                                      bs_ai_result_t* out_result,
+                                      bs_ai_progress_cb progress_cb, void* user_data) {
+#ifndef USE_ONNX
+    s_aiLastError = "ONNX Runtime not available";
+    return -1;
+#else
+    TRACE_FUNC();
+
+    if (!analyzer || !audio_path || !out_result) {
+        s_aiLastError = "Invalid parameters";
+        return -1;
+    }
+
+    try {
+        auto* a = static_cast<BeatSync::OnnxMusicAnalyzer*>(analyzer);
+
+        // Load audio
+        BeatSync::AudioAnalyzer audioLoader;
+        auto audioData = audioLoader.loadAudioFile(audio_path);
+
+        if (audioData.samples.empty()) {
+            s_aiLastError = "Failed to load audio file: " + audioLoader.getLastError();
+            return -1;
+        }
+
+        // Convert to stereo
+        std::vector<float> stereoSamples(audioData.samples.size() * 2);
+        for (size_t i = 0; i < audioData.samples.size(); ++i) {
+            stereoSamples[i * 2] = audioData.samples[i];
+            stereoSamples[i * 2 + 1] = audioData.samples[i];
+        }
+
+        // Progress wrapper
+        BeatSync::MusicAnalysisProgress progressWrapper = nullptr;
+        if (progress_cb) {
+            progressWrapper = [progress_cb, user_data](float progress, const std::string& stage, const std::string& message) {
+                return progress_cb(progress, stage.c_str(), message.c_str(), user_data) != 0;
+            };
+        }
+
+        // Quick analysis (no stem separation)
+        BeatSync::MusicAnalysisResult result = a->analyzeQuick(stereoSamples, audioData.sampleRate, progressWrapper);
+
+        // Copy results
+        memset(out_result, 0, sizeof(bs_ai_result_t));
+
+        if (!result.beats.empty()) {
+            out_result->beats = static_cast<double*>(malloc(result.beats.size() * sizeof(double)));
+            if (out_result->beats) {
+                memcpy(out_result->beats, result.beats.data(), result.beats.size() * sizeof(double));
+                out_result->beat_count = result.beats.size();
+            }
+        }
+
+        if (!result.downbeats.empty()) {
+            out_result->downbeats = static_cast<double*>(malloc(result.downbeats.size() * sizeof(double)));
+            if (out_result->downbeats) {
+                memcpy(out_result->downbeats, result.downbeats.data(), result.downbeats.size() * sizeof(double));
+                out_result->downbeat_count = result.downbeats.size();
+            }
+        }
+
+        out_result->bpm = result.bpm;
+        out_result->duration = result.duration;
+
+        return 0;
+
+    } catch (const std::exception& e) {
+        s_aiLastError = e.what();
+        return -1;
+    }
+#endif
+}
+
+BEATSYNC_API void bs_free_ai_result(bs_ai_result_t* result) {
+    if (!result) return;
+
+    if (result->beats) {
+        free(result->beats);
+        result->beats = nullptr;
+    }
+    if (result->downbeats) {
+        free(result->downbeats);
+        result->downbeats = nullptr;
+    }
+    if (result->segments) {
+        for (size_t i = 0; i < result->segment_count; ++i) {
+            if (result->segments[i].label) {
+                free((void*)result->segments[i].label);
+                result->segments[i].label = nullptr;
+            }
+        }
+        free(result->segments);
+        result->segments = nullptr;
+    }
+
+    result->beat_count = 0;
+    result->downbeat_count = 0;
+    result->segment_count = 0;
+}
+
+BEATSYNC_API const char* bs_ai_get_last_error(void* analyzer) {
+#ifdef USE_ONNX
+    if (analyzer) {
+        auto* a = static_cast<BeatSync::OnnxMusicAnalyzer*>(analyzer);
+        s_aiLastError = a->getLastError();
+    }
+#else
+    (void)analyzer;
+#endif
+    return s_aiLastError.c_str();
+}
+
+BEATSYNC_API const char* bs_ai_get_model_info(void* analyzer) {
+#ifdef USE_ONNX
+    if (analyzer) {
+        auto* a = static_cast<BeatSync::OnnxMusicAnalyzer*>(analyzer);
+        s_aiModelInfo = a->getModelInfo();
+        return s_aiModelInfo.c_str();
+    }
+#else
+    (void)analyzer;
+#endif
+    return "";
+}
+
+BEATSYNC_API int bs_ai_is_available() {
+#ifdef USE_ONNX
+    return BeatSync::OnnxBeatDetector::isOnnxRuntimeAvailable() ? 1 : 0;
+#else
+    return 0;
+#endif
+}
+
+BEATSYNC_API const char* bs_ai_get_providers() {
+#ifdef USE_ONNX
+    auto providers = BeatSync::OnnxBeatDetector::getAvailableProviders();
+    s_aiProviders.clear();
+    for (size_t i = 0; i < providers.size(); ++i) {
+        if (i > 0) s_aiProviders += ", ";
+        s_aiProviders += providers[i];
+    }
+    return s_aiProviders.c_str();
+#else
+    return "";
+#endif
 }
 
 } // extern "C"

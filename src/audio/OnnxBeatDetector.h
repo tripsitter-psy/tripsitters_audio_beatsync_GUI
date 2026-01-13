@@ -169,14 +169,19 @@ public:
     /**
      * @brief Process a single chunk for streaming/real-time use
      * @param chunk Audio chunk (should be ~100ms for best results)
-     * @return Vector of beat times detected in this chunk (relative to chunk start)
+     * @return Vector of beat times as absolute stream timestamps (seconds from stream start).
+     *         Timestamps are accumulated across calls, so each returned beat time represents
+     *         the position in the overall audio stream, not relative to the current chunk.
      *
-     * Note: Call reset() before starting a new audio stream.
+     * Note: Call reset() before starting a new audio stream to zero the accumulated time.
      */
     std::vector<double> processChunk(const std::vector<float>& chunk);
 
     /**
      * @brief Reset streaming state
+     *
+     * Clears the internal audio buffer and resets the accumulated stream time to zero.
+     * Call this before processing a new audio stream.
      */
     void reset();
 

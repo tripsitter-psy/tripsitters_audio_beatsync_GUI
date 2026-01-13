@@ -7,7 +7,7 @@ param(
 
 Write-Host "Setting up Engine symlink for TripSitter Program target..." -ForegroundColor Cyan
 
-$ProjectEnginePath = "$PSScriptRoot\Engine"
+ $ProjectEnginePath = Join-Path $PSScriptRoot "..\Engine"
 
 # Check if Engine directory already exists
 if (Test-Path $ProjectEnginePath) {

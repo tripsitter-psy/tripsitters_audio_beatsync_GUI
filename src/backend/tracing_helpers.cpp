@@ -1,7 +1,8 @@
 #include "tracing_helpers.h"
 
 // Deprecated compatibility implementation - prefer using the project's
-// tracing facility in src/tracing/Tracing.h (TRACE_FUNC / TRACE_SCOPE macros).
+// tracing facility in src/backend/tracing.h (TRACE_FUNC / TRACE_SCOPE macros)
+// and the ::BeatSync::tracing API.
 
 // No-op implementations kept for compatibility; all functionality should be
 // implemented via ::BeatSync::tracing::Span instead.

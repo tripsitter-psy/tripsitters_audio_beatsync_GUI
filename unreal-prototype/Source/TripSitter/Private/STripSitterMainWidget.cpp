@@ -1120,6 +1120,26 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateTransitionsSection()
 TSharedRef<SWidget> STripSitterMainWidget::CreateControlSection()
 {
 	return SNew(SVerticalBox)
+		// Preview image (shows extracted video frame)
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.HAlign(HAlign_Center)
+		.Padding(0, 10)
+		[
+			SNew(SBox)
+			.MaxDesiredWidth(480)
+			.MaxDesiredHeight(270)
+			[
+				SNew(SBorder)
+				.BorderBackgroundColor(FLinearColor(0.1f, 0.1f, 0.15f, 1.0f))
+				.Padding(2)
+				[
+					SAssignNew(PreviewImage, SImage)
+					.Image(&PreviewBrush)
+				]
+			]
+		]
+
 		// Progress bar
 		+ SVerticalBox::Slot()
 		.AutoHeight()
@@ -1244,7 +1264,7 @@ FReply STripSitterMainWidget::OnBrowseAudioClicked()
 			}
 		}
 	}
-#else
+	#if PLATFORM_WINDOWS
 	// Windows native file dialog for standalone builds
 	OPENFILENAMEW ofn;
 	WCHAR szFile[MAX_PATH] = { 0 };
@@ -1263,6 +1283,8 @@ FReply STripSitterMainWidget::OnBrowseAudioClicked()
 		AudioPathBox->SetText(FText::FromString(AudioPath));
 		LoadWaveformFromAudio(AudioPath);
 	}
+	#endif
+	// Non-Windows platforms: no native file dialog
 #endif
 	return FReply::Handled();
 }
@@ -1628,8 +1650,12 @@ FReply STripSitterMainWidget::OnCancelClicked()
 
 FReply STripSitterMainWidget::OnPreviewFrameClicked()
 {
+	UE_LOG(LogTemp, Log, TEXT("TripSitter: OnPreviewFrameClicked - Start"));
+
 	// Get video path - prefer first video from list, fallback to single video
 	FString PreviewVideoPath = VideoPaths.Num() > 0 ? VideoPaths[0] : VideoPath;
+
+	UE_LOG(LogTemp, Log, TEXT("TripSitter: PreviewVideoPath = %s"), *PreviewVideoPath);
 
 	if (PreviewVideoPath.IsEmpty())
 	{
@@ -1638,17 +1664,42 @@ FReply STripSitterMainWidget::OnPreviewFrameClicked()
 		{
 			StatusTextBlock->SetText(FText::FromString(StatusText));
 		}
+		UE_LOG(LogTemp, Warning, TEXT("TripSitter: No video path selected"));
+		return FReply::Handled();
+	}
+
+	// Check if file exists
+	if (!FPaths::FileExists(PreviewVideoPath))
+	{
+		StatusText = FString::Printf(TEXT("ERROR: Video file not found: %s"), *PreviewVideoPath);
+		if (StatusTextBlock.IsValid())
+		{
+			StatusTextBlock->SetText(FText::FromString(StatusText));
+		}
+		UE_LOG(LogTemp, Error, TEXT("TripSitter: Video file does not exist: %s"), *PreviewVideoPath);
 		return FReply::Handled();
 	}
 
 	if (!FBeatsyncLoader::IsInitialized())
 	{
-		StatusText = TEXT("ERROR: Backend not loaded");
+		StatusText = TEXT("ERROR: Backend not loaded - trying to initialize...");
 		if (StatusTextBlock.IsValid())
 		{
 			StatusTextBlock->SetText(FText::FromString(StatusText));
 		}
-		return FReply::Handled();
+		UE_LOG(LogTemp, Warning, TEXT("TripSitter: Backend not initialized, attempting init..."));
+
+		// Try to initialize
+		if (!FBeatsyncLoader::Initialize())
+		{
+			StatusText = TEXT("ERROR: Failed to load backend DLL");
+			if (StatusTextBlock.IsValid())
+			{
+				StatusTextBlock->SetText(FText::FromString(StatusText));
+			}
+			UE_LOG(LogTemp, Error, TEXT("TripSitter: Failed to initialize BeatsyncLoader"));
+			return FReply::Handled();
+		}
 	}
 
 	// Get timestamp from waveform selection or use preview timestamp
@@ -1679,12 +1730,16 @@ FReply STripSitterMainWidget::OnPreviewFrameClicked()
 
 	bool bSuccess = FBeatsyncLoader::ExtractFrame(PreviewVideoPath, Timestamp, FrameData, Width, Height);
 
+	UE_LOG(LogTemp, Log, TEXT("TripSitter: ExtractFrame returned success=%d, dataSize=%d, w=%d, h=%d"),
+		bSuccess ? 1 : 0, FrameData.Num(), Width, Height);
+
 	if (bSuccess && FrameData.Num() > 0 && Width > 0 && Height > 0)
 	{
 		// Verify the data size matches expectations
 		int32 ExpectedSize = Width * Height * 3;
 		if (FrameData.Num() >= ExpectedSize)
 		{
+			UE_LOG(LogTemp, Log, TEXT("TripSitter: Calling UpdatePreviewTexture..."));
 			UpdatePreviewTexture(FrameData, Width, Height);
 			StatusText = FString::Printf(TEXT("Preview: %dx%d at %.2fs"), Width, Height, Timestamp);
 			UE_LOG(LogTemp, Log, TEXT("TripSitter: Extracted preview frame %dx%d at %.2fs"), Width, Height, Timestamp);
@@ -1706,11 +1761,15 @@ FReply STripSitterMainWidget::OnPreviewFrameClicked()
 	{
 		StatusTextBlock->SetText(FText::FromString(StatusText));
 	}
+
+	UE_LOG(LogTemp, Log, TEXT("TripSitter: OnPreviewFrameClicked - Complete"));
 	return FReply::Handled();
 }
 
 void STripSitterMainWidget::UpdatePreviewTexture(const TArray<uint8>& RGBData, int32 Width, int32 Height)
 {
+	UE_LOG(LogTemp, Log, TEXT("UpdatePreviewTexture: Start - %dx%d, data size=%d"), Width, Height, RGBData.Num());
+
 	// Validate input
 	if (Width <= 0 || Height <= 0)
 	{
@@ -1734,6 +1793,8 @@ void STripSitterMainWidget::UpdatePreviewTexture(const TArray<uint8>& RGBData, i
 	PreviewPixelData.SetNum(PixelCount * 4);
 	const uint8* SrcData = RGBData.GetData();
 
+	UE_LOG(LogTemp, Log, TEXT("UpdatePreviewTexture: Converting RGB24 to BGRA32 (%d pixels)"), PixelCount);
+
 	for (int32 i = 0; i < PixelCount; ++i)
 	{
 		PreviewPixelData[i * 4 + 0] = SrcData[i * 3 + 2]; // B
@@ -1742,12 +1803,23 @@ void STripSitterMainWidget::UpdatePreviewTexture(const TArray<uint8>& RGBData, i
 		PreviewPixelData[i * 4 + 3] = 255;                 // A
 	}
 
+	UE_LOG(LogTemp, Log, TEXT("UpdatePreviewTexture: Getting Slate renderer..."));
+
 	// Create dynamic brush from raw pixel data using Slate renderer
 	FSlateRenderer* Renderer = FSlateApplication::Get().GetRenderer();
-	FName BrushName = FName(*FString::Printf(TEXT("PreviewTexture_%d"), FMath::Rand()));
-
-	if (Renderer && Renderer->GenerateDynamicImageResource(BrushName, Width, Height, PreviewPixelData))
+	if (!Renderer)
 	{
+		UE_LOG(LogTemp, Error, TEXT("UpdatePreviewTexture: FSlateRenderer is null!"));
+		return;
+	}
+
+	FName BrushName = FName(*FString::Printf(TEXT("PreviewTexture_%d"), FMath::Rand()));
+	UE_LOG(LogTemp, Log, TEXT("UpdatePreviewTexture: Generating dynamic image resource '%s'..."), *BrushName.ToString());
+
+	if (Renderer->GenerateDynamicImageResource(BrushName, Width, Height, PreviewPixelData))
+	{
+		UE_LOG(LogTemp, Log, TEXT("UpdatePreviewTexture: Creating FSlateDynamicImageBrush..."));
+
 		PreviewImageBrush = MakeShareable(new FSlateDynamicImageBrush(
 			BrushName,
 			FVector2D(Width, Height)
@@ -1763,10 +1835,25 @@ void STripSitterMainWidget::UpdatePreviewTexture(const TArray<uint8>& RGBData, i
 			// Update preview image if it exists
 			if (PreviewImage.IsValid())
 			{
+				UE_LOG(LogTemp, Log, TEXT("UpdatePreviewTexture: Setting PreviewImage brush"));
 				PreviewImage->SetImage(&PreviewBrush);
 			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("UpdatePreviewTexture: PreviewImage widget is not valid!"));
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("UpdatePreviewTexture: Failed to create FSlateDynamicImageBrush"));
 		}
 	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("UpdatePreviewTexture: GenerateDynamicImageResource failed"));
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("UpdatePreviewTexture: Complete"));
 }
 
 #undef LOCTEXT_NAMESPACE

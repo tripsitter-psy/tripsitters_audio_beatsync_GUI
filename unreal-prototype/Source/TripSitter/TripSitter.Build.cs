@@ -35,11 +35,30 @@ public class TripSitter : ModuleRules
             _ => "x64" // Default fallback
         };
         string BeatsyncLib = Path.Combine(EngineDirectory, "Source", "Programs", "TripSitter", "ThirdParty", "beatsync", "lib", archFolder);
-        if (Directory.Exists(BeatsyncLib))
+
+        if (!Directory.Exists(BeatsyncLib))
+        {
+            System.Console.WriteLine($"[TripSitter.Build.cs] WARNING: BeatsyncLib directory not found: {BeatsyncLib}");
+        }
+        else
         {
             PublicIncludePaths.Add(Path.Combine(BeatsyncLib, "..", "..", "include"));
-            PublicAdditionalLibraries.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.lib"));
-            RuntimeDependencies.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.dll"));
+
+            if (Target.Platform == UnrealTargetPlatform.Win64)
+            {
+                PublicAdditionalLibraries.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.lib"));
+                RuntimeDependencies.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.dll"));
+            }
+            else if (Target.Platform == UnrealTargetPlatform.Mac)
+            {
+                PublicAdditionalLibraries.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.dylib"));
+                RuntimeDependencies.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.dylib"));
+            }
+            else if (Target.Platform == UnrealTargetPlatform.Linux)
+            {
+                PublicAdditionalLibraries.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.so"));
+                RuntimeDependencies.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.so"));
+            }
         }
     }
 }

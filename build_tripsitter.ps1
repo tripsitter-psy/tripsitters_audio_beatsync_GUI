@@ -1,14 +1,20 @@
 # Build and package TripSitter standalone app
+# WARNING: Avoid using OneDrive-synced folders for UERoot, ProjectPath, or ArchiveDir
+# as file-locking during builds can cause failures.
 param(
-    [string]$UERoot = "C:\Program Files\Epic Games\UE_5.7",
-    [string]$ProjectPath = (Join-Path $env:USERPROFILE "OneDrive\Documents\Unreal Projects\MyProject\MyProject.uproject"),
+    [Parameter(Mandatory=$false)]
+    [string]$UERoot = "C:\UE5_Source\UnrealEngine",
+    [Parameter(Mandatory=$true, HelpMessage="Path to the .uproject file (avoid OneDrive paths)")]
+    [string]$ProjectPath,
+    [Parameter(Mandatory=$false)]
     [string]$ArchiveDir = (Join-Path $PSScriptRoot "packaged")
 )
 
 Write-Host "Building and packaging TripSitter..." -ForegroundColor Cyan
 
-# Clean intermediate files to force rebuild
-$IntermediatePath = Join-Path $env:USERPROFILE "OneDrive\Documents\Unreal Projects\MyProject\Intermediate"
+# Clean intermediate files to force rebuild (derive from ProjectPath)
+$ProjectDir = Split-Path -Parent $ProjectPath
+$IntermediatePath = Join-Path $ProjectDir "Intermediate"
 if (Test-Path "$IntermediatePath\Build") {
     Write-Host "Cleaning intermediate build files..."
     Remove-Item -Recurse -Force "$IntermediatePath\Build" -ErrorAction SilentlyContinue

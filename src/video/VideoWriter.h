@@ -15,6 +15,16 @@ class VideoWriterTestAccess;  // Test access helper
 namespace BeatSync {
 
 /**
+ * @brief Information about a detected video encoder
+ */
+struct GPUEncoderInfo {
+    std::string encoderName;   // e.g., "h264_nvenc", "libx264"
+    std::string preset;        // GPU-specific or libx264 preset
+    bool isHardware;           // true if using GPU acceleration
+};
+
+
+/**
  * @brief Configuration for video effects
  */
 struct EffectsConfig {
@@ -216,6 +226,32 @@ private:
     std::string getFFmpegPath() const;
 
     void reportProgress(double progress);
+
+    // GPU encoder detection and selection
+    /**
+     * @brief Probe if a specific encoder is available in FFmpeg
+     * @param encoder Encoder name (e.g., "h264_nvenc")
+     * @return true if encoder is available
+     */
+    bool probeEncoder(const std::string& encoder) const;
+
+    /**
+     * @brief Detect the best available encoder (GPU first, then software fallback)
+     * @param speedPreset Speed preference ("ultrafast", "fast", "medium")
+     * @return GPUEncoderInfo with encoder name, preset, and hardware flag
+     */
+    GPUEncoderInfo detectBestEncoder(const std::string& speedPreset = "fast") const;
+
+    /**
+     * @brief Get FFmpeg encoder arguments string
+     * @param speedPreset Speed preference ("ultrafast", "fast", "medium")
+     * @return FFmpeg arguments string like "-c:v h264_nvenc -preset p1 ..."
+     */
+    std::string getEncoderArgs(const std::string& speedPreset) const;
+
+    // Cached encoder info to avoid repeated probing
+    mutable GPUEncoderInfo m_cachedEncoder;
+    mutable bool m_encoderCacheValid = false;
 };
 
 } // namespace BeatSync

@@ -64,21 +64,90 @@ void FBeatsyncProcessingTask::DoWork()
         return;
     }
 
-    void* Analyzer = FBeatsyncLoader::CreateAnalyzer();
-    if (!Analyzer)
+    FBeatGrid BeatGrid;
+    bool bSuccess = false;
+
+    // Try AI analyzer first (GPU accelerated ONNX)
+    if (FBeatsyncLoader::IsAIAvailable())
     {
-        Result.bSuccess = false;
-        Result.ErrorMessage = TEXT("Failed to create analyzer");
-        auto LocalOnComplete = OnComplete;
-        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
-            LocalOnComplete.ExecuteIfBound(Result);
-        });
-        return;
+        ReportProgress(0.05f, TEXT("Analyzing audio with AI (GPU)..."));
+        UE_LOG(LogTemp, Log, TEXT("TripSitter: Using AI analyzer (providers: %s)"), *FBeatsyncLoader::GetAIProviders());
+
+        // Get path to beatnet model - look relative to executable or in ThirdParty
+        FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
+        FString ModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("beatnet.onnx"));
+        if (!FPaths::FileExists(ModelPath))
+        {
+            // Try ThirdParty location
+            ModelPath = FPaths::Combine(ExeDir, TEXT(".."), TEXT(".."), TEXT("Source"), TEXT("Programs"),
+                                         TEXT("TripSitter"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("models"), TEXT("beatnet.onnx"));
+            ModelPath = FPaths::ConvertRelativePathToFull(ModelPath);
+        }
+
+        if (FPaths::FileExists(ModelPath))
+        {
+            FAIConfig AIConfig;
+            AIConfig.BeatModelPath = ModelPath;
+            AIConfig.bUseGPU = true;  // Enable CUDA
+            AIConfig.bUseStemSeparation = false;  // Quick mode
+            AIConfig.bUseDrumsForBeats = true;
+            AIConfig.BeatThreshold = 0.5f;
+            AIConfig.DownbeatThreshold = 0.5f;
+
+            void* AIAnalyzer = FBeatsyncLoader::CreateAIAnalyzer(AIConfig);
+            if (AIAnalyzer)
+            {
+                FAIResult AIResult;
+                bSuccess = FBeatsyncLoader::AIAnalyzeQuick(AIAnalyzer, Params.AudioPath, AIResult);
+
+                if (bSuccess && AIResult.Beats.Num() > 0)
+                {
+                    BeatGrid.Beats = AIResult.Beats;
+                    BeatGrid.BPM = AIResult.BPM;
+                    BeatGrid.Duration = AIResult.Duration;
+                    UE_LOG(LogTemp, Log, TEXT("TripSitter: AI analysis found %d beats at %.1f BPM"), AIResult.Beats.Num(), AIResult.BPM);
+                }
+                else
+                {
+                    FString AIError = FBeatsyncLoader::GetAILastError(AIAnalyzer);
+                    UE_LOG(LogTemp, Warning, TEXT("TripSitter: AI analysis failed: %s, falling back to spectral flux"), *AIError);
+                    bSuccess = false;
+                }
+
+                FBeatsyncLoader::DestroyAIAnalyzer(AIAnalyzer);
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning, TEXT("TripSitter: Failed to create AI analyzer, falling back to spectral flux"));
+            }
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("TripSitter: Beat model not found at %s, falling back to spectral flux"), *ModelPath);
+        }
     }
 
-    FBeatGrid BeatGrid;
-    bool bSuccess = FBeatsyncLoader::AnalyzeAudio(Analyzer, Params.AudioPath, BeatGrid);
-    FBeatsyncLoader::DestroyAnalyzer(Analyzer);
+    // Fall back to CPU-based spectral flux if AI not available or failed
+    if (!bSuccess)
+    {
+        ReportProgress(0.05f, TEXT("Analyzing audio (CPU)..."));
+        UE_LOG(LogTemp, Log, TEXT("TripSitter: Using spectral flux analyzer (CPU)"));
+
+        void* Analyzer = FBeatsyncLoader::CreateAnalyzer();
+        if (!Analyzer)
+        {
+            Result.bSuccess = false;
+            Result.ErrorMessage = TEXT("Failed to create analyzer");
+            auto LocalOnComplete = OnComplete;
+            AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+                LocalOnComplete.ExecuteIfBound(Result);
+            });
+            return;
+        }
+
+        bSuccess = FBeatsyncLoader::AnalyzeAudio(Analyzer, Params.AudioPath, BeatGrid);
+        FBeatsyncLoader::DestroyAnalyzer(Analyzer);
+    }
 
     if (!bSuccess || BeatGrid.Beats.Num() == 0)
     {

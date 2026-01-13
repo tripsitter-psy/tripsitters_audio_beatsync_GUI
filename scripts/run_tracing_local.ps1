@@ -9,6 +9,11 @@ try {
     $traceOut = Join-Path $PWD 'beatsync-trace.log'
     $env:BEATSYNC_TRACE_OUT = $traceOut
     ctest -C Debug -R tracing -V --output-on-failure
+    $ctestExitCode = $LASTEXITCODE
+    if ($ctestExitCode -ne 0) {
+        Write-Error "ctest failed with exit code: $ctestExitCode"
+        exit $ctestExitCode
+    }
     if (Test-Path $traceOut) { Write-Host "Tracing output written to: $traceOut" } else { Write-Host "No trace file found. Tracing may not have been enabled for the test run." }
 } finally {
     Pop-Location

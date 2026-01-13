@@ -17,13 +17,13 @@ static FString GetBeatsyncDllPath()
     FString Filename;
     FString Subdir;
 #if PLATFORM_WINDOWS
-    Filename = TEXT("beatsync_backend.dll");
+    Filename = TEXT("beatsync_backend_shared.dll");
     Subdir = TEXT("x64");
 #elif PLATFORM_MAC
-    Filename = TEXT("libbeatsync_backend.dylib");
+    Filename = TEXT("libbeatsync_backend_shared.dylib");
     Subdir = TEXT("Mac");
 #else
-    Filename = TEXT("libbeatsync_backend.so");
+    Filename = TEXT("libbeatsync_backend_shared.so");
     Subdir = TEXT("Linux");
 #endif
     FString DllPath = FPaths::Combine(FPaths::ProjectDir(), TEXT(".."), TEXT("unreal-prototype"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("lib"), Subdir, Filename);
@@ -57,8 +57,14 @@ static void CallBackendInitTracing(const FString& ServiceName)
     }
 
     bs_init_tracing_t Init = reinterpret_cast<bs_init_tracing_t>(Symbol);
-    FString ServiceNameUTF8 = ServiceName;
-    Init(TCHAR_TO_UTF8(*ServiceNameUTF8));
+    int Result = Init(TCHAR_TO_UTF8(*ServiceName));
+    if (Result != 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("TripSitterUEModule: bs_initialize_tracing failed for service '%s' with code %d"), *ServiceName, Result);
+        FPlatformProcess::FreeDllHandle(BeatsyncDllHandle);
+        BeatsyncDllHandle = nullptr;
+        return;
+    }
 }
 
 static void CallBackendShutdownTracing()

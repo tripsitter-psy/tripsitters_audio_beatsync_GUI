@@ -8,9 +8,9 @@
       "features": ["avcodec", "avformat", "swresample", "swscale", "avfilter"]
     },
     {
-      "name": "onnxruntime",
-      "features": ["cuda"]
+      "name": "onnxruntime-gpu",
+      "platform": "windows"
     }
   ],
-  "builtin-baseline": "25b458671af03578e6a34edd8f0d1ac85e084df4"
+  "builtin-baseline": "a48bbf436be0867d0eadc42077f280f3123e3698"
 }

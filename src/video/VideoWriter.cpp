@@ -11,6 +11,11 @@
 #include <cstring>
 #include <filesystem>
 
+// libavformat for audio stream probing
+extern "C" {
+#include <libavformat/avformat.h>
+}
+
 // Cross-platform popen/pclose
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -429,7 +434,7 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
         << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
         << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
         << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\""
-        << " -c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p"
+        << " " << getEncoderArgs("ultrafast")
         << " -c:a aac -b:a 192k -ar 44100"
         << " -video_track_timescale 90000"
         << " -avoid_negative_ts make_zero"
@@ -527,7 +532,7 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
         << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
         << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
         << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\""
-        << " -c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p"
+        << " " << getEncoderArgs("ultrafast")
         << " -c:a aac -b:a 192k -ar 44100"
         << " -video_track_timescale 90000"
         << " -avoid_negative_ts make_zero"
@@ -701,35 +706,52 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 
                 // Build ffmpeg command with all inputs
                 std::ostringstream cmd;
+                cmd << "\"" << ffmpegPath << "\"";
                 for (const auto &v : inputVideos) {
                     cmd << " -i \"" << v << "\"";
                 }
 
-                // Add filter_complex and maps. For audio, attempt a concat across all audio streams
-                std::ostringstream fcEsc;
-                fcEsc << filterComplex;
-
-                // Attempt audio concat of all input audio streams
-                // Get current filter content to check if we need a separator
-                std::string fc = fcEsc.str();
-                // Only add separator if there's existing content and it doesn't already end with ';'
-                if (!fc.empty() && fc.back() != ';') {
-                    fcEsc << ";";
-                }
-                // append audio concat part: [0:a][1:a]...[N-1:a]concat=n=N:v=0:a=1[aout]
+                // Build audio portion of filter_complex
+                // For each input, probe if it has audio; if not, use anullsrc as fallback
+                // This ensures [ainN] labels are always defined for the concat filter
+                std::ostringstream audioFilter;
                 for (size_t i = 0; i < inputVideos.size(); ++i) {
-                    fcEsc << "[" << i << ":a]";
-                }
-                fcEsc << "concat=n=" << inputVideos.size() << ":v=0:a=1[aout]";
+                    // Probe input file for audio stream using libavformat
+                    bool hasAudio = false;
+                    AVFormatContext* probeCtx = nullptr;
+                    if (avformat_open_input(&probeCtx, inputVideos[i].c_str(), nullptr, nullptr) == 0) {
+                        if (avformat_find_stream_info(probeCtx, nullptr) >= 0) {
+                            for (unsigned int s = 0; s < probeCtx->nb_streams; ++s) {
+                                if (probeCtx->streams[s]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+                                    hasAudio = true;
+                                    break;
+                                }
+                            }
+                        }
+                        avformat_close_input(&probeCtx);
+                    }
 
-                // Final map: video final label is [t{N-1}], audio is [aout]
+                    if (hasAudio) {
+                        audioFilter << "[" << i << ":a]asetpts=PTS-STARTPTS[ain" << i << "];";
+                    } else {
+                        // Use anullsrc with matching channel_layout/sample_rate
+                        audioFilter << "anullsrc=channel_layout=stereo:sample_rate=44100,asetpts=PTS-STARTPTS[ain" << i << "];";
+                    }
+                }
+                // Concatenate all audio streams
+                for (size_t i = 0; i < inputVideos.size(); ++i) {
+                    audioFilter << "[ain" << i << "]";
+                }
+                audioFilter << "concat=n=" << inputVideos.size() << ":v=0:a=1[aout]";
+
+                // Combine video transitions and audio concat into full filter_complex
+                std::string fullFilter = filterComplex + ";" + audioFilter.str();
                 std::string finalVideoLabel = "[t" + std::to_string(inputVideos.size()-1) + "]";
 
-                cmd << " -filter_complex \"" << fcEsc.str() << "\" -map \"" << finalVideoLabel << "\"";
-                // Map audio using [aout] from the concat filter
-                cmd << " -map \"[aout]\"";
+                cmd << " -filter_complex \"" << fullFilter << "\"";
+                cmd << " -map \"" << finalVideoLabel << "\" -map \"[aout]\"";
 
-                cmd << " -c:v libx264 -preset fast -crf 18 -c:a aac -b:a 192k -y \"" << outputVideo << "\"";
+                cmd << " " << getEncoderArgs("fast") << " -c:a aac -b:a 192k -y \"" << outputVideo << "\"";
 
                 // Execute the command
                 std::string ffmpegOutput;
@@ -756,6 +778,51 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
                 if (logf) {
                     fprintf(logf, "\n--- FFmpeg transition run (chained) ---\ncmd: %s\nexit: %d\noutput:\n%s\n", cmd.str().c_str(), exitCode, ffmpegOutput.c_str());
                     fclose(logf);
+                }
+
+                // If audio concat failed (likely missing audio streams), try simpler approach
+                if (exitCode != 0 && ffmpegOutput.find("does not contain any stream") != std::string::npos) {
+                    // Retry with anullsrc fallback for all inputs
+                    std::ostringstream cmd2;
+                    cmd2 << "\"" << ffmpegPath << "\"";
+                    for (const auto &v : inputVideos) {
+                        cmd2 << " -i \"" << v << "\"";
+                    }
+
+                    // Use anullsrc for audio - guaranteed to work
+                    std::ostringstream audioFilter2;
+                    audioFilter2 << "anullsrc=channel_layout=stereo:sample_rate=44100:duration=";
+                    // Estimate total duration (won't be exact but ensures silence track exists)
+                    audioFilter2 << (inputVideos.size() * 10.0) << "[aout]";
+
+                    std::string fullFilter2 = filterComplex + ";" + audioFilter2.str();
+
+                    cmd2 << " -filter_complex \"" << fullFilter2 << "\"";
+                    cmd2 << " -map \"" << finalVideoLabel << "\" -map \"[aout]\"";
+                    cmd2 << " " << getEncoderArgs("fast") << " -c:a aac -b:a 192k -shortest -y \"" << outputVideo << "\"";
+
+                    std::string ffmpegOutput2;
+#ifdef _WIN32
+                    exitCode = runHiddenCommand(cmd2.str(), ffmpegOutput2);
+#else
+                    std::string fullCmd2 = cmd2.str() + " 2>&1";
+                    FILE* pipe2 = popen_compat(fullCmd2.c_str(), "r");
+                    if (pipe2) {
+                        char buffer2[512];
+                        while (fgets(buffer2, sizeof(buffer2), pipe2) != nullptr) {
+                            ffmpegOutput2 += buffer2;
+                        }
+                        exitCode = pclose_compat(pipe2);
+                    }
+#endif
+
+                    if (logf) {
+                        logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
+                        if (logf) {
+                            fprintf(logf, "\n--- FFmpeg transition run (anullsrc fallback) ---\ncmd: %s\nexit: %d\noutput:\n%s\n", cmd2.str().c_str(), exitCode, ffmpegOutput2.c_str());
+                            fclose(logf);
+                        }
+                    }
                 }
 
                 std::remove(listFile.c_str());
@@ -835,7 +902,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
         // Attempt a safe re-encode fallback (slower but normalizes timestamps)
         std::ostringstream reencodeCmd;
         reencodeCmd << "\"" << ffmpegPath << "\" -fflags +genpts -f concat -safe 0 -i \"" << listFile
-                    << "\" -c:v libx264 -preset ultrafast -crf 18 -r " << m_outputFps << " -pix_fmt yuv420p"
+                    << "\" " << getEncoderArgs("ultrafast") << " -r " << m_outputFps
                     << " -c:a aac -b:a 192k -video_track_timescale 90000 -y \"" << outputVideo << "\"";
 
         // Execute re-encode hidden (no console flash on Windows)
@@ -967,6 +1034,124 @@ void VideoWriter::reportProgress(double progress) {
         m_progressCallback(progress);
     }
 }
+
+// ==================== GPU Encoder Detection ====================
+
+bool VideoWriter::probeEncoder(const std::string& encoder) const {
+    std::string ffmpegPath = getFFmpegPath();
+    std::string output;
+
+    // Query FFmpeg for available encoders
+    std::string cmd = "\"" + ffmpegPath + "\" -hide_banner -encoders";
+
+#ifdef _WIN32
+    int rc = runHiddenCommand(cmd, output);
+#else
+    std::string fullCmd = cmd + " 2>&1";
+    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
+    if (!pipe) {
+        return false;
+    }
+    char buffer[512];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+    int rc = pclose_compat(pipe);
+#endif
+
+    if (rc != 0) {
+        return false;
+    }
+
+    // Check if encoder name appears in output
+    // FFmpeg encoder list format: " V..... h264_nvenc           NVIDIA NVENC H.264 encoder"
+    return output.find(encoder) != std::string::npos;
+}
+
+GPUEncoderInfo VideoWriter::detectBestEncoder(const std::string& speedPreset) const {
+    // Return cached result if available
+    if (m_encoderCacheValid) {
+        // Adjust preset for cached encoder
+        GPUEncoderInfo result = m_cachedEncoder;
+        if (result.encoderName == "h264_nvenc") {
+            result.preset = (speedPreset == "ultrafast") ? "p1" :
+                           (speedPreset == "fast") ? "p4" : "p5";
+        } else if (result.encoderName == "h264_amf") {
+            result.preset = (speedPreset == "ultrafast") ? "speed" :
+                           (speedPreset == "fast") ? "balanced" : "quality";
+        } else if (result.encoderName == "h264_qsv") {
+            result.preset = (speedPreset == "ultrafast") ? "veryfast" :
+                           (speedPreset == "fast") ? "fast" : "medium";
+        } else {
+            result.preset = speedPreset;
+        }
+        return result;
+    }
+
+    // Try NVIDIA NVENC first (most common high-end GPU)
+    if (probeEncoder("h264_nvenc")) {
+        std::string preset = (speedPreset == "ultrafast") ? "p1" :
+                            (speedPreset == "fast") ? "p4" : "p5";
+        m_cachedEncoder = {"h264_nvenc", preset, true};
+        m_encoderCacheValid = true;
+        std::cout << "[GPU] Detected NVIDIA NVENC encoder\n";
+        return m_cachedEncoder;
+    }
+
+    // Try AMD AMF
+    if (probeEncoder("h264_amf")) {
+        std::string preset = (speedPreset == "ultrafast") ? "speed" :
+                            (speedPreset == "fast") ? "balanced" : "quality";
+        m_cachedEncoder = {"h264_amf", preset, true};
+        m_encoderCacheValid = true;
+        std::cout << "[GPU] Detected AMD AMF encoder\n";
+        return m_cachedEncoder;
+    }
+
+    // Try Intel Quick Sync
+    if (probeEncoder("h264_qsv")) {
+        std::string preset = (speedPreset == "ultrafast") ? "veryfast" :
+                            (speedPreset == "fast") ? "fast" : "medium";
+        m_cachedEncoder = {"h264_qsv", preset, true};
+        m_encoderCacheValid = true;
+        std::cout << "[GPU] Detected Intel Quick Sync encoder\n";
+        return m_cachedEncoder;
+    }
+
+    // Fallback to software encoder
+    m_cachedEncoder = {"libx264", speedPreset, false};
+    m_encoderCacheValid = true;
+    std::cout << "[GPU] No hardware encoder found, using software libx264\n";
+    return m_cachedEncoder;
+}
+
+std::string VideoWriter::getEncoderArgs(const std::string& speedPreset) const {
+    GPUEncoderInfo enc = detectBestEncoder(speedPreset);
+    std::ostringstream args;
+
+    if (enc.encoderName == "h264_nvenc") {
+        // NVIDIA NVENC: Use VBR with CQ mode for quality control
+        // -rc vbr -cq gives similar quality to libx264's CRF mode
+        args << "-c:v h264_nvenc -preset " << enc.preset
+             << " -rc vbr -cq 18 -pix_fmt yuv420p";
+    } else if (enc.encoderName == "h264_amf") {
+        // AMD AMF: Use CQP mode for quality control
+        args << "-c:v h264_amf -quality " << enc.preset
+             << " -rc cqp -qp_i 18 -qp_p 18 -pix_fmt yuv420p";
+    } else if (enc.encoderName == "h264_qsv") {
+        // Intel Quick Sync: Use global_quality for CRF-like mode
+        args << "-c:v h264_qsv -preset " << enc.preset
+             << " -global_quality 18 -pix_fmt yuv420p";
+    } else {
+        // Software fallback (libx264)
+        args << "-c:v libx264 -preset " << enc.preset
+             << " -crf 18 -pix_fmt yuv420p";
+    }
+
+    return args.str();
+}
+
+// ==================== End GPU Encoder Detection ====================
 
 void VideoWriter::setEffectsConfig(const EffectsConfig& config) {
     m_effects = config;
@@ -1276,7 +1461,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         }
     }
 
-    cmd << " -c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p"
+    cmd << " " << getEncoderArgs("fast")
         << " -c:a copy"
         << " -y \"" << outputVideo << "\"";
 

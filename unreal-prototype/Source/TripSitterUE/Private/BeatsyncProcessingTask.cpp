@@ -173,8 +173,8 @@ void FBeatsyncProcessingTask::DoWork()
     // Ensure the TripSitter temp directory exists
     IFileManager::Get().MakeDirectory(*TempDir, true);
     
-    // Generate unique temp filenames
-    FString TempBaseName = FString::Printf(TEXT("temp_%d"), FMath::Rand());
+    // Generate unique temp filenames using GUID
+    FString TempBaseName = FString::Printf(TEXT("temp_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     FString TempVideoPath = FPaths::Combine(TempDir, TempBaseName + TEXT("_video.mp4"));
     FString TempEffectsPath = FPaths::Combine(TempDir, TempBaseName + TEXT("_effects.mp4"));
 

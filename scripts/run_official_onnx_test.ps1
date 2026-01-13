@@ -31,8 +31,16 @@ if (!(Test-Path $zipPath) -or (Get-Item $zipPath).Length -eq 0) {
 }
 
 if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force }
+
 Write-Host "Extracting to $outDir"
-Expand-Archive -LiteralPath $zipPath -DestinationPath $outDir
+try {
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $outDir
+} catch {
+    Write-Error "Failed to extract archive: $zipPath -> $outDir"
+    Write-Error $_
+    if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force }
+    exit 2
+}
 
 # Find the runtime bin folder (search for onnxruntime.dll)
 $bin = Get-ChildItem -Path $outDir -Recurse -Filter onnxruntime.dll | Select-Object -First 1
@@ -44,16 +52,31 @@ Write-Host "Found runtime in: $binDir"
 $env:Path = $binDir + ";" + $env:Path
 
 # Build & run helper test
+
 Write-Host "Configuring & building (with tracing)"
 cmake -S . -B build -DUSE_TRACING=ON
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "CMake configuration failed with exit code $LASTEXITCODE"
+    exit $LASTEXITCODE
+}
 cmake --build build --config Debug -- /m
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "CMake build failed with exit code $LASTEXITCODE"
+    exit $LASTEXITCODE
+}
 
 Write-Host "Running helper test (official ONNX $Version)"
 Push-Location build
+$ctestExitCode = 0
 try {
     ctest -C Debug -R onnx_inference_helper -V --output-on-failure
+    $ctestExitCode = $LASTEXITCODE
 } finally {
     Pop-Location
+    if ($ctestExitCode -ne 0) {
+        Write-Error "ctest failed with exit code: $ctestExitCode"
+        exit $ctestExitCode
+    }
 }
 
 Write-Host "Done. If the helper crashed, consider running ProcDump to capture a full .dmp file."

@@ -6,10 +6,23 @@
 
 The GUI is implemented in Unreal Engine (TripSitter standalone app). The C++ backend provides the core audio/video processing.
 
+**Unreal Engine**: Source-built at `C:\UE5_Source\UnrealEngine` (NOT Epic Games Launcher install).
+
 Build the backend with:
 ```powershell
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build --config Release
+```
+
+Sync and build the TripSitter Program target:
+
+```powershell
+# Sync source files from repo to engine
+$env:TRIPSITTER_ENGINE_PATH = "C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter"
+.\scripts\sync_tripsitter_ue.ps1 -ToEngine
+
+# Build
+& "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
 
 ## Project Architecture
@@ -23,18 +36,18 @@ BeatSyncEditor/
 │   └── tracing/         # OpenTelemetry tracing support
 ├── tests/               # Catch2 unit tests
 ├── unreal-prototype/    # Unreal Engine 5 plugin source (synced to MyProject)
-│   ├── Source/TripSitterUE/
+│   ├── Source/TripSitter/
 │   │   ├── Private/
 │   │   │   ├── BeatsyncLoader.cpp      # DLL loading + C API bindings
 │   │   │   ├── BeatsyncProcessingTask.cpp  # Async background processing
 │   │   │   ├── STripSitterMainWidget.cpp   # Main Slate UI widget
 │   │   │   ├── SWaveformViewer.cpp     # Waveform visualization widget
-│   │   │   └── TripSitterUEModule.cpp  # Module startup/shutdown
+│   │   │   └── TripSitterModule.cpp    # Module startup/shutdown
 │   │   ├── Public/
 │   │   │   ├── BeatsyncLoader.h
 │   │   │   ├── STripSitterMainWidget.h
 │   │   │   ├── SWaveformViewer.h
-│   │   │   └── TripSitterUEModule.h
+│   │   │   └── TripSitterModule.h
 │   │   └── Resources/
 │   │       ├── Corpta.otf              # Custom display font
 │   │       ├── wallpaper.png           # Background image
@@ -134,8 +147,9 @@ Font is loaded at runtime via `FSlateFontInfo(AbsolutePath, Size)`. Falls back t
 
 Defined in `vcpkg.json`:
 - `ffmpeg` (avcodec, avformat, swresample, swscale, avfilter)
-  - **Note**: `avutil` removed from features list - now included in core as of FFmpeg 8.0.1
 - `onnxruntime` (AI beat detection)
+
+Note: `avutil` is included in FFmpeg core and is not a selectable vcpkg feature.
 
 Baseline: [configured in vcpkg.json](vcpkg.json) (vcpkg submodule HEAD)
 

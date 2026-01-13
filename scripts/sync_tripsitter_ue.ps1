@@ -6,7 +6,7 @@
 #   .\sync_tripsitter_ue.ps1 -ToRepo      # Copy from Engine to repo (after editing in Engine)
 #
 # Source locations:
-#   Repo:   BeatSyncEditor/unreal-prototype/Source/TripSitterUE/
+#   Repo:   BeatSyncEditor/unreal-prototype/Source/TripSitter/
 #   Engine: C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\
 
 param(
@@ -15,14 +15,18 @@ param(
 )
 
 $RepoRoot = $PSScriptRoot | Split-Path -Parent
-$RepoSource = Join-Path $RepoRoot "unreal-prototype\Source\TripSitterUE"
-$EngineSource = $env:TRIPSITTER_ENGINE_PATH
-if (-not $EngineSource) {
-    $EngineSource = Read-Host "Enter the path to the Unreal Engine source directory (e.g., C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter)"
-}
-if (-not (Test-Path $EngineSource)) {
-    Write-Error "Engine source path '$EngineSource' does not exist. Set TRIPSITTER_ENGINE_PATH environment variable or provide a valid path."
-    exit 1
+$RepoSource = Join-Path $RepoRoot "unreal-prototype\Source\TripSitter"
+
+function Get-EngineSourcePath {
+    $engineSource = $env:TRIPSITTER_ENGINE_PATH
+    if (-not $engineSource) {
+        $engineSource = Read-Host "Enter the path to the Unreal Engine source directory (e.g., C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter)"
+    }
+    if (-not (Test-Path $engineSource)) {
+        Write-Error "Engine source path '$engineSource' does not exist. Set TRIPSITTER_ENGINE_PATH environment variable or provide a valid path."
+        exit 1
+    }
+    return $engineSource
 }
 
 # Files to sync (relative to Private folder)
@@ -46,6 +50,7 @@ $EngineOnlyFiles = @(
 )
 
 function Sync-ToEngine {
+    $EngineSource = Get-EngineSourcePath
     Write-Host "Syncing from Repo to Engine..." -ForegroundColor Cyan
     Write-Host "  From: $RepoSource\Private\" -ForegroundColor Gray
     Write-Host "  To:   $EngineSource\Private\" -ForegroundColor Gray
@@ -90,6 +95,7 @@ function Sync-ToEngine {
 }
 
 function Sync-ToRepo {
+    $EngineSource = Get-EngineSourcePath
     Write-Host "Syncing from Engine to Repo..." -ForegroundColor Cyan
     Write-Host "  From: $EngineSource\Private\" -ForegroundColor Gray
     Write-Host "  To:   $RepoSource\Private\" -ForegroundColor Gray
@@ -103,7 +109,14 @@ function Sync-ToRepo {
 
             # Add TRIPSITTERUE_API back to class declarations that don't have it
             # This is a simple heuristic - classes starting with S (Slate), F (struct-like), or specific names
-            $content = $content -replace 'class\s+(STripSitterMainWidget|SWaveformViewer|FBeatsyncLoader|FBeatsyncProcessingTask|FBeatsyncProcessingResult|FEffectsConfig)', 'class TRIPSITTERUE_API $1'
+            # Use negative lookahead to avoid double-applying the macro
+            $content = $content -replace 'class\s+(?!TRIPSITTERUE_API\b)(STripSitterMainWidget|SWaveformViewer|FBeatsyncLoader|FBeatsyncProcessingTask|FBeatsyncProcessingResult|FEffectsConfig)', 'class TRIPSITTERUE_API $1'
+
+            # Create directory if needed
+            $dstDir = Split-Path $dstFile -Parent
+            if (-not (Test-Path $dstDir)) {
+                New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
+            }
 
             Set-Content $dstFile -Value $content -NoNewline
             Write-Host "  [OK] $file" -ForegroundColor Green

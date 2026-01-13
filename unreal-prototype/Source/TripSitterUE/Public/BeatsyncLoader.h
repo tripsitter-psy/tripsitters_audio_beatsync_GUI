@@ -15,19 +15,19 @@ struct FEffectsConfig
 {
     bool bEnableTransitions = false;
     FString TransitionType = TEXT("fade");
-    float TransitionDuration = 0.0f;
+    float TransitionDuration = 0.5f;
 
     bool bEnableColorGrade = false;
     FString ColorPreset = TEXT("warm");
 
     bool bEnableVignette = false;
-    float VignetteStrength = 0.0f;
+    float VignetteStrength = 0.5f;
 
     bool bEnableBeatFlash = false;
-    float FlashIntensity = 0.0f;
+    float FlashIntensity = 0.5f;
 
     bool bEnableBeatZoom = false;
-    float ZoomIntensity = 0.0f;
+    float ZoomIntensity = 0.5f;
 
     int32 EffectBeatDivisor = 1;
 };
@@ -72,10 +72,12 @@ public:
 
     static bool IsInitialized();
 
-private:
+    // Callback data structure - public so static trampoline function can access it
     struct CallbackData
     {
         FProgressCb Func;
     };
+
+private:
     // Internal state handled in .cpp
 };

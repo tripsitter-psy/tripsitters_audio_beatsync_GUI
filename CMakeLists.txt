@@ -82,7 +82,10 @@ if(BEATSYNC_ENABLE_TRACING)
         message(STATUS "OpenTelemetry C++ SDK found - enabling tracing support")
         add_compile_definitions(BEATSYNC_ENABLE_TRACING)
         add_compile_definitions(USE_TRACING)
-        # NOTE: To fully enable tracing, ensure your vcpkg/install provides the correct targets and link libraries.
+        # Link OpenTelemetry libraries to beatsync_backend_shared
+        if(TARGET beatsync_backend_shared)
+            target_link_libraries(beatsync_backend_shared PRIVATE opentelemetry_cpp_trace opentelemetry_cpp_sdk)
+        endif()
     else()
         message(WARNING "BEATSYNC_ENABLE_TRACING is ON but opentelemetry-cpp not found. Tracing will be a no-op.")
     endif()
@@ -108,9 +111,10 @@ if(USE_ONNX)
     find_package(onnxruntime CONFIG QUIET)
     if(onnxruntime_FOUND)
         message(STATUS "ONNX Runtime found - enabling native AI inference")
-        list(APPEND OPTIONAL_SOURCES 
+        list(APPEND OPTIONAL_SOURCES
             src/audio/OnnxBeatDetector.cpp
             src/audio/OnnxStemSeparator.cpp
+            src/audio/OnnxMusicAnalyzer.cpp
         )
         add_definitions(-DUSE_ONNX)
     else()
@@ -147,6 +151,10 @@ target_link_libraries(beatsync PRIVATE
 )
 if(USE_ONNX AND onnxruntime_FOUND)
     target_link_libraries(beatsync PRIVATE onnxruntime::onnxruntime)
+    target_link_libraries(beatsync_backend_static PRIVATE onnxruntime::onnxruntime)
+    if(TARGET beatsync_backend_shared)
+        target_link_libraries(beatsync_backend_shared PRIVATE onnxruntime::onnxruntime)
+    endif()
 endif()
 
 # Output directory for beatsync (always available)

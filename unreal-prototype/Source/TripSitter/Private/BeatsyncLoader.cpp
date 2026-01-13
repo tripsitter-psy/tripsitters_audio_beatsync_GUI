@@ -49,6 +49,39 @@ using bs_video_apply_effects_t = int (*)(void*, const char*, const char*, const 
 using bs_video_extract_frame_t = int (*)(const char*, double, unsigned char**, int*, int*);
 using bs_free_frame_data_t = void (*)(unsigned char*);
 
+// AI analyzer C API types
+struct bs_ai_config_t {
+    const char* beat_model_path;
+    const char* stem_model_path;
+    int use_stem_separation;
+    int use_drums_for_beats;
+    int use_gpu;
+    int gpu_device_id;
+    float beat_threshold;
+    float downbeat_threshold;
+};
+
+struct bs_ai_result_t {
+    double* beats;
+    size_t beat_count;
+    double* downbeats;
+    size_t downbeat_count;
+    double bpm;
+    double duration;
+    void* segments; // We don't use segments in UE yet
+    size_t segment_count;
+};
+
+using bs_ai_progress_cb = int (*)(float, const char*, const char*, void*);
+using bs_ai_is_available_t = int (*)();
+using bs_ai_get_providers_t = const char* (*)();
+using bs_create_ai_analyzer_t = void* (*)(const bs_ai_config_t*);
+using bs_destroy_ai_analyzer_t = void (*)(void*);
+using bs_ai_analyze_file_t = int (*)(void*, const char*, bs_ai_result_t*, bs_ai_progress_cb, void*);
+using bs_ai_analyze_quick_t = int (*)(void*, const char*, bs_ai_result_t*, bs_ai_progress_cb, void*);
+using bs_free_ai_result_t = void (*)(bs_ai_result_t*);
+using bs_ai_get_last_error_t = const char* (*)(void*);
+
 struct FBeatsyncApi
 {
     void* DllHandle = nullptr;
@@ -71,23 +104,44 @@ struct FBeatsyncApi
     bs_video_apply_effects_t video_apply_effects = nullptr;
     bs_video_extract_frame_t video_extract_frame = nullptr;
     bs_free_frame_data_t free_frame_data = nullptr;
+    // AI analyzer functions
+    bs_ai_is_available_t ai_is_available = nullptr;
+    bs_ai_get_providers_t ai_get_providers = nullptr;
+    bs_create_ai_analyzer_t create_ai_analyzer = nullptr;
+    bs_destroy_ai_analyzer_t destroy_ai_analyzer = nullptr;
+    bs_ai_analyze_file_t ai_analyze_file = nullptr;
+    bs_ai_analyze_quick_t ai_analyze_quick = nullptr;
+    bs_free_ai_result_t free_ai_result = nullptr;
+    bs_ai_get_last_error_t ai_get_last_error = nullptr;
 };
-
-static FBeatsyncApi GApi;
 
 static FBeatsyncApi GApi;
 
 // Per-writer progress callbacks to avoid race conditions and leaks
 static TMap<void*, TUniquePtr<TFunction<void(double)>>> GProgressCallbacks;
 static FCriticalSection GProgressCallbacksLock;
+static std::atomic<int> GActiveProgressCallbacks{0};
+static FEvent* GProgressCallbacksEvent = FPlatformProcess::GetSynchEventFromPool(true);
 
 static void StaticProgressCallback(double Progress, void* UserData)
 {
-    FScopeLock Lock(&GProgressCallbacksLock);
-    if (UserData) {
-        TUniquePtr<TFunction<void(double)>>* CallbackPtr = GProgressCallbacks.Find(UserData);
-        if (CallbackPtr && *CallbackPtr && **CallbackPtr) {
-            (**CallbackPtr)(Progress);
+    TFunction<void(double)> LocalCallback;
+    {
+        FScopeLock Lock(&GProgressCallbacksLock);
+        if (UserData) {
+            TUniquePtr<TFunction<void(double)>>* CallbackPtr = GProgressCallbacks.Find(UserData);
+            if (CallbackPtr && *CallbackPtr && **CallbackPtr) {
+                LocalCallback = **CallbackPtr;  // Copy callback to invoke outside lock
+            }
+        }
+    }  // Lock released here before invoking callback to prevent deadlock
+
+    if (LocalCallback) {
+        GActiveProgressCallbacks++;
+        LocalCallback(Progress);
+        GActiveProgressCallbacks--;
+        if (GActiveProgressCallbacks == 0 && GProgressCallbacksEvent) {
+            GProgressCallbacksEvent->Trigger();
         }
     }
 }
@@ -170,6 +224,16 @@ bool FBeatsyncLoader::Initialize()
     GApi.video_extract_frame = (bs_video_extract_frame_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_extract_frame"));
     GApi.free_frame_data = (bs_free_frame_data_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_frame_data"));
 
+    // AI analyzer functions (ONNX neural network)
+    GApi.ai_is_available = (bs_ai_is_available_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_is_available"));
+    GApi.ai_get_providers = (bs_ai_get_providers_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_get_providers"));
+    GApi.create_ai_analyzer = (bs_create_ai_analyzer_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_create_ai_analyzer"));
+    GApi.destroy_ai_analyzer = (bs_destroy_ai_analyzer_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_destroy_ai_analyzer"));
+    GApi.ai_analyze_file = (bs_ai_analyze_file_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_analyze_file"));
+    GApi.ai_analyze_quick = (bs_ai_analyze_quick_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_analyze_quick"));
+    GApi.free_ai_result = (bs_free_ai_result_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_ai_result"));
+    GApi.ai_get_last_error = (bs_ai_get_last_error_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_get_last_error"));
+
     // Check required symbols - audio analyzer
     if (!GApi.create_analyzer || !GApi.destroy_analyzer || !GApi.analyze_audio) {
         UE_LOG(LogTemp, Error, TEXT("Required audio analyzer symbols not found in Beatsync DLL"));
@@ -198,18 +262,36 @@ bool FBeatsyncLoader::Initialize()
     }
 
     UE_LOG(LogTemp, Log, TEXT("Beatsync DLL loaded successfully: %s"), *DllPath);
+
+    // Log AI availability
+    if (GApi.ai_is_available && GApi.ai_is_available()) {
+        UE_LOG(LogTemp, Log, TEXT("ONNX AI analyzer is available"));
+        if (GApi.ai_get_providers) {
+            const char* providers = GApi.ai_get_providers();
+            if (providers) {
+                UE_LOG(LogTemp, Log, TEXT("Available ONNX providers: %s"), UTF8_TO_TCHAR(providers));
+            }
+        }
+    } else {
+        UE_LOG(LogTemp, Warning, TEXT("ONNX AI analyzer is NOT available - will fall back to spectral flux"));
+    }
+
     return true;
 }
 
 void FBeatsyncLoader::Shutdown()
 {
-    if (GApi.DllHandle) {
-        FPlatformProcess::FreeDllHandle(GApi.DllHandle);
-        GApi = FBeatsyncApi();
-    }
     {
         FScopeLock Lock(&GProgressCallbacksLock);
         GProgressCallbacks.Empty();
+    }
+    // Wait for any in-flight callbacks to finish
+    if (GActiveProgressCallbacks > 0 && GProgressCallbacksEvent) {
+        GProgressCallbacksEvent->Wait();
+    }
+    if (GApi.DllHandle) {
+        FPlatformProcess::FreeDllHandle(GApi.DllHandle);
+        GApi = FBeatsyncApi();
     }
 }
 
@@ -245,19 +327,21 @@ bool FBeatsyncLoader::AnalyzeAudio(void* Analyzer, const FString& FilePath, FBea
     bs_beatgrid_t CGrid = {};
     int Result = GApi.analyze_audio(Analyzer, TCHAR_TO_UTF8(*FilePath), &CGrid);
 
+    bool bSuccess = false;
     if (Result == 0 && CGrid.beats && CGrid.count > 0) {
         OutGrid.Beats.SetNum(CGrid.count);
         FMemory::Memcpy(OutGrid.Beats.GetData(), CGrid.beats, CGrid.count * sizeof(double));
         OutGrid.BPM = CGrid.bpm;
         OutGrid.Duration = CGrid.duration;
-
-        if (GApi.free_beatgrid) {
-            GApi.free_beatgrid(&CGrid);
-        }
-        return true;
+        bSuccess = true;
     }
 
-    return false;
+    // Always free the beatgrid if beats were allocated, regardless of Result
+    if (CGrid.beats && GApi.free_beatgrid) {
+        GApi.free_beatgrid(&CGrid);
+    }
+
+    return bSuccess;
 }
 
 void* FBeatsyncLoader::CreateVideoWriter()
@@ -268,8 +352,16 @@ void* FBeatsyncLoader::CreateVideoWriter()
 
 void FBeatsyncLoader::DestroyVideoWriter(void* Handle)
 {
-    if (GApi.destroy_video_writer && Handle) {
-        GApi.destroy_video_writer(Handle);
+    if (Handle) {
+        // Remove progress callback entry to prevent UAF and leaks
+        {
+            FScopeLock Lock(&GProgressCallbacksLock);
+            GProgressCallbacks.Remove(Handle);
+        }
+
+        if (GApi.destroy_video_writer) {
+            GApi.destroy_video_writer(Handle);
+        }
     }
 }
 
@@ -383,6 +475,10 @@ bool FBeatsyncLoader::GetWaveform(void* Analyzer, const FString& FilePath, TArra
         return true;
     }
 
+    // Free Peaks if allocated on failure
+    if (Peaks && GApi.free_waveform) {
+        GApi.free_waveform(Peaks);
+    }
     return false;
 }
 
@@ -494,4 +590,121 @@ void FBeatsyncLoader::FreeFrameData(uint8* Data)
     {
         GApi.free_frame_data(Data);
     }
+}
+
+// =============================================================================
+// AI Analyzer (ONNX neural network - GPU accelerated)
+// =============================================================================
+
+bool FBeatsyncLoader::IsAIAvailable()
+{
+    if (!GApi.ai_is_available) return false;
+    return GApi.ai_is_available() != 0;
+}
+
+FString FBeatsyncLoader::GetAIProviders()
+{
+    if (!GApi.ai_get_providers) return FString();
+    const char* providers = GApi.ai_get_providers();
+    return providers ? FString(UTF8_TO_TCHAR(providers)) : FString();
+}
+
+void* FBeatsyncLoader::CreateAIAnalyzer(const FAIConfig& Config)
+{
+    if (!GApi.create_ai_analyzer) return nullptr;
+
+    // Convert FStrings to UTF8 - need to keep them alive during the call
+    FTCHARToUTF8 BeatModelUtf8(*Config.BeatModelPath);
+    FTCHARToUTF8 StemModelUtf8(*Config.StemModelPath);
+
+    bs_ai_config_t CConfig = {};
+    CConfig.beat_model_path = BeatModelUtf8.Get();
+    CConfig.stem_model_path = Config.StemModelPath.IsEmpty() ? nullptr : StemModelUtf8.Get();
+    CConfig.use_stem_separation = Config.bUseStemSeparation ? 1 : 0;
+    CConfig.use_drums_for_beats = Config.bUseDrumsForBeats ? 1 : 0;
+    CConfig.use_gpu = Config.bUseGPU ? 1 : 0;
+    CConfig.gpu_device_id = Config.GPUDeviceId;
+    CConfig.beat_threshold = Config.BeatThreshold;
+    CConfig.downbeat_threshold = Config.DownbeatThreshold;
+
+    void* Handle = GApi.create_ai_analyzer(&CConfig);
+    if (Handle) {
+        UE_LOG(LogTemp, Log, TEXT("Created AI analyzer with GPU=%d, model=%s"),
+               Config.bUseGPU ? 1 : 0, *Config.BeatModelPath);
+    }
+    return Handle;
+}
+
+void FBeatsyncLoader::DestroyAIAnalyzer(void* Handle)
+{
+    if (GApi.destroy_ai_analyzer && Handle) {
+        GApi.destroy_ai_analyzer(Handle);
+    }
+}
+
+bool FBeatsyncLoader::AIAnalyzeFile(void* Analyzer, const FString& FilePath, FAIResult& OutResult)
+{
+    if (!GApi.ai_analyze_file || !Analyzer) return false;
+
+    bs_ai_result_t CResult = {};
+    int Result = GApi.ai_analyze_file(Analyzer, TCHAR_TO_UTF8(*FilePath), &CResult, nullptr, nullptr);
+
+    if (Result == 0) {
+        // Copy beats
+        if (CResult.beats && CResult.beat_count > 0) {
+            OutResult.Beats.SetNum(CResult.beat_count);
+            FMemory::Memcpy(OutResult.Beats.GetData(), CResult.beats, CResult.beat_count * sizeof(double));
+        }
+        // Copy downbeats
+        if (CResult.downbeats && CResult.downbeat_count > 0) {
+            OutResult.Downbeats.SetNum(CResult.downbeat_count);
+            FMemory::Memcpy(OutResult.Downbeats.GetData(), CResult.downbeats, CResult.downbeat_count * sizeof(double));
+        }
+        OutResult.BPM = CResult.bpm;
+        OutResult.Duration = CResult.duration;
+
+        if (GApi.free_ai_result) {
+            GApi.free_ai_result(&CResult);
+        }
+        return true;
+    }
+
+    return false;
+}
+
+bool FBeatsyncLoader::AIAnalyzeQuick(void* Analyzer, const FString& FilePath, FAIResult& OutResult)
+{
+    if (!GApi.ai_analyze_quick || !Analyzer) return false;
+
+    bs_ai_result_t CResult = {};
+    int Result = GApi.ai_analyze_quick(Analyzer, TCHAR_TO_UTF8(*FilePath), &CResult, nullptr, nullptr);
+
+    if (Result == 0) {
+        // Copy beats
+        if (CResult.beats && CResult.beat_count > 0) {
+            OutResult.Beats.SetNum(CResult.beat_count);
+            FMemory::Memcpy(OutResult.Beats.GetData(), CResult.beats, CResult.beat_count * sizeof(double));
+        }
+        // Copy downbeats
+        if (CResult.downbeats && CResult.downbeat_count > 0) {
+            OutResult.Downbeats.SetNum(CResult.downbeat_count);
+            FMemory::Memcpy(OutResult.Downbeats.GetData(), CResult.downbeats, CResult.downbeat_count * sizeof(double));
+        }
+        OutResult.BPM = CResult.bpm;
+        OutResult.Duration = CResult.duration;
+
+        if (GApi.free_ai_result) {
+            GApi.free_ai_result(&CResult);
+        }
+        return true;
+    }
+
+    return false;
+}
+
+FString FBeatsyncLoader::GetAILastError(void* Analyzer)
+{
+    if (!GApi.ai_get_last_error || !Analyzer) return FString();
+    const char* Err = GApi.ai_get_last_error(Analyzer);
+    return Err ? FString(UTF8_TO_TCHAR(Err)) : FString();
 }

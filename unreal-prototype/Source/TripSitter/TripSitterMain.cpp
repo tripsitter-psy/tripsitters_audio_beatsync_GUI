@@ -1,11 +1,16 @@
+// TripSitter - Alternative Program Entry Point (FTripSitterApplication-based)
+// Note: Main entry point is TripSitterApp.cpp with RunTripSitter()
+
 #include "CoreMinimal.h"
+#include "RequiredProgramMainCPPInclude.h"
 #include "TripSitterApplication.h"
 
-// Program entry point for TripSitter desktop application
-int32 main(int32 argc, char* argv[])
+IMPLEMENT_APPLICATION(TripSitterAlt, "TripSitter");
+
+INT32_MAIN_INT32_ARGC_TCHAR_ARGV()
 {
-    // Initialize the engine
-    int32 PreInitResult = GEngineLoop.PreInit(argc, argv);
+    // Initialize the engine with TCHAR arguments (platform-correct)
+    int32 PreInitResult = GEngineLoop.PreInit(ArgC, ArgV);
     if (PreInitResult != 0)
     {
         UE_LOG(LogTemp, Error, TEXT("Engine PreInit failed with error code: %d"), PreInitResult);
@@ -17,6 +22,10 @@ int32 main(int32 argc, char* argv[])
 
     if (!App.Initialize())
     {
+        // Proper teardown on initialization failure
+        GEngineLoop.AppPreExit();
+        GEngineLoop.AppExit();
+        GEngineLoop.Exit();
         return 1;
     }
 
@@ -24,8 +33,9 @@ int32 main(int32 argc, char* argv[])
 
     App.Shutdown();
 
-    // Shutdown the engine
-    GEngineLoop.Exit();
+    // Shutdown the engine properly
+    GEngineLoop.AppPreExit();
+    GEngineLoop.AppExit();
 
     return ExitCode;
 }

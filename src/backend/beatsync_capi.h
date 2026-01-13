@@ -24,7 +24,7 @@ extern "C" {
 typedef void (*bs_progress_cb)(double progress, void* user_data);
 
 // Library version constant (set at build time via CMake -DBEATSYNC_VERSION=...)
-extern const char* const BS_VERSION;
+BEATSYNC_API extern const char* const BS_VERSION;
 
 // Library version and lifecycle
 BEATSYNC_API const char* bs_get_version();
@@ -70,19 +70,18 @@ BEATSYNC_API int bs_get_waveform(void* analyzer, const char* filepath,
 BEATSYNC_API void bs_free_waveform(float* peaks);
 
 // Effects configuration for video processing
-// NOTE: String fields (transitionType, colorPreset) are caller-owned and must remain
-// valid from the bs_video_set_effects_config() call until bs_video_apply_effects()
-// finishes or the configuration is replaced. The implementation does not copy these
-// strings - callers should ensure the memory remains accessible during this period.
-// To free the configuration, call bs_video_set_effects_config() with a nullptr or
-// replace it with a new configuration.
+// NOTE: String fields (transitionType, colorPreset) are copied by the implementation
+// into internal std::string storage. Callers only need to keep the pointers valid
+// during the bs_video_set_effects_config() call itself; after the call returns,
+// the caller may free or reuse the string memory.
+// To reset/clear effects, call bs_video_set_effects_config() with a nullptr config.
 typedef struct {
     int enableTransitions;
-    const char* transitionType;  // "fade", "wipe", "dissolve", "zoom" - caller-owned, must remain valid until bs_video_apply_effects() finishes
+    const char* transitionType;  // "fade", "wipe", "dissolve", "zoom" - copied by implementation
     double transitionDuration;
 
     int enableColorGrade;
-    const char* colorPreset;     // "warm", "cool", "vintage", "vibrant" - caller-owned, must remain valid until bs_video_apply_effects() finishes
+    const char* colorPreset;     // "warm", "cool", "vintage", "vibrant" - copied by implementation
 
     int enableVignette;
     double vignetteStrength;
@@ -123,6 +122,84 @@ BEATSYNC_API bs_span_t bs_start_span(const char* name);
 BEATSYNC_API void bs_end_span(bs_span_t span);
 BEATSYNC_API void bs_span_set_error(bs_span_t span, const char* msg);
 BEATSYNC_API void bs_span_add_event(bs_span_t span, const char* event);
+
+// =============================================================================
+// ONNX AI Analysis (native neural network inference)
+// =============================================================================
+
+// AI progress callback with stage information
+typedef int (*bs_ai_progress_cb)(float progress, const char* stage, const char* message, void* user_data);
+
+// AI analyzer configuration
+typedef struct {
+    const char* beat_model_path;    // Path to beat detection ONNX model (required)
+    const char* stem_model_path;    // Path to stem separation ONNX model (optional, NULL to disable)
+    int use_stem_separation;        // Enable stem separation before beat detection
+    int use_drums_for_beats;        // Use drums stem for beat detection (recommended)
+    int use_gpu;                    // Enable GPU acceleration if available
+    int gpu_device_id;              // GPU device ID (default 0)
+    float beat_threshold;           // Beat activation threshold (0.0-1.0, default 0.5)
+    float downbeat_threshold;       // Downbeat activation threshold (0.0-1.0, default 0.5)
+} bs_ai_config_t;
+
+// Extended beat grid with downbeats and segments
+typedef struct {
+    double* beats;          // Beat timestamps (malloc, caller frees with bs_free_ai_result)
+    size_t beat_count;
+    double* downbeats;      // Downbeat timestamps (malloc)
+    size_t downbeat_count;
+    double bpm;
+    double duration;
+    // Segment information (for All-In-One model)
+    struct {
+        double start_time;
+        double end_time;
+        const char* label;  // "intro", "verse", "chorus", etc. (heap-allocated via malloc, freed by bs_free_ai_result)
+        float confidence;
+    }* segments;
+    size_t segment_count;
+} bs_ai_result_t;
+
+// Create AI analyzer with configuration
+// Returns opaque handle or NULL on error
+BEATSYNC_API void* bs_create_ai_analyzer(const bs_ai_config_t* config);
+
+// Destroy AI analyzer
+BEATSYNC_API void bs_destroy_ai_analyzer(void* analyzer);
+
+// Run AI analysis on audio file
+// Returns 0 on success, non-zero on error
+// outResult must be freed with bs_free_ai_result()
+BEATSYNC_API int bs_ai_analyze_file(void* analyzer, const char* audio_path,
+                                     bs_ai_result_t* out_result,
+                                     bs_ai_progress_cb progress_cb, void* user_data);
+
+// Run AI analysis on audio samples (stereo interleaved float32)
+BEATSYNC_API int bs_ai_analyze_samples(void* analyzer,
+                                        const float* samples, size_t sample_count,
+                                        int sample_rate, int num_channels,
+                                        bs_ai_result_t* out_result,
+                                        bs_ai_progress_cb progress_cb, void* user_data);
+
+// Quick analysis without stem separation (faster but less accurate)
+BEATSYNC_API int bs_ai_analyze_quick(void* analyzer, const char* audio_path,
+                                      bs_ai_result_t* out_result,
+                                      bs_ai_progress_cb progress_cb, void* user_data);
+
+// Free AI result data
+BEATSYNC_API void bs_free_ai_result(bs_ai_result_t* result);
+
+// Get AI analyzer error message
+BEATSYNC_API const char* bs_ai_get_last_error(void* analyzer);
+
+// Get AI analyzer model info
+BEATSYNC_API const char* bs_ai_get_model_info(void* analyzer);
+
+// Check if ONNX Runtime is available
+BEATSYNC_API int bs_ai_is_available();
+
+// Get available ONNX execution providers (returns comma-separated string)
+BEATSYNC_API const char* bs_ai_get_providers();
 
 
 #ifdef __cplusplus
