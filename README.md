@@ -1,243 +1,188 @@
 # BeatSync Editor
 
-A C++ desktop application for automatically synchronizing video clips with music beats using audio analysis and intelligent cutting algorithms.
+A C++ desktop application for automatically synchronizing video clips with music beats using audio analysis, AI-powered beat detection, and intelligent cutting algorithms.
 
-## Current Status: Phase 1 - Audio Analysis ✓
+## Features
 
-Phase 1 implements core beat detection functionality with a command-line interface.
-
-## Roadmap (summary)
-
-High-level priorities from the roadmap:
-- High: Essentia-native analyzer, Demucs stem separation (drums-first beats), GLSL transition library for beat-synced cuts.
-- Medium: BeatNet Python bridge, beat-synced transition timing rules, FFT-driven audio-reactive effects.
-- Low: Shader visualizer overlays, future AI video generation.
-
-See [ROADMAP.md](ROADMAP.md) for the detailed plan, file layout, and milestones (v0.2.0–v1.0.0).
-
-## AI feature scaffold (optional)
-
-To prep for the roadmap’s AI features, a minimal scaffold is included:
-- Placeholder Python bridges: [scripts/beatnet_analyze.py](scripts/beatnet_analyze.py) and [scripts/demucs_separate.py](scripts/demucs_separate.py) currently emit stub JSON messages.
-- Python deps list: [scripts/requirements.txt](scripts/requirements.txt). Create an env and install with:
-  ```bash
-  python3 -m venv ~/.tripsitter-env
-  source ~/.tripsitter-env/bin/activate
-  pip install -r scripts/requirements.txt
-  ```
-- Essentia hook stub: [src/audio/EssentiaAnalyzer.h](src/audio/EssentiaAnalyzer.h) is ready to wire once the Essentia dependency is added to CMake.
-
-### Features
-
-- **Audio File Loading**: Supports MP3, WAV, FLAC, and other formats via FFmpeg
-- **Beat Detection**: Energy-based beat detection algorithm
-- **BPM Estimation**: Automatic tempo detection
-- **Configurable Sensitivity**: Adjust beat detection sensitivity (0.0-1.0)
-- **Detailed Output**: Beat timestamps, BPM, and analysis statistics
-
-Unreal prototype (UE5.3) — automation tests
-
-- There is a small Unreal prototype under `unreal-prototype/` that includes an Editor automation smoke test `TripSitter.Beatsync.EditorSmoke`. See `unreal-prototype/README.md` for instructions on running the test locally and for a CI job template that can run the test on a self-hosted Windows runner with UE5 installed.
+- **AI-Powered Beat Detection**: ONNX Runtime with CUDA/TensorRT GPU acceleration
+- **Video Processing**: FFmpeg-based cutting, concatenation, and effects
+- **Modern GUI**: Unreal Engine 5 Slate UI (TripSitter standalone app)
+- **Waveform Visualization**: Interactive audio waveform with beat markers
+- **Effects Pipeline**: Transitions, color grading, beat-synced flash/zoom
 
 ## Architecture
 
-```
-BeatSyncEditor/
-├── src/
-│   ├── audio/
-│   │   ├── AudioAnalyzer.h/cpp    # FFmpeg integration & beat detection
-│   │   └── BeatGrid.h/cpp         # Beat timestamp storage
-│   └── main.cpp                   # CLI entry point
-├── build/                         # Build output directory
-└── CMakeLists.txt                 # Build configuration
-```
+The project consists of two main components:
+
+1. **Backend DLL** (`beatsync_backend_shared.dll`)
+   - C++ library with C API for cross-language compatibility
+   - FFmpeg for audio/video processing
+   - ONNX Runtime for neural network inference
+   - GPU acceleration via CUDA and TensorRT
+
+2. **TripSitter GUI** (Unreal Engine 5)
+   - Standalone program (not a game)
+   - Slate UI for native look and feel
+   - Async processing with progress feedback
+   - Native Windows file dialogs
 
 ## Requirements
 
 ### Build Tools
+
 - CMake 3.20+
-- C++17 or C++20 compiler (MSVC 2022 on Windows)
+- Visual Studio 2022 (MSVC)
+- Unreal Engine 5 (source build)
 
-### Libraries
-- **FFmpeg** (libavcodec, libavformat, libavutil, libswresample) - Audio decoding
-- **OpenCV** (optional, for Phase 2+) - Video processing
+### Dependencies (via vcpkg)
 
-## Building
+- FFmpeg (avcodec, avformat, swresample, swscale, avfilter)
+- ONNX Runtime 1.23.2
 
-### Packaging (ZIP/NSIS)
-From the project root after a Release build:
+### GPU Acceleration (optional)
 
-```bash
-cpack -C Release
-```
-Artifacts will be under `build/` per CPack config (ZIP and NSIS with current branding).
+- CUDA Toolkit 12.x
+- TensorRT 10.9.0.34
 
-### 1. Install Dependencies
+## Quick Start
 
-Using vcpkg (recommended on Windows):
+### Build Backend
 
-```bash
-# Install FFmpeg
-vcpkg install ffmpeg:x64-windows
+```powershell
+cd C:\Users\samue\Desktop\BeatSyncEditor
 
-# OpenCV (optional, for Phase 2+)
-vcpkg install opencv:x64-windows
-```
-
-### 2. Configure and Build
-
-```bash
-cd BeatSyncEditor
-mkdir build
-cd build
-
-# Configure with vcpkg
-cmake .. -DCMAKE_TOOLCHAIN_FILE=[path-to-vcpkg]/scripts/buildsystems/vcpkg.cmake
-
-# Or configure with manual FFmpeg location
-cmake .. -DFFMPEG_DIR="C:/path/to/ffmpeg"
+# Configure (first run installs dependencies)
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
 
 # Build
-cmake --build . --config Release
+cmake --build build --config Release --target beatsync_backend_shared
 ```
 
-### 3. Run
+### Build with GPU Acceleration
 
-```bash
-# The executable will be in build/bin/
-cd bin
-beatsync analyze path/to/audio.mp3
+```powershell
+# Install TensorRT to C:\TensorRT-10.9.0.34
+
+# Configure with overlay triplet
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
+
+# Build
+cmake --build build --config Release --target beatsync_backend_shared
 ```
 
-## Usage
+### Build TripSitter GUI
 
-### Basic Beat Analysis
+```powershell
+# Copy source to UE engine
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
 
-```bash
-beatsync analyze song.mp3
+# Build
+& "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
 
-### With Custom Sensitivity
+## C API Overview
 
-```bash
-beatsync analyze track.wav --sensitivity 0.7
+The backend exposes a C API for easy integration:
+
+```c
+// Initialize
+bs_init();
+
+// Audio analysis
+void* analyzer = bs_create_audio_analyzer();
+bs_beatgrid_t grid;
+bs_analyze_audio(analyzer, "song.mp3", &grid);
+
+// AI analysis (with GPU)
+bs_ai_config_t config = { .beat_model_path = "beatnet.onnx" };
+void* ai = bs_create_ai_analyzer(&config);
+bs_ai_result_t result;
+bs_ai_analyze_file(ai, "song.mp3", &result, progress_cb, NULL);
+
+// Video processing
+void* writer = bs_create_video_writer();
+bs_video_cut_at_beats(writer, "video.mp4", grid.beats, grid.count, "output.mp4", 2.0);
+
+// Cleanup
+bs_free_beatgrid(&grid);
+bs_free_ai_result(&result);
+bs_destroy_audio_analyzer(analyzer);
+bs_destroy_ai_analyzer(ai);
+bs_destroy_video_writer(writer);
+bs_shutdown();
 ```
 
-Higher sensitivity (0.8-1.0) detects more beats, lower (0.2-0.4) is more conservative.
+## Project Structure
 
-### Output Example
-
+```text
+BeatSyncEditor/
+├── src/
+│   ├── audio/           # Audio analysis and beat detection
+│   ├── video/           # Video processing and effects
+│   ├── backend/         # C API wrapper
+│   └── tracing/         # OpenTelemetry support
+├── tests/               # Catch2 unit tests
+├── triplets/            # vcpkg overlay for TensorRT
+├── unreal-prototype/    # UE5 TripSitter source
+└── vcpkg/               # Package manager submodule
 ```
-========================================
-BeatSync Audio Analyzer
-========================================
 
-Analyzing: song.mp3
-Sensitivity: 0.5
+## Documentation
 
-Audio loaded: 180.5s, 44100 Hz, 7958400 samples
-Detected 458 beats
+- [BUILD.md](BUILD.md) - Detailed build instructions
+- [TODO.md](TODO.md) - Development roadmap
+- [DEVELOPMENT_CONTEXT.md](DEVELOPMENT_CONTEXT.md) - Technical details
+- [ROADMAP.md](ROADMAP.md) - Feature roadmap
 
-========================================
-Analysis Results
-========================================
+## Current Status
 
-BeatGrid Information:
-  Number of beats: 458
-  BPM: 120.5
-  Duration: 180.245 seconds
-  Average interval: 0.498 seconds
+### Completed
 
-Beat Timestamps (first 20):
-  Beat   1:  0:  0.523 (0.523s)
-  Beat   2:  0:  1.021 (1.021s)
-  Beat   3:  0:  1.519 (1.519s)
-  ...
-```
+- Backend DLL with FFmpeg and ONNX Runtime
+- CUDA + TensorRT GPU acceleration
+- TripSitter UE5 standalone app
+- C API for all major functions
+- Waveform visualization
+
+### In Progress
+
+- AI beat detection model integration
+- End-to-end testing
+
+### Planned
+
+- Stem separation (Demucs)
+- Additional beat detection algorithms
+- GLSL transition library
+- NSIS installer
 
 ## Algorithm Details
 
 ### Beat Detection
 
-The current implementation uses an energy-based beat detection algorithm:
+The current implementation supports:
 
-1. **Audio Decoding**: FFmpeg decodes audio to mono PCM float32
-2. **Energy Calculation**: Compute energy in 30ms frames with 50% overlap
-3. **Smoothing**: Apply moving average filter to energy envelope
-4. **Peak Detection**: Find local maxima above dynamic threshold
-5. **Beat Filtering**: Remove beats too close together (minimum 300ms gap)
+1. **Energy-based detection**: FFmpeg audio decoding, energy calculation, peak detection
+2. **AI-based detection**: ONNX models for neural network inference (BeatNet, All-In-One, TCN)
 
-### BPM Estimation
+### Video Processing
 
-- Calculates intervals between consecutive beats
-- Uses median interval (more robust than mean)
-- Converts to beats per minute: BPM = 60 / median_interval
+All segments are normalized during extraction:
 
-## Upcoming Phases
-
-### Phase 2: Video Processing
-- FFmpeg video decoding
-- Frame extraction at specific timestamps
-- Video splitting and re-encoding
-- CLI: `beatsync split video.mp4 timestamps.txt`
-
-### Phase 3: Synchronization Engine
-- Automatic video-beat alignment
-- Multiple cut strategies (every-beat, downbeat, custom)
-- CLI: `beatsync create video.mp4 audio.mp3 --strategy downbeat`
-
-### Phase 4+: GUI Application
-- Qt 6 desktop interface
-- Visual timeline with beat markers
-- Waveform visualization
-- Drag-and-drop editing
-- Real-time preview
-
-### GUI Assets
-To customize the GUI appearance, place image files into the `assets/` directory at the project root:
-
-- `wallpaper.png` — The main application wallpaper (recommended to commit as `assets/wallpaper.png`). The app prefers `wallpaper.png` if present and scales it to fit the window while preserving aspect ratio and alpha.
-- `background.png` — Alternative: 1920x1080 PNG for the main background
-- `icon.ico` — Windows application icon (used when building the GUI executable)
-
-A helper script is provided to import assets from another location (for example `C:\Users\samue\Downloads\assets for GUI aesthetics`):
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\import_assets.ps1 -Source "C:\Users\samue\Downloads\assets for GUI aesthetics" -Force
+```text
+scale=1920:1080:force_original_aspect_ratio=decrease
+pad=1920:1080:(ow-iw)/2:(oh-ih)/2
+setsar=1
+fps=24
 ```
 
-The script backs up existing assets into `assets/backup-YYYYMMDD-HHMMSS` before copying. Replace placeholder files with real images before creating release builds.
+This ensures consistent properties for fast concatenation.
 
-## Technical Notes
+## Performance
 
-### Why Not Essentia?
-
-While Essentia is a comprehensive audio analysis library, it has complex build requirements on Windows. For Phase 1, we implemented a lightweight energy-based beat detector that:
-- Has no external dependencies beyond FFmpeg
-- Builds easily on Windows with MSVC
-- Provides good accuracy for most music
-- Can be upgraded to Essentia or other libraries later
-
-### Performance
-
-- Typical analysis speed: ~10-20x real-time (analyze 3min song in <20s)
-- Memory usage: ~40MB per minute of audio
-- Supports audio files up to several hours
-
-## Development
-
-### Project Structure
-
-- `src/audio/BeatGrid.*` - Data structure for beat timestamps
-- `src/audio/AudioAnalyzer.*` - Audio loading and beat detection
-- `src/main.cpp` - CLI application entry point
-
-### Adding New Features
-
-To add new beat detection algorithms:
-1. Modify `AudioAnalyzer::detectBeats()` method
-2. Add new parameters via `AudioAnalyzer` interface
-3. Expose via CLI arguments in `main.cpp`
+- **Analysis speed**: ~10-20x real-time (CPU), faster with GPU
+- **Memory usage**: ~40MB per minute of audio
+- **GPU acceleration**: TensorRT provides 2-5x speedup over CPU
 
 ## License
 
@@ -247,6 +192,6 @@ To add new beat detection algorithms:
 
 [To be determined]
 
-## Contact
+---
 
-[To be determined]
+Last updated: January 14, 2026

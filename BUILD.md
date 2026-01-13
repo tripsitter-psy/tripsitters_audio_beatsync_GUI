@@ -10,298 +10,232 @@
 
 2. **CMake 3.20+**
    - Usually included with Visual Studio
-   - Or download from https://cmake.org/download/
+   - Or download from <https://cmake.org/download/>
 
-3. **vcpkg** (Package Manager)
-   - Clone: `git clone https://github.com/Microsoft/vcpkg.git`
-   - Bootstrap: `cd vcpkg && bootstrap-vcpkg.bat`
-   - Add to PATH or note the installation directory
+3. **vcpkg** (included as submodule)
+   - Already configured in this repository
+   - Uses manifest mode (`vcpkg.json`)
 
-## Quick Start (vcpkg method - Recommended)
+4. **NVIDIA GPU Support** (optional, for AI acceleration)
+   - CUDA Toolkit 12.x
+   - TensorRT 10.9.0.34
 
-### Step 1: Clone/Download Project
+5. **Unreal Engine 5** (for TripSitter GUI)
+   - Source build at `C:\UE5_Source\UnrealEngine`
 
-```bash
-# If from git
-git clone [repository-url]
-cd BeatSyncEditor
+## Quick Start
 
-# Or navigate to the project directory
+### Backend DLL Only
+
+```powershell
+# Navigate to project
 cd C:\Users\samue\Desktop\BeatSyncEditor
+
+# Configure with vcpkg (first run installs dependencies, ~30-60 min)
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
+
+# Build
+cmake --build build --config Release --target beatsync_backend_shared
 ```
 
-### Step 2: Configure with vcpkg
+Output: `build/Release/beatsync_backend_shared.dll`
 
-The project includes a `vcpkg.json` manifest that automatically installs dependencies.
+### With GPU Acceleration (CUDA + TensorRT)
 
-```bash
-# Create build directory
-mkdir build
-cd build
+```powershell
+# Install TensorRT to C:\TensorRT-10.9.0.34
 
-# Configure with vcpkg toolchain
-cmake .. -DCMAKE_TOOLCHAIN_FILE=[path-to-vcpkg]/scripts/buildsystems/vcpkg.cmake
+# Configure with overlay triplet (sets TENSORRT_HOME)
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
 
-# For example:
-cmake .. -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+# Build (first run with TensorRT takes ~2 hours for ONNX Runtime)
+cmake --build build --config Release --target beatsync_backend_shared
 ```
 
-This will automatically:
-- Install FFmpeg (libavcodec, libavformat, libavutil, libswresample)
-- Configure the project
-- May take 10-30 minutes on first run
+### TripSitter GUI (Unreal Engine)
 
-### Step 3: Build
+```powershell
+# Copy DLL to ThirdParty
+Copy-Item 'build\Release\beatsync_backend_shared.dll' 'unreal-prototype\ThirdParty\beatsync\lib\x64\' -Force
 
-```bash
-# Build Release configuration
-cmake --build . --config Release
+# Copy source files to engine
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
 
-# Or Debug
-cmake --build . --config Debug
+# Build TripSitter
+& "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
 
-### Step 4: Run
+Output: `C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe`
 
-```bash
-cd bin\Release
-beatsync.exe analyze path\to\audio.mp3
+## Dependencies
+
+### Managed by vcpkg (automatic)
+
+Defined in `vcpkg.json`:
+
+- **FFmpeg** - avcodec, avformat, swresample, swscale, avfilter
+- **ONNX Runtime** - Neural network inference (with optional CUDA/TensorRT)
+
+### External (manual installation)
+
+- **TensorRT 10.9.0.34** - For GPU-accelerated inference
+  - Download from NVIDIA Developer
+  - Extract to `C:\TensorRT-10.9.0.34`
+  - The overlay triplet handles environment setup
+
+- **CUDA Toolkit 12.x** - Required for GPU acceleration
+  - Download from NVIDIA Developer
+  - Install to default location
+
+## Build Configurations
+
+### Debug
+
+```powershell
+cmake --build build --config Debug
 ```
 
-## Alternative: Manual FFmpeg Installation
+- Debug symbols included
+- No optimizations
+- Easier debugging
 
-If you prefer not to use vcpkg or already have FFmpeg installed:
+### Release
 
-### Step 1: Install FFmpeg
-
-Download pre-built FFmpeg libraries from:
-- https://www.gyan.dev/ffmpeg/builds/ (Windows builds)
-- Extract to a known location (e.g., `C:\ffmpeg`)
-
-### Step 2: Configure with FFmpeg Path
-
-```bash
-mkdir build
-cd build
-
-cmake .. -DFFMPEG_DIR="C:/ffmpeg"
+```powershell
+cmake --build build --config Release
 ```
 
-### Step 3: Build
+- Optimizations enabled
+- Faster execution
+- Recommended for normal use
 
-```bash
-cmake --build . --config Release
+### RelWithDebInfo
+
+```powershell
+cmake --build build --config RelWithDebInfo
 ```
 
-### Step 4: Copy DLLs
+- Optimizations + debug symbols
+- Good for profiling
 
-Copy required DLLs to the executable directory:
-- avcodec-XX.dll
-- avformat-XX.dll
-- avutil-XX.dll
-- swresample-XX.dll
+## Build Targets
 
-```bash
-copy C:\ffmpeg\bin\*.dll bin\Release\
+| Target | Description |
+|--------|-------------|
+| `beatsync_backend_shared` | Main DLL for Unreal plugin |
+| `beatsync_backend_static` | Static lib for tests |
+| `test_backend_api` | C API unit tests |
+
+## Testing
+
+```powershell
+# Build and run tests
+cmake --build build --config Release --target test_backend_api
+./build/tests/Release/test_backend_api.exe
 ```
 
 ## Troubleshooting
 
-### FFmpeg Not Found
+### vcpkg Dependencies Not Installing
 
-**Issue**: `CMake Warning: FFmpeg not found`
+Ensure you're using the toolchain file:
 
-**Solutions**:
-1. Use vcpkg toolchain (recommended)
-2. Set `FFMPEG_DIR` to your FFmpeg installation:
-   ```bash
-   cmake .. -DFFMPEG_DIR="C:/path/to/ffmpeg"
-   ```
-3. Install via vcpkg manually:
-   ```bash
-   vcpkg install ffmpeg:x64-windows
-   ```
-
-### OpenCV Not Found (Warning)
-
-This is normal for Phase 1. OpenCV is optional and only needed for Phase 2 (video processing).
-
-To install OpenCV for future phases:
-```bash
-vcpkg install opencv:x64-windows
+```powershell
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
 ```
 
-### Build Errors with MSVC
+### TensorRT Not Found
 
-**Issue**: Compiler errors or warnings
+Use the overlay triplet:
 
-**Solutions**:
-1. Ensure Visual Studio 2022 with C++ tools is installed
-2. Open "Developer Command Prompt for VS 2022"
-3. Re-run cmake and build from that prompt
+```powershell
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
+```
+
+The triplet at `triplets/x64-windows.cmake` sets `TENSORRT_HOME`.
+
+### ONNX Runtime Build Takes Too Long
+
+First build with CUDA/TensorRT takes ~2 hours. Subsequent builds are fast.
+
+To build without GPU support:
+
+```powershell
+# Edit vcpkg.json to remove cuda/tensorrt features, then:
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
+```
 
 ### Missing DLLs at Runtime
 
-**Issue**: `The program can't start because avcodec-XX.dll is missing`
+Copy required DLLs to executable directory:
 
-**Solutions**:
+```powershell
+# FFmpeg DLLs
+Copy-Item 'build\vcpkg_installed\x64-windows\bin\*.dll' 'build\Release\' -Force
 
-With vcpkg:
-```bash
-# DLLs are automatically copied to bin directory
-# If not, they're in: [vcpkg-root]/installed/x64-windows/bin/
+# ONNX Runtime DLLs
+Copy-Item 'build\vcpkg_installed\x64-windows\bin\onnxruntime*.dll' 'build\Release\' -Force
 ```
 
-With manual FFmpeg:
-```bash
-# Copy DLLs from FFmpeg bin directory to executable directory
-copy "C:\ffmpeg\bin\*.dll" "build\bin\Release\"
+### TripSitter Won't Compile
+
+Ensure source files are copied to the engine:
+
+```powershell
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
 ```
 
-### vcpkg Manifest Error
+### std::numbers::pi Error
 
-**Issue**: `Could not locate a manifest (vcpkg.json)`
+This was fixed by using `constexpr double PI` instead. If you see this error, ensure you have the latest code.
 
-**Solution**: Ensure `vcpkg.json` exists in project root:
-```json
-{
-  "name": "beatsynceditor",
-  "version": "1.0.0",
-  "dependencies": [
-    {
-      "name": "ffmpeg",
-      "default-features": false,
-      "features": ["avcodec", "avformat", "avutil", "swresample"]
-    }
-  ],
-  "builtin-baseline": "2024-12-09"
-}
-```
+### bs_ai_result_t Redefinition Error
 
-## Build Configurations
-
-### Debug Build
-- Includes debug symbols
-- No optimizations
-- Easier debugging
-```bash
-cmake --build . --config Debug
-```
-
-### Release Build
-- Optimizations enabled
-- Faster execution
-- Recommended for normal use
-```bash
-cmake --build . --config Release
-```
-
-### RelWithDebInfo
-- Optimizations + debug symbols
-- Good for profiling
-```bash
-cmake --build . --config RelWithDebInfo
-```
-
-## Testing the Build
-
-After building, test with a sample audio file:
-
-```bash
-cd bin\Release
-
-# Download a test audio file or use your own
-beatsync.exe analyze test.mp3
-
-# Try different sensitivity
-beatsync.exe analyze test.mp3 --sensitivity 0.7
-```
-
-Expected output:
-```
-========================================
-BeatSync Audio Analyzer
-========================================
-
-Analyzing: test.mp3
-Sensitivity: 0.5
-
-Audio loaded: 120.5s, 44100 Hz, 5308800 samples
-Detected 245 beats
-
-========================================
-Analysis Results
-========================================
-
-BeatGrid Information:
-  Number of beats: 245
-  BPM: 122.3
-  ...
-```
-
-## Clean Build
-
-To start fresh:
-
-```bash
-# Remove build directory
-rm -r build
-
-# Or on Windows
-rmdir /s build
-
-# Then rebuild from step 2
-```
+This was fixed in beatsync_capi.h. Ensure you have the latest code.
 
 ## IDE Integration
 
 ### Visual Studio 2022
 
-VS 2022 has native CMake support:
-
 1. Open Visual Studio 2022
 2. File > Open > CMake...
 3. Select `CMakeLists.txt` from project root
-4. VS will automatically configure
-5. Build using the toolbar
-
-Make sure to configure vcpkg integration:
-- Tools > Options > CMake > General
-- Set CMake toolchain file to vcpkg's script
+4. Configure vcpkg integration in CMakeSettings.json
 
 ### Visual Studio Code
 
-1. Install extensions:
-   - C/C++
-   - CMake Tools
+1. Install extensions: C/C++, CMake Tools
 2. Open folder in VS Code
 3. Select kit (MSVC 2022)
 4. Configure and build via CMake Tools
 
+## Clean Build
+
+```powershell
+# Remove build directory
+Remove-Item -Recurse -Force build
+
+# Reconfigure and build
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
+cmake --build build --config Release
+```
+
 ## Performance Notes
 
 ### Compile Time
-- First build with vcpkg: 15-45 minutes (building FFmpeg)
+
+- First build with vcpkg: 30-60 minutes (FFmpeg)
+- First build with TensorRT: ~2 hours (ONNX Runtime)
 - Subsequent builds: 1-3 minutes
-- Incremental builds: <30 seconds
+- Incremental builds: less than 30 seconds
 
 ### Build Size
+
 - FFmpeg libraries: ~100-200 MB
+- ONNX Runtime: ~50-100 MB
 - Project executable: ~2-5 MB (Release)
-- Total with dependencies: ~200-300 MB
+- Total with dependencies: ~300-400 MB
 
-## Next Steps
+---
 
-After successful build:
-1. Test with various audio files (MP3, WAV, FLAC)
-2. Experiment with sensitivity settings
-3. Move to Phase 2 development (video processing)
-
-For Phase 2, you'll need to install OpenCV:
-```bash
-# In vcpkg.json, add:
-"opencv"
-
-# Then reconfigure
-cmake .. -DCMAKE_TOOLCHAIN_FILE=[vcpkg-path]/scripts/buildsystems/vcpkg.cmake
-```
+Last updated: January 14, 2026

@@ -42,7 +42,18 @@ public class TripSitter : ModuleRules
         }
         else
         {
-            PublicIncludePaths.Add(Path.Combine(BeatsyncLib, "..", "..", "include"));
+            // Robust parent-directory resolution for include path
+            var beatsyncLibDir = new System.IO.DirectoryInfo(BeatsyncLib);
+            var parentDir = beatsyncLibDir.Parent?.Parent;
+            if (parentDir != null)
+            {
+                var includePath = System.IO.Path.Combine(parentDir.FullName, "include");
+                PublicIncludePaths.Add(includePath);
+            }
+            else
+            {
+                System.Console.WriteLine($"[TripSitter.Build.cs] ERROR: Could not resolve parent directories for BeatsyncLib: {BeatsyncLib}");
+            }
 
             if (Target.Platform == UnrealTargetPlatform.Win64)
             {

@@ -4,33 +4,8 @@
 #include "Misc/Paths.h"
 #include <functional>
 
-struct FBeatGrid
-{
-    TArray<double> Beats;
-    double BPM = 0.0;
-    double Duration = 0.0;
-};
 
-struct FEffectsConfig
-{
-    bool bEnableTransitions = false;
-    FString TransitionType = TEXT("fade");
-    float TransitionDuration = 0.5f;
-
-    bool bEnableColorGrade = false;
-    FString ColorPreset = TEXT("warm");
-
-    bool bEnableVignette = false;
-    float VignetteStrength = 0.5f;
-
-    bool bEnableBeatFlash = false;
-    float FlashIntensity = 0.5f;
-
-    bool bEnableBeatZoom = false;
-    float ZoomIntensity = 0.5f;
-
-    int32 EffectBeatDivisor = 1;
-};
+#include "BeatsyncTypes.h"
 
 class FBeatsyncLoader
 {
@@ -60,8 +35,8 @@ public:
     static bool AddAudioTrack(void* writer, const FString& inputVideo, const FString& audioFile, const FString& outputVideo, bool trimToShortest, double audioStart, double audioEnd);
 
     // Frame extraction
+    // Note: ExtractFrame copies data to TArray and frees the C buffer internally
     static bool ExtractFrame(const FString& videoPath, double timestamp, TArray<uint8>& outRgb24, int32& outWidth, int32& outHeight);
-    static void FreeFrameData(unsigned char* data);
 
     // Tracing helpers (opaque handles managed by backend)
     using SpanHandle = void*;
@@ -76,7 +51,8 @@ public:
     struct CallbackData
     {
         FProgressCb Func;
-    };
+            void* Key = nullptr; // O(1) lookup key (e.g., writer pointer)
+        };
 
 private:
     // Internal state handled in .cpp

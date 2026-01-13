@@ -14,17 +14,14 @@ static FCriticalSection GCallbackStorageMutex;
 static void ProgressCallbackTrampoline(double progress, void* user_data)
 {
     FBeatsyncLoader::CallbackData* data = reinterpret_cast<FBeatsyncLoader::CallbackData*>(user_data);
-    if (!data) return;
+    if (!data || !data->Key) return;
 
     TFunction<void(double)> localFunc;
     {
         FScopeLock Lock(&GCallbackStorageMutex);
-        // Check if data is still valid and copy the function
-        for (auto& pair : GCallbackStorage) {
-            if (pair.Value.Get() == data) {
-                localFunc = data->Func;
-                break;
-            }
+        TSharedPtr<FBeatsyncLoader::CallbackData>* found = GCallbackStorage.Find(data->Key);
+        if (found && found->IsValid() && found->Get() == data) {
+            localFunc = data->Func;
         }
     }
 
@@ -284,27 +281,28 @@ void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
 
     if (cb)
     {
-        // Allocate callback data on heap for stable pointer
-        CallbackData* data = new CallbackData();
+        // Allocate callback data using MakeShared for stable pointer
+        TSharedPtr<CallbackData> data = MakeShared<CallbackData>();
         data->Func = cb;
-        GCallbackStorage.Add(writer, TSharedPtr<CallbackData>(data));  // Store shared ptr to manage lifetime
+        GCallbackStorage.Add(writer, data);  // Store shared ptr to manage lifetime
 
         // Use the static trampoline function defined at file scope for stable address
-        GApi.video_set_progress(writer, ProgressCallbackTrampoline, data);
+        GApi.video_set_progress(writer, ProgressCallbackTrampoline, data.Get());
     }
-    else
     {
-        // Unregister callback
-        GApi.video_set_progress(writer, nullptr, nullptr);
+        if (!writer) return;
+        TSharedPtr<CallbackData> data = MakeShared<CallbackData>();
+        data->Func = cb;
+        data->Key = writer;
+        {
+            FScopeLock Lock(&GCallbackStorageMutex);
+            GCallbackStorage.Add(writer, data);
+        }
+        // Register trampoline with backend
+        if (GApi.video_set_progress) {
+            GApi.video_set_progress(writer, &ProgressCallbackTrampoline, data.Get());
+        }
     }
-}
-
-bool FBeatsyncLoader::CutVideoAtBeats(void* writer, const FString& inputVideo, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration)
-{
-    if (!GApi.video_cut_at_beats) return false;
-
-    FTCHARToANSI inputConverter(*inputVideo);
-    FTCHARToANSI outputConverter(*outputVideo);
     int res = GApi.video_cut_at_beats(writer, inputConverter.Get(), beatTimes.GetData(), (size_t)beatTimes.Num(), outputConverter.Get(), clipDuration);
     return res == 0;
 }
@@ -396,12 +394,6 @@ bool FBeatsyncLoader::ExtractFrame(const FString& videoPath, double timestamp, T
 
     if (GApi.free_frame_data) GApi.free_frame_data(data);
     return true;
-}
-
-void FBeatsyncLoader::FreeFrameData(unsigned char* data)
-{
-    if (!GApi.free_frame_data) return;
-    GApi.free_frame_data(data);
 }
 
 FBeatsyncLoader::SpanHandle FBeatsyncLoader::StartSpan(const FString& name)

@@ -63,24 +63,27 @@ function Find-SignTool {
 # Decode base64 certificate from environment
 function Get-CertificateFromEnv {
     if ($env:CODESIGN_CERTIFICATE_BASE64) {
-        $tempCert = Join-Path $env:TEMP "codesign_cert.pfx"
+        $guid = [guid]::NewGuid().ToString()
+        $tempCert = Join-Path $env:TEMP ("codesign_cert_" + $guid + ".pfx")
         [System.IO.File]::WriteAllBytes($tempCert, [System.Convert]::FromBase64String($env:CODESIGN_CERTIFICATE_BASE64))
-        
+
         # Set restrictive permissions: current user only
         $acl = Get-Acl $tempCert
         $acl.SetAccessRuleProtection($true, $false)  # Remove inherited permissions
-        
+
         # Get current Windows identity, fallback to USERNAME env var if it fails
         try {
             $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
         } catch {
-            $currentUser = $env:USERNAME
+            $domain = $env:USERDOMAIN
+            if (-not $domain) { $domain = $env:COMPUTERNAME }
+            $currentUser = "$domain\$($env:USERNAME)"
         }
-        
+
         $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($currentUser, "FullControl", "Allow")
         $acl.SetAccessRule($rule)
         Set-Acl $tempCert $acl
-        
+
         return $tempCert
     }
     return $null
@@ -124,11 +127,11 @@ if (-not $password -or $password -eq '') {
 # Import certificate to store securely
 $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
 
+$thumbprint = $null
 try {
     $certObject = Import-PfxCertificate -FilePath $cert -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword
     $thumbprint = $certObject.Thumbprint
 
-    Write-Host "Imported certificate with thumbprint: $thumbprint"
 
     # Find files to sign
     $filesToSign = @()
@@ -198,7 +201,11 @@ try {
     if ($thumbprint -and (Test-Path "Cert:\CurrentUser\My\$thumbprint")) {
         Remove-Item "Cert:\CurrentUser\My\$thumbprint" -ErrorAction SilentlyContinue
     }
-    if ($cert -and (Test-Path $cert) -and ($cert -eq (Join-Path $env:TEMP "codesign_cert.pfx"))) {
-        Remove-Item $cert -Force -ErrorAction SilentlyContinue
+    if ($cert -and (Test-Path $cert)) {
+        $certName = [System.IO.Path]::GetFileName($cert)
+        $certDir = [System.IO.Path]::GetDirectoryName($cert)
+        if ($certDir -eq $env:TEMP -and $certName -like 'codesign_cert_*.pfx') {
+            Remove-Item $cert -Force -ErrorAction SilentlyContinue
+        }
     }
 }

@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "TripSitter UE Plugin",
+	"Description": "Unreal Engine plugin for TripSitter beat sync editor",
+	"Category": "Media",
+	"CreatedBy": "TripSitter Team",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "TripSitterUE",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

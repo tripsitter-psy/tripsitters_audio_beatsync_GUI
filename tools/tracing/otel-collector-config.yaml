@@ -1,0 +1,17 @@
+receivers:
+  otlp:
+    protocols:
+      grpc: {}
+      http: {}
+
+exporters:
+  logging:
+    logLevel: debug
+  otlp/jaeger:
+    endpoint: "http://jaeger:14268/api/traces"
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [logging, otlp/jaeger]

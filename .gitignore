@@ -56,3 +56,13 @@ Thumbs.db
 # Keep sample files in dedicated directory
 !test_assets/*.mp3
 !test_assets/*.wav
+vcpkg/
+
+# Large binary files (use Git LFS or external storage)
+models/*.onnx
+tools/onnxruntime-official/
+assets/loading asset.gif
+vcpkg/
+unreal-prototype/Binaries/
+unreal-prototype/Intermediate/
+unreal-prototype/Saved/

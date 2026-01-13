@@ -6,6 +6,15 @@ Usage:
 Requires: PowerShell 7+, optionally Docker and `nvidia-smi` in PATH.
 #>
 
+
+# Allow CUDA image to be set via parameter or environment variable, fallback to default
+param(
+    [string]$CudaImage = $env:CUDA_IMAGE
+)
+if (-not $CudaImage) {
+    $CudaImage = 'nvidia/cuda:12.0-base'
+}
+
 Write-Host "== GPU Runner Validation Script =="
 Write-Host "Checking NVIDIA GPU visibility..."
 if (Get-Command 'nvidia-smi' -ErrorAction SilentlyContinue) {
@@ -19,7 +28,7 @@ if (Get-Command 'nvidia-smi' -ErrorAction SilentlyContinue) {
 
 if (Get-Command docker -ErrorAction SilentlyContinue) {
     Write-Host "Docker found — testing container GPU access..."
-    docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi | Out-Host
+    docker run --rm --gpus all $CudaImage nvidia-smi | Out-Host
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "Docker GPU test failed with exit code $LASTEXITCODE. Docker may not be configured for GPUs (nvidia container toolkit)."
     }
@@ -35,10 +44,30 @@ if (Get-Command nvcc -ErrorAction SilentlyContinue) {
 }
 
 Write-Host "Checking TEMP disk free space..."
+
 $temp = [System.IO.Path]::GetTempPath()
-$drive = [System.IO.DriveInfo]::new((Get-Item $temp).PSDrive.Root)
-Write-Host "Temp path: $temp (Free: $([Math]::Round($drive.AvailableFreeSpace / 1GB, 2)) GB)"
-if ($drive.AvailableFreeSpace -lt 10GB) { Write-Warning "Less than 10GB free in TEMP. nvcc and builds may fail with 'ptxas' or 'No space left' errors." }
+$drive = $null
+$freeGB = $null
+try {
+    $drive = [System.IO.DriveInfo]::new((Get-Item $temp).PSDrive.Root)
+    $freeGB = [Math]::Round($drive.AvailableFreeSpace / 1GB, 2)
+    Write-Host "Temp path: $temp (Free: $freeGB GB)"
+    if ($drive.AvailableFreeSpace -lt 10GB) {
+        Write-Warning "Less than 10GB free in TEMP. nvcc and builds may fail with 'ptxas' or 'No space left' errors."
+    }
+} catch {
+    # Handle UNC/network path or other errors
+    $psDrive = Get-PSDrive -Name ((Get-Item $temp).PSDrive.Name) -ErrorAction SilentlyContinue
+    if ($psDrive -and $psDrive.Free) {
+        $freeGB = [Math]::Round($psDrive.Free / 1GB, 2)
+        Write-Host "Temp path: $temp (Free: $freeGB GB via PSDrive)"
+        if ($psDrive.Free -lt 10GB) {
+            Write-Warning "Less than 10GB free in TEMP. nvcc and builds may fail with 'ptxas' or 'No space left' errors."
+        }
+    } else {
+        Write-Warning "Temp path: $temp is a network/UNC path or free space could not be determined. Skipping disk space check."
+    }
+}
 
 if ($env:GITHUB_REPOSITORY) {
     if (-not $env:GITHUB_TOKEN) {
@@ -50,7 +79,7 @@ if ($env:GITHUB_REPOSITORY) {
             $headers = @{ Authorization = "token $env:GITHUB_TOKEN"; 'User-Agent' = 'check-gpu-runner-script' }
             $resp = Invoke-RestMethod -Uri $uri -Headers $headers -ErrorAction Stop
             $runners = $resp.runners
-            if (-not $runners) { Write-Warning "No self-hosted runners found for $env:GITHUB_REPOSITORY"; exit 0 }
+            if (-not $runners) { Write-Warning "No self-hosted runners found for $env:GITHUB_REPOSITORY" }
             foreach ($r in $runners) {
                 $labels = ($r.labels | ForEach-Object { $_.name }) -join ','
                 Write-Host "Runner: $($r.name) — Labels: $labels"

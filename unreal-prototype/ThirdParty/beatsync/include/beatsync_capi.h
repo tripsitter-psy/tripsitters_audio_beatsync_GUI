@@ -32,7 +32,7 @@ BEATSYNC_API int bs_init();
 BEATSYNC_API void bs_shutdown();
 
 // Simple C representation of a beat grid
-typedef struct {
+typedef struct bs_beatgrid_t {
     double* beats;   // owned buffer (malloc)
     size_t count;
     double bpm;
@@ -70,19 +70,18 @@ BEATSYNC_API int bs_get_waveform(void* analyzer, const char* filepath,
 BEATSYNC_API void bs_free_waveform(float* peaks);
 
 // Effects configuration for video processing
-// NOTE: String fields (transitionType, colorPreset) are caller-owned and must remain
-// valid from the bs_video_set_effects_config() call until bs_video_apply_effects()
-// finishes or the configuration is replaced. The implementation does not copy these
-// strings - callers should ensure the memory remains accessible during this period.
-// To free the configuration, call bs_video_set_effects_config() with a nullptr or
-// replace it with a new configuration.
+// NOTE: String fields (transitionType, colorPreset) are copied by the implementation
+// into internal std::string storage. Callers only need to keep the pointers valid
+// during the bs_video_set_effects_config() call itself; after the call returns,
+// the caller may free or reuse the string memory.
+// To reset/clear effects, call bs_video_set_effects_config() with a nullptr config.
 typedef struct {
     int enableTransitions;
-    const char* transitionType;  // "fade", "wipe", "dissolve", "zoom" - caller-owned, must remain valid until bs_video_apply_effects() finishes
+    const char* transitionType;  // "fade", "wipe", "dissolve", "zoom" - copied by implementation
     double transitionDuration;
 
     int enableColorGrade;
-    const char* colorPreset;     // "warm", "cool", "vintage", "vibrant" - caller-owned, must remain valid until bs_video_apply_effects() finishes
+    const char* colorPreset;     // "warm", "cool", "vintage", "vibrant" - copied by implementation
 
     int enableVignette;
     double vignetteStrength;
@@ -143,6 +142,14 @@ typedef struct {
     float downbeat_threshold;       // Downbeat activation threshold (0.0-1.0, default 0.5)
 } bs_ai_config_t;
 
+// Segment structure for AI results
+typedef struct bs_segment_t {
+    double start_time;
+    double end_time;
+    char* label;  // "intro", "verse", "chorus", etc. (heap-allocated via malloc, freed by bs_free_ai_result)
+    float confidence;
+} bs_segment_t;
+
 // Extended beat grid with downbeats and segments
 typedef struct {
     double* beats;          // Beat timestamps (malloc, caller frees with bs_free_ai_result)
@@ -152,12 +159,7 @@ typedef struct {
     double bpm;
     double duration;
     // Segment information (for All-In-One model)
-    struct {
-        double start_time;
-        double end_time;
-        const char* label;  // "intro", "verse", "chorus", etc. (library-owned)
-        float confidence;
-    }* segments;
+    bs_segment_t* segments; // Array of segments (malloc, caller frees with bs_free_ai_result)
     size_t segment_count;
 } bs_ai_result_t;
 

@@ -40,11 +40,11 @@ static void fft(std::vector<std::complex<double>>& a) {
         std::complex<double> wlen(cos(ang), sin(ang));
         for (int i = 0; i < n; i += len) {
             std::complex<double> w(1);
-            for (int j = 0; j < len/2; ++j) {
-                std::complex<double> u = a[i+j];
-                std::complex<double> v = a[i+j+len/2] * w;
-                a[i+j] = u + v;
-                a[i+j+len/2] = u - v;
+            for (int k = 0; k < len/2; ++k) {
+                std::complex<double> u = a[i+k];
+                std::complex<double> v = a[i+k+len/2] * w;
+                a[i+k] = u + v;
+                a[i+k+len/2] = u - v;
                 w *= wlen;
             }
         }
@@ -142,7 +142,14 @@ std::vector<double> detectBeatsFromWaveform(const std::vector<float>& samples, i
     double mean = std::accumulate(flux.begin(), flux.end(), 0.0) / flux.size();
     double sq = 0.0;
     for (double v : flux) sq += (v-mean)*(v-mean);
-    double stdev = sqrt(sq/flux.size());
+    double stdev = 0.0;
+    if (flux.size() > 1) {
+        stdev = sqrt(sq / (flux.size() - 1)); // sample stdev for small datasets
+    } else if (flux.size() == 1) {
+        stdev = 0.0;
+    } else {
+        stdev = 0.0;
+    }
     for (double &v : flux) v = (v - mean) / (stdev + 1e-9);
 
     // Smooth

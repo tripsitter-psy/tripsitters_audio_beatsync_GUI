@@ -10,14 +10,22 @@ FTripSitterApplication::FTripSitterApplication()
 bool FTripSitterApplication::Initialize()
 {
     // Create platform GenericApplication and renderer
+
 #if PLATFORM_WINDOWS
-    TSharedPtr<FGenericApplication> PlatformApp = FWindowsApplication::CreateWindowsApplication();
-    TSharedRef<FSlateRenderer> Renderer = FSlateApplication::CreateRenderer();
+    // Use Windows-specific application and renderer creation
+    HINSTANCE HInstance = FWindowsPlatformApplication::GetHInstance();
+    HICON AppIcon = FWindowsPlatformApplication::GetAppIcon();
+    TSharedPtr<FGenericApplication> PlatformApp = FWindowsApplication::CreateWindowsApplication(HInstance, AppIcon);
+    // Use RHI renderer for Slate
+    ISlateRHIRendererModule& RHIModule = FModuleManager::LoadModuleChecked<ISlateRHIRendererModule>("SlateRHIRenderer");
+    TSharedRef<FSlateRenderer> Renderer = RHIModule.CreateSlateRHIRenderer();
     SlateApp = FSlateApplication::Create(PlatformApp);
     FSlateApplication::Get().InitializeRenderer(Renderer);
 #else
-    TSharedPtr<FGenericApplication> PlatformApp = FSlateApplication::CreatePlatformApplication();
-    TSharedRef<FSlateRenderer> Renderer = FSlateApplication::CreateRenderer();
+    // Use generic platform application and RHI renderer
+    TSharedPtr<FGenericApplication> PlatformApp = FGenericPlatformApplicationMisc::CreateApplication();
+    ISlateRHIRendererModule& RHIModule = FModuleManager::LoadModuleChecked<ISlateRHIRendererModule>("SlateRHIRenderer");
+    TSharedRef<FSlateRenderer> Renderer = RHIModule.CreateSlateRHIRenderer();
     SlateApp = FSlateApplication::Create(PlatformApp);
     FSlateApplication::Get().InitializeRenderer(Renderer);
 #endif

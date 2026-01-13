@@ -24,12 +24,16 @@ TEST_CASE("Backend initialization", "[backend][lifecycle]") {
     bs_shutdown();
 }
 
+#include <thread>
+
 TEST_CASE("Backend multiple init/shutdown cycles", "[backend][lifecycle]") {
     // Should be safe to init/shutdown multiple times
     for (int i = 0; i < 3; ++i) {
         int result = bs_init();
         REQUIRE(result == 0);
         bs_shutdown();
+        // Sleep briefly to allow global state/resources to be released
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
 

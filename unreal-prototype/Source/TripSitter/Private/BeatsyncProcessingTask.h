@@ -13,7 +13,9 @@ struct FBeatsyncProcessingParams
     TArray<FString> VideoPaths;
     FString OutputPath;
     bool bIsMultiClip = false;
-    // Beat rate divisor: 0 = use every detected beat; N >= 1 = use every Nth beat (must be non-negative)
+    // BeatRate is a non-negative exponent: BeatDivisor = 2^BeatRate
+    // BeatRate = 0 → every beat; BeatRate = 1 → every 2nd beat; BeatRate = 2 → every 4th beat, etc.
+    // Must be >= 0
     int32 BeatRate = 0;
     double AudioStart = 0.0;
     double AudioEnd = -1.0;

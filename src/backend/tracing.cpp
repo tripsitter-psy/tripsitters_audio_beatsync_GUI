@@ -14,9 +14,10 @@
 #include <opentelemetry/sdk/trace/simple_processor.h>
 
 namespace {
-using namespace opentelemetry;
-using sdktrace = sdk::trace;
-static nostd::shared_ptr<trace::TracerProvider> g_provider;
+using opentelemetry::nostd::shared_ptr;
+using opentelemetry::trace::TracerProvider;
+using sdktrace = opentelemetry::sdk::trace;
+static shared_ptr<TracerProvider> g_provider;
 }
 
 namespace BeatSync {
@@ -35,7 +36,7 @@ bool InitializeTracing(const std::string& serviceName) {
         
         // Create resource with service name
         auto resource = sdk::resource::Resource::Create({{"service.name", serviceName}});
-        auto provider = std::make_shared<sdktrace::TracerProvider>(resource, std::move(processor));
+        auto provider = std::make_shared<sdktrace::TracerProvider>(std::move(processor), resource);
         
         trace::Provider::SetTracerProvider(provider);
         g_provider = provider;
@@ -50,9 +51,9 @@ bool InitializeTracing(const std::string& serviceName) {
 void ShutdownTracing() {
     if (g_provider) {
         // Shutdown the provider to flush any pending spans
-        auto status = g_provider->Shutdown();
-        if (!status.ok()) {
-            std::cerr << "BeatSync: Warning - tracing shutdown failed: " << status.message() << "\n";
+        bool ok = g_provider->Shutdown();
+        if (!ok) {
+            std::cerr << "BeatSync: Warning - tracing shutdown failed (Shutdown() returned false)\n";
         }
         // Set to no-op provider instead of nullptr
         trace::Provider::SetTracerProvider(std::make_shared<trace::NoopTracerProvider>());

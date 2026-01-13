@@ -7,7 +7,7 @@ param(
 
 Write-Host "Setting up Engine symlink for TripSitter Program target..." -ForegroundColor Cyan
 
- $ProjectEnginePath = Join-Path $PSScriptRoot "..\Engine"
+$ProjectEnginePath = Join-Path $PSScriptRoot "..\Engine"
 
 # Check if Engine directory already exists
 if (Test-Path $ProjectEnginePath) {
@@ -18,7 +18,7 @@ if (Test-Path $ProjectEnginePath) {
 # Check if source Engine exists
 if (!(Test-Path $EnginePath)) {
     Write-Error "Installed Engine not found at: $EnginePath. Please verify your Unreal Engine 5.7 installation path or provide a custom path using -EnginePath parameter."
-    throw
+    exit 1
 }
 
 # Create the symlink (requires Administrator privileges)

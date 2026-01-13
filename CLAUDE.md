@@ -1,29 +1,37 @@
 # Claude Code Instructions for BeatSyncEditor
 
 > **Path Convention**: All user-specific paths use `%USERPROFILE%` (for documentation/display) or `$env:USERPROFILE` (for PowerShell commands) instead of hardcoded usernames.
+> Shared/infrastructure paths (such as the Unreal Engine source location, e.g., C:\UE5_Source\UnrealEngine) may remain hardcoded for clarity. Only user-specific locations (home, Documents, OneDrive, etc.) are replaced with environment variables. Exempt paths: UE source, vcpkg root, build output directories.
 
 ## Critical Build Instructions
 
-The GUI is implemented in Unreal Engine (TripSitter standalone app). The C++ backend provides the core audio/video processing.
+The GUI is implemented in Unreal Engine (TripSitter standalone app). The C++ backend provides the core audio/video processing with ONNX Runtime for AI-powered beat detection.
 
 **Unreal Engine**: Source-built at `C:\UE5_Source\UnrealEngine` (NOT Epic Games Launcher install).
 
-Build the backend with:
+### Backend Build (with CUDA + TensorRT GPU Acceleration)
+
 ```powershell
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
+# Configure with vcpkg and overlay triplet for TensorRT
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
+
+# Build
 cmake --build build --config Release
 ```
 
-Sync and build the TripSitter Program target:
+**Important**: The `triplets/x64-windows.cmake` overlay sets `TENSORRT_HOME` for ONNX Runtime GPU acceleration. TensorRT must be installed at `C:\TensorRT-10.9.0.34`.
+
+### TripSitter UE Build
 
 ```powershell
-# Sync source files from repo to engine
-$env:TRIPSITTER_ENGINE_PATH = "C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter"
-.\scripts\sync_tripsitter_ue.ps1 -ToEngine
+# Copy source files to engine
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
 
 # Build
 & "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
+
+**Output**: `C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe`
 
 ## Project Architecture
 
@@ -31,23 +39,22 @@ $env:TRIPSITTER_ENGINE_PATH = "C:\UE5_Source\UnrealEngine\Engine\Source\Programs
 BeatSyncEditor/
 ├── src/
 │   ├── audio/           # Audio analysis (AudioAnalyzer, BeatGrid, ONNX detectors)
+│   │   ├── OnnxBeatDetector.cpp/h  # ONNX Runtime neural network inference
+│   │   ├── OnnxMusicAnalyzer.cpp/h # High-level AI music analysis
+│   │   └── SpectralFlux.cpp/h      # Spectral analysis
 │   ├── video/           # Video processing (VideoProcessor, VideoWriter, TransitionLibrary)
 │   ├── backend/         # C API wrapper (beatsync_capi.h/.cpp) + tracing
 │   └── tracing/         # OpenTelemetry tracing support
 ├── tests/               # Catch2 unit tests
-├── unreal-prototype/    # Unreal Engine 5 plugin source (synced to MyProject)
+├── triplets/            # vcpkg overlay triplets (for TensorRT)
+│   └── x64-windows.cmake
+├── unreal-prototype/    # Unreal Engine 5 standalone program source
 │   ├── Source/TripSitter/
 │   │   ├── Private/
 │   │   │   ├── BeatsyncLoader.cpp      # DLL loading + C API bindings
 │   │   │   ├── BeatsyncProcessingTask.cpp  # Async background processing
 │   │   │   ├── STripSitterMainWidget.cpp   # Main Slate UI widget
 │   │   │   ├── SWaveformViewer.cpp     # Waveform visualization widget
-│   │   │   └── TripSitterModule.cpp    # Module startup/shutdown
-│   │   ├── Public/
-│   │   │   ├── BeatsyncLoader.h
-│   │   │   ├── STripSitterMainWidget.h
-│   │   │   ├── SWaveformViewer.h
-│   │   │   └── TripSitterModule.h
 │   │   └── Resources/
 │   │       ├── Corpta.otf              # Custom display font
 │   │       ├── wallpaper.png           # Background image
@@ -55,15 +62,6 @@ BeatSyncEditor/
 │   └── ThirdParty/beatsync/  # Built DLLs copied here automatically
 └── vcpkg/               # Package manager submodule
 ```
-
-## Deployed UE Plugin Location
-
-**IMPORTANT**: The actual running Unreal project is at:
-```
-%USERPROFILE%\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\
-```
-
-Changes to `unreal-prototype/` in this repo need to be synced/copied there, OR edit files directly in the MyProject location. The UE Editor compiles from the MyProject location, not from this repo.
 
 ## Key Build Targets
 
@@ -79,11 +77,20 @@ Changes to `unreal-prototype/` in this repo need to be synced/copied there, OR e
 - `const char* bs_get_version()` - Returns version string
 - `int bs_init()` / `void bs_shutdown()` - Library lifecycle
 
-### Audio Analysis
+### Audio Analysis (Basic)
 - `void* bs_create_audio_analyzer()` / `void bs_destroy_audio_analyzer(void* analyzer)`
 - `int bs_analyze_audio(void* analyzer, const char* filepath, bs_beatgrid_t* outGrid)` - Detect beats, returns `bs_beatgrid_t`
 - `int bs_get_waveform(void* analyzer, const char* filepath, float** outPeaks, size_t* outCount, double* outDuration)` - Get downsampled peaks for visualization
 - `void bs_free_beatgrid(bs_beatgrid_t* grid)` / `void bs_free_waveform(float* peaks)` - Memory cleanup
+
+### AI Analysis (ONNX Runtime)
+- `void* bs_create_ai_analyzer(const bs_ai_config_t* config)` - Create AI analyzer with model paths
+- `void bs_destroy_ai_analyzer(void* analyzer)` - Destroy AI analyzer
+- `int bs_ai_analyze_file(void* analyzer, const char* audio_path, bs_ai_result_t* out_result, bs_ai_progress_cb cb, void* user_data)` - Full AI analysis with stem separation
+- `int bs_ai_analyze_quick(void* analyzer, const char* audio_path, bs_ai_result_t* out_result, bs_ai_progress_cb cb, void* user_data)` - Quick analysis without stems
+- `void bs_free_ai_result(bs_ai_result_t* result)` - Free AI result data
+- `int bs_ai_is_available()` - Check if ONNX Runtime is available
+- `const char* bs_ai_get_providers()` - Get available execution providers (CPU, CUDA, TensorRT)
 
 ### Video Processing
 - `void* bs_create_video_writer()` / `void bs_destroy_video_writer(void* writer)`
@@ -108,46 +115,16 @@ Changes to `unreal-prototype/` in this repo need to be synced/copied there, OR e
 - `bs_span_t bs_start_span(const char* name)` / `void bs_end_span(bs_span_t span)` - Span management
 - `void bs_span_set_error(bs_span_t span, const char* msg)` / `void bs_span_add_event(bs_span_t span, const char* event)` - Span operations
 
-## Unreal Plugin Components
-
-### BeatsyncLoader (DLL Interface)
-- Dynamically loads `beatsync_backend_shared.dll`
-- Wraps all C API functions with UE-friendly types
-- `FEffectsConfig` struct mirrors `bs_effects_config_t`
-
-### FBeatsyncProcessingTask (Async Processing)
-- `FAsyncTask` subclass for non-blocking video processing
-- Progress callback updates UI via game thread delegate
-- Stages: Analyze Audio → Cut Video → Apply Effects → Add Audio
-- **IMPORTANT**: Header must be included (not forward declared) in STripSitterMainWidget.h because `FAsyncTask<T>` requires complete type
-
-### STripSitterMainWidget (UI)
-- Main Slate widget with file selection, beat visualization, effects controls
-- Preview texture from `bs_video_extract_frame()`
-- Async processing with progress bar
-- Custom Corpta font for headings (loaded from Resources/Corpta.otf)
-- **Note**: Help text uses default system font (Corpta lacks some glyphs like `|`)
-
-### SWaveformViewer
-- Custom Slate widget for audio waveform display
-- Supports selection handles, zoom, pan
-- Beat marker overlay
-
-## Custom Font (Corpta)
-
-The UI uses a custom display font "Corpta" for headings. Located at:
-- Source: `unreal-prototype/Source/TripSitterUE/Resources/Corpta.otf`
-- Deployed: `%USERPROFILE%\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Resources\Corpta.otf`
-
-Font is loaded at runtime via `FSlateFontInfo(AbsolutePath, Size)`. Falls back to `FCoreStyle::GetDefaultFontStyle()` if not found.
-
-**Corpta font limitations**: Does not include all ASCII glyphs (missing `|` pipe, some punctuation). Use default system font for body text and help strings.
-
 ## vcpkg Dependencies
 
 Defined in `vcpkg.json`:
 - `ffmpeg` (avcodec, avformat, swresample, swscale, avfilter)
-- `onnxruntime` (AI beat detection)
+- `onnxruntime` (AI beat detection with CUDA/TensorRT GPU acceleration)
+
+**GPU Acceleration Requirements**:
+- CUDA Toolkit 12.x
+- TensorRT 10.9.0.34 installed at `C:\TensorRT-10.9.0.34`
+- Overlay triplet `triplets/x64-windows.cmake` sets `TENSORRT_HOME`
 
 Note: `avutil` is included in FFmpeg core and is not a selectable vcpkg feature.
 
@@ -167,22 +144,37 @@ Baseline: [configured in vcpkg.json](vcpkg.json) (vcpkg submodule HEAD)
 - [x] test_backend_api passes
 - [x] Custom Corpta font integration
 - [x] VideoWriter separator check fix (empty string .back() issue)
+- [x] ONNX Runtime 1.23.2 with CUDA + TensorRT support
+- [x] TensorRT 10.9.0.34 integration via overlay triplet
+- [x] Fixed bs_ai_result_t struct definition (removed nested typedef)
+- [x] Fixed std::numbers::pi C++20 issue (replaced with constexpr PI)
+- [x] Fixed missing brace in bs_ai_analyze_quick function
+- [x] Fixed IDesktopPlatform preprocessor condition for standalone builds
+- [x] TripSitter.exe builds successfully
 
 ### Pending / Future Work
 - [ ] Test effects pipeline end-to-end with real video
 - [ ] Test frame extraction in UE preview widget
 - [ ] Verify async task completion and UI updates
 - [ ] Add more comprehensive C API tests
-- [ ] ONNX beat detection model integration
+- [ ] Train/integrate ONNX beat detection models (BeatNet, All-In-One, TCN)
 
 ## Common Issues & Fixes
 
-### UE Plugin won't compile after source changes
-The UE Editor compiles from `%USERPROFILE%\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\`, not from this repo. Either:
-1. Edit files directly in the MyProject location, OR
-2. Copy changed files from `unreal-prototype/` to the MyProject plugin folder
+### Backend DLL won't compile - bs_ai_result_t redefinition
+The `bs_beatgrid_t` typedef was incorrectly using `struct bs_ai_result_t` as its tag name. Fixed by using `struct bs_beatgrid_t` instead.
 
-To force recompile: Delete `Intermediate/` and `Binaries/` folders in the plugin directory, then reopen UE Editor.
+### std::numbers::pi not found (C++20 required)
+Replaced `std::numbers::pi` with `constexpr double PI = 3.14159265358979323846;` in OnnxBeatDetector.cpp for C++17 compatibility.
+
+### TripSitter compile error - IDesktopPlatform undeclared
+The file dialog code used `#if WITH_EDITOR || PLATFORM_DESKTOP` but `IDesktopPlatform` is only available in editor builds. Fixed by changing to `#if WITH_EDITOR` so standalone builds use native Windows file dialogs.
+
+### TensorRT not found during vcpkg build
+ONNX Runtime's TensorRT support requires `TENSORRT_HOME` environment variable. Solved using overlay triplet at `triplets/x64-windows.cmake` that sets the environment variable during vcpkg builds.
+
+### UE Plugin won't compile after source changes
+The UE Editor compiles from `C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\`, not from this repo. Copy files from `unreal-prototype/Source/TripSitter/` to the engine Programs folder.
 
 ### "FAsyncTask uses undefined class" error
 The `FBeatsyncProcessingTask` class must be fully defined (not forward declared) when used with `FAsyncTask<T>`. Ensure `#include "BeatsyncProcessingTask.h"` is in STripSitterMainWidget.h.
@@ -199,8 +191,8 @@ FFmpeg 8.0.1 moved avutil to core. Remove "avutil" from the features list in vcp
 ## Quick Reference
 
 ```powershell
-# Build backend DLL
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
+# Build backend DLL (with TensorRT support)
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
 cmake --build build --config Release --target beatsync_backend_shared
 
 # Build and run tests
@@ -211,12 +203,15 @@ cmake --build build --config Release --target test_backend_api
 build/Release/beatsync_backend_shared.dll
 unreal-prototype/ThirdParty/beatsync/lib/x64/beatsync_backend_shared.dll
 
-# Force UE plugin recompile (run in PowerShell)
-Remove-Item -Recurse -Force "$env:USERPROFILE\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Intermediate" -ErrorAction SilentlyContinue
-Remove-Item -Recurse -Force "$env:USERPROFILE\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Binaries" -ErrorAction SilentlyContinue
+# Copy DLL to ThirdParty
+Copy-Item 'build\Release\beatsync_backend_shared.dll' 'unreal-prototype\ThirdParty\beatsync\lib\x64\' -Force
 
-# Copy font to deployed plugin
-Copy-Item 'unreal-prototype\Source\TripSitterUE\Resources\Corpta.otf' "$env:USERPROFILE\OneDrive\Documents\Unreal Projects\MyProject\Plugins\TripSitterUE\Resources\"
+# Build TripSitter UE
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
+& "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+
+# TripSitter executable location
+C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe
 ```
 
 ## Git Workflow

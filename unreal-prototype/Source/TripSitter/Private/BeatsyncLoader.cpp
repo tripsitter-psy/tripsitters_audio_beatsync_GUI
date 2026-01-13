@@ -137,10 +137,10 @@ static void StaticProgressCallback(double Progress, void* UserData)
     }  // Lock released here before invoking callback to prevent deadlock
 
     if (LocalCallback) {
-        GActiveProgressCallbacks++;
+        GActiveProgressCallbacks.fetch_add(1, std::memory_order_seq_cst);
         LocalCallback(Progress);
-        GActiveProgressCallbacks--;
-        if (GActiveProgressCallbacks == 0 && GProgressCallbacksEvent) {
+        int prev = GActiveProgressCallbacks.fetch_sub(1, std::memory_order_seq_cst);
+        if (prev == 1 && GProgressCallbacksEvent) {
             GProgressCallbacksEvent->Trigger();
         }
     }
@@ -584,13 +584,6 @@ bool FBeatsyncLoader::ExtractFrame(const FString& VideoPath, double Timestamp,
     return false;
 }
 
-void FBeatsyncLoader::FreeFrameData(uint8* Data)
-{
-    if (GApi.free_frame_data && Data)
-    {
-        GApi.free_frame_data(Data);
-    }
-}
 
 // =============================================================================
 // AI Analyzer (ONNX neural network - GPU accelerated)
@@ -695,6 +688,8 @@ bool FBeatsyncLoader::AIAnalyzeQuick(void* Analyzer, const FString& FilePath, FA
 
         if (GApi.free_ai_result) {
             GApi.free_ai_result(&CResult);
+        } else {
+            UE_LOG(LogTemp, Warning, TEXT("FBeatsyncLoader::AIAnalyzeQuick: GApi.free_ai_result is null, CResult may leak!"));
         }
         return true;
     }

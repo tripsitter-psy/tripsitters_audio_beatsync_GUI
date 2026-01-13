@@ -1,163 +1,76 @@
-# BeatSyncEditor - Development Context
+# BeatSyncEditor - Quick Context for Claude
 
-## Project Overview
-**BeatSyncEditor** is a C++ command-line application that synchronizes video clips to audio beats using FFmpeg. It analyzes audio files to detect beats, then cuts and arranges video clips to match those beats.
+## What This Project Is
 
-**Location**: `C:\Users\samue\Desktop\BeatSyncEditor`
+A beat-synced video editor with:
 
-## Architecture
+- **Backend**: C++ DLL (FFmpeg + ONNX Runtime with CUDA/TensorRT)
+- **Frontend**: Unreal Engine 5 standalone app (TripSitter)
 
+## Key Locations
+
+| Item | Path |
+| ---- | ---- |
+| Project Root | `C:\Users\samue\Desktop\BeatSyncEditor` |
+| Backend DLL | `build/Release/beatsync_backend_shared.dll` |
+| UE Source | `C:\UE5_Source\UnrealEngine` |
+| TripSitter EXE | `C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe` |
+| TensorRT | `C:\TensorRT-10.9.0.34` |
+
+## Build Commands
+
+```powershell
+# Backend (with TensorRT)
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
+cmake --build build --config Release --target beatsync_backend_shared
+
+# TripSitter
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
+& "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
-src/
-├── main.cpp              # CLI entry point, command handlers
-├── audio/
-│   ├── AudioAnalyzer.cpp # Beat detection from audio files
-│   └── BeatGrid.cpp      # Beat timing data structure
-└── video/
-    ├── VideoProcessor.cpp # FFmpeg-based video reading/info
-    └── VideoWriter.cpp    # Segment extraction, concatenation, audio muxing
+
+## Recent Fixes (January 14, 2026)
+
+1. **bs_ai_result_t redefinition** - Fixed in beatsync_capi.h (wrong struct tag name)
+2. **std::numbers::pi** - Replaced with `constexpr double PI` for C++17
+3. **Missing brace** - Fixed in bs_ai_analyze_quick function
+4. **IDesktopPlatform** - Changed `#if WITH_EDITOR || PLATFORM_DESKTOP` to `#if WITH_EDITOR`
+
+## Key Files
+
+| File | Purpose |
+| ---- | ------- |
+| `src/backend/beatsync_capi.h` | C API definitions |
+| `src/audio/OnnxBeatDetector.cpp` | ONNX inference |
+| `unreal-prototype/Source/TripSitter/Private/STripSitterMainWidget.cpp` | Main UI |
+| `triplets/x64-windows.cmake` | TensorRT environment setup |
+| `vcpkg.json` | Dependencies (FFmpeg, ONNX Runtime) |
+
+## Current State
+
+- Backend DLL: Builds successfully with ONNX Runtime + CUDA + TensorRT
+- TripSitter: Builds successfully (some deprecation warnings)
+- Tests: `test_backend_api` available
+
+## Pending Work
+
+- Train/integrate ONNX beat detection models
+- End-to-end testing with real media
+- NSIS installer packaging
+
+## vcpkg Configuration
+
+```json
+{
+  "dependencies": [
+    { "name": "ffmpeg", "features": ["avcodec", "avformat", "swresample", "swscale", "avfilter"] },
+    { "name": "onnxruntime", "platform": "windows" }
+  ]
+}
 ```
 
-## Commands
-- `analyze <audio>` - Detect beats in audio file
-- `sync <video> <audio>` - Sync single video to beats
-- `multiclip <folder> <audio>` - Create beat-synced video from multiple clips (cycles through clips)
-- `split <video> <audio>` - Split video at beat timestamps
-
-## Build System
-- CMake-based, builds with MSVC on Windows
-- FFmpeg libraries from `C:\ffmpeg-dev\ffmpeg-master-latest-win64-gpl-shared`
-- Build command: `cmake --build build --config Release`
-- Output: `build\bin\Release\beatsync.exe`
+The overlay triplet `triplets/x64-windows.cmake` sets `TENSORRT_HOME` for GPU acceleration.
 
 ---
 
-## Session Log (2026-01-02)
-
-### Issue 1: Video Freezing and Desync
-**Problem**: Video freezes intermittently while audio continues
-
-**Root Cause**: Source video clips had **MIXED RESOLUTIONS** (1920x1080 vs 3808x2176)
-- FFmpeg constantly reconfigured filter graph
-- Resulted in 19,000 duplicated frames and 7,500 dropped frames
-- DTS timestamp errors
-
-**Fix Applied** (VideoWriter.cpp):
-All segments now normalized to consistent format:
-```cpp
--vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24"
--c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p
--c:a aac -b:a 192k -ar 44100
--video_track_timescale 90000
-```
-
-**Status**: FIXED - No more freezing
-
----
-
-### Issue 2: Output Duration Shorter Than Audio
-**Problem**: Output video was 5:45 when audio was 6:01 (15 seconds short)
-
-**Root Cause**:
-- Beat detection ends before song ends (fade-out sections have no strong beats)
-- Last segment used fixed 2-second duration instead of extending to audio end
-
-**Fix Applied**:
-
-1. **BeatGrid.h/cpp** - Added audio duration tracking:
-   ```cpp
-   void setAudioDuration(double duration);
-   double getAudioDuration() const;
-   double m_audioDuration;  // Actual audio file duration
-   ```
-
-2. **AudioAnalyzer.cpp** - Store actual audio duration:
-   ```cpp
-   beatGrid.setAudioDuration(audio.duration);
-   ```
-
-3. **main.cpp (multiclip command)** - Pad video to match audio:
-   - Last beat segment extends to audio end (not fixed 2 seconds)
-   - If still short, adds padding segments cycling through clips
-   - Changed `trimToShortest` to `false` so audio isn't cut
-
-**Status**: FIXED - Build successful, awaiting test
-
----
-
-## Current Status
-- **Freezing issue**: FIXED and tested
-- **Duration padding**: FIXED, build successful, AWAITING TEST
-
----
-
-## Test Data Locations
-- Video clips: `C:\Users\samue\Downloads\midjourny\` (42 .mp4 files, MIXED RESOLUTIONS)
-- Audio file: `C:\Users\samue\Downloads\we're the imagination-01-01.wav` (6:01 duration)
-
-## Quick Start for Next Session
-
-```bash
-# Navigate to project
-cd C:\Users\samue\Desktop\BeatSyncEditor
-
-# Build
-cmake --build build --config Release
-
-# Test multiclip sync
-.\build\bin\Release\beatsync.exe multiclip "C:\Users\samue\Downloads\midjourny" "C:\Users\samue\Downloads\we're the imagination-01-01.wav" -o output.mp4
-
-# Verify output matches audio duration (should be ~6:01)
-ffprobe output.mp4
-```
-
----
-
-## Future Enhancements (Ideas)
-- [ ] Configurable output resolution (not just 1920x1080)
-- [ ] Configurable frame rate (not just 24fps)
-- [ ] Add progress bar with ETA
-- [ ] Support for different beat detection algorithms
-- [ ] GUI interface
-- [ ] Preview mode (process only first N beats)
-- [ ] Transition effects between clips (crossfade, etc.)
-- [ ] Random vs sequential clip selection option
-- [ ] Export beat grid to file for reuse
-- [ ] Support for variable clip durations
-
-## Known Dependencies
-- FFmpeg (path auto-detected or set via `BEATSYNC_FFMPEG_PATH` env var)
-- FFmpeg dev libraries for compilation
-- Windows 10/11
-
----
-
-## Technical Notes
-
-### FFmpeg Filter Chain Explanation
-```
-scale=1920:1080:force_original_aspect_ratio=decrease
-  → Scale to fit within 1920x1080, maintaining aspect ratio
-
-pad=1920:1080:(ow-iw)/2:(oh-ih)/2
-  → Add black bars (letterbox/pillarbox) to reach exactly 1920x1080
-
-setsar=1
-  → Set sample aspect ratio to 1:1 (square pixels)
-
-fps=24
-  → Force consistent 24fps frame rate
-```
-
-### Why Stream Copy Works for Concatenation
-Previously, concatenating required re-encoding because segments had different properties.
-Now that all segments are normalized during extraction, we use `-c copy` for
-fast concatenation without quality loss.
-
-### Audio Duration Padding Logic
-```
-1. Track actual audio duration from AudioAnalyzer
-2. Last beat segment: duration = audioDuration - lastBeatTime
-3. If total video < audio duration, add padding segments (2s each)
-4. Don't use -shortest flag so full audio plays
-```
+See [CLAUDE.md](CLAUDE.md) for full instructions.

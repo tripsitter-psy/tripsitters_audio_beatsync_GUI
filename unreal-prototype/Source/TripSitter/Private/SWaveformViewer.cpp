@@ -734,6 +734,7 @@ int32 SWaveformViewer::OnPaint(const FPaintArgs& Args, const FGeometry& Allotted
 		// Calculate bar width based on zoom
 		float BarWidth = FMath::Max(1.0f, Width / ((EndPeak - StartPeak) + 1));
 
+		TArray<FVector2D> BarPoints;
 		for (int32 i = StartPeak; i < EndPeak; ++i)
 		{
 			double PeakTime = (static_cast<double>(i) / NumPeaks) * Duration;
@@ -745,7 +746,7 @@ int32 SWaveformViewer::OnPaint(const FPaintArgs& Args, const FGeometry& Allotted
 			float YOffset = PeakValue * MaxAmplitude;
 
 			// Draw vertical line for each peak (mirrored around center)
-			TArray<FVector2D> BarPoints;
+			BarPoints.Reset(2);
 			BarPoints.Add(FVector2D(X, CenterY - YOffset));
 			BarPoints.Add(FVector2D(X, CenterY + YOffset));
 
@@ -767,6 +768,7 @@ int32 SWaveformViewer::OnPaint(const FPaintArgs& Args, const FGeometry& Allotted
 	// Draw beat markers
 	if (BeatTimes.Num() > 0 && Duration > 0)
 	{
+		TArray<FVector2D> MarkerPoints;
 		for (double BeatTime : BeatTimes)
 		{
 			if (BeatTime >= VisibleStart && BeatTime <= VisibleEnd)
@@ -775,7 +777,7 @@ int32 SWaveformViewer::OnPaint(const FPaintArgs& Args, const FGeometry& Allotted
 
 				if (X >= 0 && X <= Width)
 				{
-					TArray<FVector2D> MarkerPoints;
+					MarkerPoints.Reset(2);
 					MarkerPoints.Add(FVector2D(X, 0));
 					MarkerPoints.Add(FVector2D(X, Height));
 

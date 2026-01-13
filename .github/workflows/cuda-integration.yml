@@ -18,7 +18,7 @@ on:
         required: true
         default: 'Manual testing of CUDA/GPU acceleration'
   pull_request:
-    types: [labeled, opened, synchronize, reopened, edited]
+    types: [labeled, opened, synchronize, reopened]
 
 jobs:
   cuda-integration:
@@ -88,6 +88,11 @@ jobs:
         run: |
           Write-Host "Running CPU-only tests for comparison..."
           ctest --test-dir build -C Release --output-on-failure -R onnx_detector -E cuda
+
+
+      - name: Ensure test results directory exists
+        run: |
+          New-Item -ItemType Directory -Force -Path build/Testing
 
       - name: Upload test results
         if: always()

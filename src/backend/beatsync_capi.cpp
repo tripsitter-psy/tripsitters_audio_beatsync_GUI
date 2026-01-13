@@ -271,6 +271,10 @@ BEATSYNC_API int bs_video_cut_at_beats(void* writer, const char* inputVideo,
             // Use interval between beats if not specified
             clipDuration = beatTimes[1] - beatTimes[0];
         }
+        // Fallback for single-beat case
+        if (clipDuration <= 0 && count == 1) {
+            clipDuration = 1.0; // Default to 1 second if only one beat and no duration
+        }
 
         bool success = w->cutAtBeats(inputVideo, grid, outputVideo, clipDuration);
         return success ? 0 : -1;
@@ -351,7 +355,15 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
                 endTime = startTime + duration;
             }
 
-            std::string tempFile = std::string(outputVideo) + "_seg" + std::to_string(i) + ".mp4";
+            // Insert segment number before extension for cleaner temp file names
+            std::string outStr(outputVideo);
+            size_t dotPos = outStr.rfind('.');
+            std::string tempFile;
+            if (dotPos != std::string::npos) {
+                tempFile = outStr.substr(0, dotPos) + "_seg" + std::to_string(i) + outStr.substr(dotPos);
+            } else {
+                tempFile = outStr + "_seg" + std::to_string(i) + ".mp4";
+            }
 
             // Use segment start time as position within the source video (modular approach)
             double sourceStart = 0.0;
@@ -936,18 +948,31 @@ BEATSYNC_API int bs_ai_analyze_samples(void* analyzer,
 
         if (!result.beats.empty()) {
             out_result->beats = static_cast<double*>(malloc(result.beats.size() * sizeof(double)));
-            if (out_result->beats) {
-                memcpy(out_result->beats, result.beats.data(), result.beats.size() * sizeof(double));
-                out_result->beat_count = result.beats.size();
+            if (!out_result->beats) {
+                // Allocation failed
+                out_result->beat_count = 0;
+                out_result->downbeats = nullptr;
+                out_result->downbeat_count = 0;
+                return -1;
             }
+            memcpy(out_result->beats, result.beats.data(), result.beats.size() * sizeof(double));
+            out_result->beat_count = result.beats.size();
         }
 
         if (!result.downbeats.empty()) {
             out_result->downbeats = static_cast<double*>(malloc(result.downbeats.size() * sizeof(double)));
-            if (out_result->downbeats) {
-                memcpy(out_result->downbeats, result.downbeats.data(), result.downbeats.size() * sizeof(double));
-                out_result->downbeat_count = result.downbeats.size();
+            if (!out_result->downbeats) {
+                // Allocation failed, cleanup beats if allocated
+                if (out_result->beats) {
+                    free(out_result->beats);
+                    out_result->beats = nullptr;
+                    out_result->beat_count = 0;
+                }
+                out_result->downbeat_count = 0;
+                return -1;
             }
+            memcpy(out_result->downbeats, result.downbeats.data(), result.downbeats.size() * sizeof(double));
+            out_result->downbeat_count = result.downbeats.size();
         }
 
         out_result->bpm = result.bpm;
@@ -957,6 +982,9 @@ BEATSYNC_API int bs_ai_analyze_samples(void* analyzer,
 
     } catch (const std::exception& e) {
         s_aiLastError = e.what();
+        return -1;
+    } catch (...) {
+        s_aiLastError = "Unknown exception";
         return -1;
     }
 #endif
@@ -1032,6 +1060,9 @@ BEATSYNC_API int bs_ai_analyze_quick(void* analyzer, const char* audio_path,
 
     } catch (const std::exception& e) {
         s_aiLastError = e.what();
+        return -1;
+    } catch (...) {
+        s_aiLastError = "Unknown exception";
         return -1;
     }
 #endif

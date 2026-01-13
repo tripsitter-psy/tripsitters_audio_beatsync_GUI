@@ -35,6 +35,8 @@ if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force }
 Write-Host "Extracting to $outDir"
 try {
     Expand-Archive -LiteralPath $zipPath -DestinationPath $outDir
+    # Cleanup: remove the downloaded ZIP after extraction
+    Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 } catch {
     Write-Error "Failed to extract archive: $zipPath -> $outDir"
     Write-Error $_

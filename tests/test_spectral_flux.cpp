@@ -1,7 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "audio/SpectralFlux.h"
 #include <vector>
-#include <catch2/catch_approx.hpp>
 #include <limits>
 
 // Helper: generate a click track (impulse at beat times)
@@ -24,18 +23,22 @@ TEST_CASE("SpectralFlux detects click track beats", "[spectral][detector]") {
     auto samples = makeClickTrack(beats, sr, duration);
 
     auto out = BeatSync::detectBeatsFromWaveform(samples, sr, 1024, 256, 1.5, 1.2);
-    REQUIRE(out.size() >= beats.size());
-    // For each expected beat, find the closest detected beat and check it's within tolerance
-    for (double expected : beats) {
-        double minDistance = std::numeric_limits<double>::max();
-        for (double detected : out) {
-            double distance = std::abs(detected - expected);
-            if (distance < minDistance) {
-                minDistance = distance;
+    REQUIRE(out.size() == beats.size());
+    // One-to-one matching: every detected beat must map to an expected beat within tolerance
+    std::vector<bool> matched(beats.size(), false);
+    for (double detected : out) {
+        bool found = false;
+        for (size_t i = 0; i < beats.size(); ++i) {
+            if (!matched[i] && std::abs(detected - beats[i]) <= 0.05) {
+                matched[i] = true;
+                found = true;
+                break;
             }
         }
-        REQUIRE(minDistance <= 0.05);
+        REQUIRE(found); // Fail if any detected beat does not match an expected beat
     }
+    // Ensure all expected beats were matched
+    for (bool m : matched) REQUIRE(m);
 }
 
 TEST_CASE("SpectralFlux ignores silence", "[spectral][edge]") {

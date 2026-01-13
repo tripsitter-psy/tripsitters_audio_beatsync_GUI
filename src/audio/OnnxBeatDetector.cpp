@@ -18,15 +18,23 @@
 #include <iostream>
 #include <filesystem>
 
+
 #ifdef USE_ONNX
 #include <onnxruntime_cxx_api.h>
 // DirectML support removed - use CUDA EP instead for GPU acceleration
 // DirectML requires linking against directml.lib which isn't part of ONNX Runtime vcpkg
 #endif
 
+#ifdef USE_LIBSAMPLERATE
+extern "C" {
+#include <samplerate.h>
+}
+#endif
+
 namespace BeatSync {
 
-static const double PI = 3.14159265358979323846;
+// Pi constant (C++17 compatible)
+constexpr double PI = 3.14159265358979323846;
 
 // ============================================================================
 // MelSpectrogramExtractor Implementation
@@ -55,6 +63,7 @@ struct MelSpectrogramExtractor::Impl {
     }
 
     static int nextPow2(int v) {
+        if (v <= 0) return 1; // Clamp non-positive input to 1
         int p = 1;
         while (p < v) p <<= 1;
         return p;
@@ -408,11 +417,43 @@ struct OnnxBeatDetector::Impl {
     std::vector<float> resampleAudio(const std::vector<float>& samples, int srcRate, int dstRate) {
         if (srcRate == dstRate) return samples;
 
+#ifdef USE_LIBSAMPLERATE
+        // Use libsamplerate for high-quality band-limited resampling
+        // Requires linking libsamplerate and including samplerate.h
         double ratio = static_cast<double>(dstRate) / srcRate;
         size_t newSize = static_cast<size_t>(samples.size() * ratio);
         std::vector<float> resampled(newSize);
 
-        // Simple linear interpolation resampling
+        SRC_DATA srcData;
+        srcData.data_in = const_cast<float*>(samples.data());
+        srcData.input_frames = static_cast<long>(samples.size());
+        srcData.data_out = resampled.data();
+        srcData.output_frames = static_cast<long>(newSize);
+        srcData.src_ratio = ratio;
+        srcData.end_of_input = 1;
+
+        int error = src_simple(&srcData, SRC_SINC_BEST_QUALITY, 1);
+        if (error != 0) {
+            // Fallback to linear interpolation if libsamplerate fails
+            for (size_t i = 0; i < newSize; ++i) {
+                double srcIdx = i / ratio;
+                size_t idx0 = static_cast<size_t>(srcIdx);
+                size_t idx1 = std::min(idx0 + 1, samples.size() - 1);
+                double frac = srcIdx - idx0;
+                resampled[i] = static_cast<float>(samples[idx0] * (1.0 - frac) + samples[idx1] * frac);
+            }
+        } else {
+            // If libsamplerate produced fewer frames than expected, resize
+            if (static_cast<size_t>(srcData.output_frames_gen) < newSize) {
+                resampled.resize(srcData.output_frames_gen);
+            }
+        }
+        return resampled;
+#else
+        // Fallback: Simple linear interpolation resampling
+        double ratio = static_cast<double>(dstRate) / srcRate;
+        size_t newSize = static_cast<size_t>(samples.size() * ratio);
+        std::vector<float> resampled(newSize);
         for (size_t i = 0; i < newSize; ++i) {
             double srcIdx = i / ratio;
             size_t idx0 = static_cast<size_t>(srcIdx);
@@ -420,8 +461,8 @@ struct OnnxBeatDetector::Impl {
             double frac = srcIdx - idx0;
             resampled[i] = static_cast<float>(samples[idx0] * (1.0 - frac) + samples[idx1] * frac);
         }
-
         return resampled;
+#endif
     }
 
     std::vector<double> peakPicking(const std::vector<float>& activation, float threshold,
@@ -711,7 +752,14 @@ std::vector<double> OnnxBeatDetector::processChunk(const std::vector<float>& chu
     // Update stream state
     double bufferDuration = m_impl->streamBuffer.size() / static_cast<double>(m_impl->config.sampleRate);
     m_impl->streamTime += bufferDuration;
-    m_impl->streamBuffer.clear();
+    // Keep last ~100ms for overlap with next chunk
+    size_t overlapSamples = m_impl->config.sampleRate / 10;
+    if (m_impl->streamBuffer.size() > overlapSamples) {
+        m_impl->streamBuffer.erase(m_impl->streamBuffer.begin(), m_impl->streamBuffer.end() - overlapSamples);
+        m_impl->streamTime -= overlapSamples / static_cast<double>(m_impl->config.sampleRate);
+    } else {
+        m_impl->streamBuffer.clear();
+    }
 
     return adjustedBeats;
 }

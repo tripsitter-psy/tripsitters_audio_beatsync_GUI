@@ -8,7 +8,7 @@ on:
       create_release:
         description: 'Create a GitHub release'
         required: false
-        default: 'false'
+        default: false
         type: boolean
       version:
         description: 'Version string (e.g., 0.2.0-beta)'
@@ -40,17 +40,9 @@ jobs:
 
       - name: Verify NSIS installation
         run: |
-          # Check standard NSIS install locations
-          $nsisLocations = @(
-            "C:\Program Files (x86)\NSIS\makensis.exe",
-            "C:\Program Files\NSIS\makensis.exe"
-          )
-          $makensis = $nsisLocations | Where-Object { Test-Path $_ } | Select-Object -First 1
+          $makensis = Get-Command makensis -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
           if (-not $makensis) {
-            $makensis = Get-Command makensis -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
-          }
-          if (-not $makensis) {
-            Write-Error "makensis not found in standard locations or PATH"
+            Write-Error "makensis not found in PATH"
             exit 1
           }
           Write-Host "Found makensis at: $makensis"
@@ -109,11 +101,15 @@ jobs:
           CODESIGN_CERTIFICATE_BASE64: ${{ secrets.CODESIGN_CERTIFICATE_BASE64 }}
           CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.CODESIGN_CERTIFICATE_PASSWORD }}
         run: |
-          $installer = Get-ChildItem -Path build -Filter "*.exe" | Where-Object { $_.Name -like "TripSitter*-Setup*.exe" -or ($_.Name -like "*TripSitter*.exe" -and $_.Name -notlike "*uninstall*" -and $_.Name -notlike "*Uninstall*") } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if ($installer) {
-            pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/sign-windows-binaries.ps1 `
-              -BuildDir $installer.DirectoryName
+          $installer = Get-ChildItem -Path build -Filter "TripSitter*-Setup*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $installer) {
+            $installer = Get-ChildItem -Path build -Filter "*.exe" | Where-Object { $_.Name -like "*TripSitter*.exe" -and $_.Name -notlike "*uninstall*" -and $_.Name -notlike "*Uninstall*" } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           }
+          if (-not $installer) {
+            Write-Error "No installer executable found."
+            exit 1
+          }
+          pwsh -File ./scripts/sign-windows-binaries.ps1 -BuildDir $installer.DirectoryName
         shell: powershell
 
       - name: List build artifacts

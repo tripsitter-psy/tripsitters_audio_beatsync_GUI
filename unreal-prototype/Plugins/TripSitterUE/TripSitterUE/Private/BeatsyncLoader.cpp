@@ -3,6 +3,7 @@
 #include "HAL/PlatformProcess.h"
 #include "Misc/OutputDeviceNull.h"
 #include <cassert>
+
 #include "beatsync_capi.h"
 
 // Static storage for callback data to prevent leaks
@@ -13,8 +14,8 @@ static FCriticalSection GCallbackStorageMutex;
 using bs_resolve_ffmpeg_path_t = const char* (*)();
 using bs_create_audio_analyzer_t = void* (*)();
 using bs_destroy_audio_analyzer_t = void (*)(void*);
-using bs_analyze_audio_t = int (*)(void*, const char*, void* /*bs_beatgrid_t*/);
-using bs_free_beatgrid_t = void (*)(void* /*bs_beatgrid_t*/);
+using bs_analyze_audio_t = int (*)(void*, const char*, bs_beatgrid_t*);
+using bs_free_beatgrid_t = void (*)(bs_beatgrid_t*);
 using bs_get_waveform_t = int (*)(void*, const char*, float**, size_t*, double*);
 using bs_free_waveform_t = void (*)(float*);
 
@@ -372,12 +373,6 @@ bool FBeatsyncLoader::ExtractFrame(const FString& videoPath, double timestamp, T
 
     if (GApi.free_frame_data) GApi.free_frame_data(data);
     return true;
-}
-
-void FBeatsyncLoader::FreeFrameData(unsigned char* data)
-{
-    if (!GApi.free_frame_data) return;
-    GApi.free_frame_data(data);
 }
 
 FBeatsyncLoader::SpanHandle FBeatsyncLoader::StartSpan(const FString& name)

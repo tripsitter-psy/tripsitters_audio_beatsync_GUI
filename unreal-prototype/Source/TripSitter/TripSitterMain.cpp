@@ -36,6 +36,7 @@ INT32_MAIN_INT32_ARGC_TCHAR_ARGV()
     // Shutdown the engine properly
     GEngineLoop.AppPreExit();
     GEngineLoop.AppExit();
+    GEngineLoop.Exit();
 
     return ExitCode;
 }

@@ -223,7 +223,7 @@ void FBeatsyncProcessingTask::DoWork()
     {
         TempDir = FPlatformProcess::UserTempDir();
     }
-    FString TempBaseName = FString::Printf(TEXT("TripSitter_%d"), FMath::Rand());
+    FString TempBaseName = FString::Printf(TEXT("TripSitter_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     FString TempVideoPath = FPaths::Combine(TempDir, TempBaseName + TEXT("_video.mp4"));
     FString TempEffectsPath = FPaths::Combine(TempDir, TempBaseName + TEXT("_effects.mp4"));
 

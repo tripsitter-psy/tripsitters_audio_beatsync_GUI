@@ -33,7 +33,7 @@ fi
 
 # TEMP disk space check
 TMPDIR=${TMPDIR:-/tmp}
-available_gb=$(df -BG --output=avail "$TMPDIR" | tail -n1 | tr -d 'G')
+available_gb=$(python3 -c 'import shutil,sys; print(shutil.disk_usage(sys.argv[1]).free // (1024**3))' "$TMPDIR")
 echo "Temp path: $TMPDIR (Free: ${available_gb}GB)"
 if [ "$available_gb" -lt 10 ]; then
   echo "WARNING: Less than 10GB free in TEMP. nvcc and builds may fail with 'ptxas' or 'No space left' errors." >&2
@@ -60,4 +60,5 @@ else
   echo "No GITHUB_TOKEN/GITHUB_REPOSITORY set — skipping GitHub runner label check. Set GITHUB_REPOSITORY='owner/repo' and export GITHUB_TOKEN to enable."
 fi
 
+ 
 echo "Validation done. Review warnings above and fix as needed."

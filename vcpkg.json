@@ -10,7 +10,6 @@
     {
       "name": "onnxruntime",
       "default-features": false,
-      "features": ["cuda"],
       "platform": "windows"
     }
   ],

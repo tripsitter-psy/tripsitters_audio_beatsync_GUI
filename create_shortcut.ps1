@@ -3,10 +3,15 @@ param(
     [string]$ProjectRoot
 )
 
+
 $desktopPath = [Environment]::GetFolderPath('Desktop')
 $root = $ProjectRoot
 if (-not $root) { $root = $PSScriptRoot }
-if (-not $root) { $root = $desktopPath }
+if (-not $root) {
+    Write-Error "ProjectRoot and PSScriptRoot are both unset. Cannot determine project root."
+    Write-Error "Set -ProjectRoot or run from a valid script location."
+    exit 1
+}
 
 $targetPath = Join-Path $root "build\tests\Release\test_backend_api.exe"
 $workingDir = $root

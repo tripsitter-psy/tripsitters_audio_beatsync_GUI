@@ -23,7 +23,9 @@ def main() -> int:
         print(json.dumps({
             "error": "Mock script not enabled (set BEATSYNC_TEST_MOCK_PYTHON=1)",
             "beats": [],
-            "bpm": None
+            "bpm": None,
+            "backend": None,
+            "downbeats": []
         }))
         return 1
 
@@ -31,7 +33,9 @@ def main() -> int:
         print(json.dumps({
             "error": "Usage: mock_beatnet.py <audio_file>",
             "beats": [],
-            "bpm": None
+            "bpm": None,
+            "backend": None,
+            "downbeats": []
         }))
         return 1
 

@@ -106,7 +106,7 @@ void STripSitterMainWidget::LoadAssets()
 		if (LoadPngToRawData(WallpaperPath, PixelData, Width, Height))
 		{
 			// Create unique name for the texture resource
-			FName BrushName = FName(*FString::Printf(TEXT("TripSitterWallpaper_%d"), FMath::Rand()));
+			FName BrushName = FName(*FString::Printf(TEXT("TripSitterWallpaper_%s"), *FGuid::NewGuid().ToString()));
 
 			// Register the pixel data with the Slate renderer
 			if (Renderer && Renderer->GenerateDynamicImageResource(BrushName, Width, Height, PixelData))
@@ -143,7 +143,7 @@ void STripSitterMainWidget::LoadAssets()
 		int32 Width = 0, Height = 0;
 		if (LoadPngToRawData(TitlePath, PixelData, Width, Height))
 		{
-			FName BrushName = FName(*FString::Printf(TEXT("TripSitterTitle_%d"), FMath::Rand()));
+			FName BrushName = FName(*FString::Printf(TEXT("TripSitterTitle_%s"), *FGuid::NewGuid().ToString()));
 
 			if (Renderer && Renderer->GenerateDynamicImageResource(BrushName, Width, Height, PixelData))
 			{
@@ -454,6 +454,13 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateFileSection()
 				SAssignNew(AudioPathBox, SEditableTextBox)
 				.HintText(FText::FromString(TEXT("Select audio file (.mp3, .wav, .flac)")))
 				.BackgroundColor(ControlBg)
+				.OnTextCommitted_Lambda([this](const FText& Text, ETextCommit::Type CommitType) {
+					AudioPath = Text.ToString();
+					if (!AudioPath.IsEmpty() && FPaths::FileExists(AudioPath))
+					{
+						LoadWaveformFromAudio(AudioPath);
+					}
+				})
 			]
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
@@ -490,6 +497,26 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateFileSection()
 				SAssignNew(VideoPathBox, SEditableTextBox)
 				.HintText(FText::FromString(TEXT("Select video file or folder")))
 				.BackgroundColor(ControlBg)
+				.OnTextCommitted_Lambda([this](const FText& Text, ETextCommit::Type CommitType) {
+					FString Path = Text.ToString();
+					if (!Path.IsEmpty())
+					{
+						if (FPaths::DirectoryExists(Path))
+						{
+							// It's a folder - scan for videos
+							VideoPath = Path;
+							ScanFolderForVideos(Path);
+						}
+						else if (FPaths::FileExists(Path))
+						{
+							// It's a single file
+							VideoPath = Path;
+							VideoPaths.Empty();
+							VideoPaths.Add(Path);
+							bIsMultiClip = false;
+						}
+					}
+				})
 			]
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
@@ -536,6 +563,9 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateFileSection()
 				SAssignNew(OutputPathBox, SEditableTextBox)
 				.HintText(FText::FromString(TEXT("Output video path (.mp4)")))
 				.BackgroundColor(ControlBg)
+				.OnTextCommitted_Lambda([this](const FText& Text, ETextCommit::Type CommitType) {
+					OutputPath = Text.ToString();
+				})
 			]
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
@@ -1264,29 +1294,27 @@ FReply STripSitterMainWidget::OnBrowseAudioClicked()
 			}
 		}
 	}
-	#if PLATFORM_WINDOWS
-	// Windows native file dialog for standalone builds
-	OPENFILENAMEW ofn;
-	WCHAR szFile[MAX_PATH] = { 0 };
-	ZeroMemory(&ofn, sizeof(ofn));
+	return FReply::Handled();
+#elif PLATFORM_WINDOWS
+	OPENFILENAMEW ofn = {0};
+	wchar_t szFile[MAX_PATH] = {0};
 	ofn.lStructSize = sizeof(ofn);
-	ofn.hwndOwner = NULL;
+	ofn.hwndOwner = nullptr;
+	ofn.lpstrFilter = L"Audio Files (*.mp3;*.wav;*.flac)\0*.mp3;*.wav;*.flac\0All Files (*.*)\0*.*\0";
 	ofn.lpstrFile = szFile;
 	ofn.nMaxFile = MAX_PATH;
-	ofn.lpstrFilter = L"Audio Files\0*.mp3;*.wav;*.flac\0All Files\0*.*\0";
-	ofn.nFilterIndex = 1;
-	ofn.lpstrTitle = L"Select Audio File";
-	ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-	if (GetOpenFileNameW(&ofn))
-	{
-		AudioPath = FString(szFile);
+	ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+	if (GetOpenFileNameW(&ofn)) {
+		FString Selected = UTF8_TO_TCHAR(TCHAR_TO_UTF8(szFile));
+		AudioPath = Selected;
 		AudioPathBox->SetText(FText::FromString(AudioPath));
 		LoadWaveformFromAudio(AudioPath);
 	}
-	#endif
-	// Non-Windows platforms: no native file dialog
-#endif
 	return FReply::Handled();
+#else
+	// Fallback for other platforms
+	return FReply::Handled();
+#endif
 }
 
 FReply STripSitterMainWidget::OnBrowseVideoClicked()

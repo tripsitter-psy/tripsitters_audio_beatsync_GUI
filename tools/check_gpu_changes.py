@@ -18,14 +18,16 @@ args = parser.parse_args()
 BASE = args.base
 
 # Patterns to look for in file paths or in diffs
-PATH_PATTERNS = [r"onnx", r"cuda", r"cudnn", r"ptx", r"onnxruntime", r"BEATSYNC_ONNX_USE_CUDA", r"onnxruntime_providers_cuda", r"\.cu$", r"\.cuh$"]
+PATH_PATTERNS = [r"onnx", r"cuda", r"cudnn", r"ptx", r"onnxruntime", r"onnxruntime_providers_cuda", r"\.cu$", r"\.cuh$"]
 CONTENT_PATTERNS = [r"BEATSYNC_ONNX_USE_CUDA", r"onnxruntime", r"onnx", r"CUDA", r"cuDNN", r"onnxruntime_providers_cuda"]
 
 # Gather changed files between base and HEAD
 try:
-    subprocess.run(['git', 'fetch', 'origin', BASE], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-except Exception:
-    pass
+    result = subprocess.run(['git', 'fetch', 'origin', BASE], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if result.returncode != 0:
+        print(f"Warning: git fetch of origin/{BASE} failed with return code {result.returncode}")
+except Exception as e:
+    print(f"Warning: Exception during git fetch of origin/{BASE}: {e}")
 
 try:
     res = subprocess.run(['git', 'diff', '--name-only', f'origin/{BASE}...HEAD'], capture_output=True, text=True, check=False)

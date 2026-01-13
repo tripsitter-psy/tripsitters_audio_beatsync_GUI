@@ -31,7 +31,7 @@ This creates a symlink from `Engine` -> `C:\Program Files\Epic Games\UE_5.7\Engi
 "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\DotNET\UnrealBuildTool.exe" -projectfiles -project="TripSitter.uproject" -game -engine
 
 # Build the program
-"C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealBuildTool.exe" TripSitter Win64 Development -Project="TripSitter.uproject"
+"C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\DotNET\UnrealBuildTool.exe" TripSitter Win64 Development -Project="TripSitter.uproject"
 ```
 
 ### 3. Run the Application
@@ -49,8 +49,8 @@ Source/
 └── TripSitter/
     ├── TripSitter.Build.cs       # Module build configuration
     ├── TripSitterMain.cpp        # Program entry point
-    ├── TripSitterApplication.h   # Main application class
-    └── TripSitterApplication.cpp # Application implementation
+    ├── TripSitterApp.h           # Main application class
+    └── TripSitterApp.cpp         # Application implementation
 ```
 
 ## Key Differences from Game Target

@@ -20,7 +20,7 @@ VIAddVersionKey "ProductName" "@CPACK_PACKAGE_NAME@"
 VIAddVersionKey "CompanyName" "@CPACK_PACKAGE_VENDOR@"
 VIAddVersionKey "FileDescription" "@CPACK_PACKAGE_DESCRIPTION_SUMMARY@"
 VIAddVersionKey "FileVersion" "@CPACK_PACKAGE_VERSION@"
-VIAddVersionKey "LegalCopyright" "Copyright (C) 2024-2026 MTV"
+VIAddVersionKey "LegalCopyright" "@PROJECT_COPYRIGHT_YEARS@ MTV"
 
 ; Modern UI configuration
 !define MUI_ABORTWARNING
@@ -76,7 +76,6 @@ Section "MTV TripSitter" SecMain
 
     ; Get installed size
     ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
-    IntFmt $0 "0x%08X" $0
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
         "EstimatedSize" $0
 

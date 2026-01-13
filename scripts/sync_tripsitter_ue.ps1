@@ -90,7 +90,7 @@ function Sync-ToEngine {
     }
 
     Write-Host "`nSync complete! Now run:" -ForegroundColor Cyan
-    Write-Host "  cd 'C:\UE5_Source\UnrealEngine'" -ForegroundColor White
+    Write-Host "  cd '$EngineSource'" -ForegroundColor White
     Write-Host "  .\Engine\Build\BatchFiles\Build.bat TripSitter Win64 Shipping" -ForegroundColor White
 }
 
@@ -107,10 +107,19 @@ function Sync-ToRepo {
         if (Test-Path $srcFile) {
             $content = Get-Content $srcFile -Raw
 
-            # Add TRIPSITTERUE_API back to class declarations that don't have it
-            # This is a simple heuristic - classes starting with S (Slate), F (struct-like), or specific names
-            # Use negative lookahead to avoid double-applying the macro
-            $content = $content -replace 'class\s+(?!TRIPSITTERUE_API\b)(STripSitterMainWidget|SWaveformViewer|FBeatsyncLoader|FBeatsyncProcessingTask|FBeatsyncProcessingResult|FEffectsConfig)', 'class TRIPSITTERUE_API $1'
+
+            # Add TRIPSITTERUE_API back to class/struct declarations that don't have it
+            $ApiMarkedClasses = @(
+                'STripSitterMainWidget',
+                'SWaveformViewer',
+                'FBeatsyncLoader',
+                'FBeatsyncProcessingTask',
+                'FBeatsyncProcessingResult',
+                'FEffectsConfig'
+            )
+            $ApiPattern = ($ApiMarkedClasses | ForEach-Object { [Regex]::Escape($_) }) -join '|'
+            $content = $content -replace "class\s+(?!TRIPSITTERUE_API\\b)($ApiPattern)", 'class TRIPSITTERUE_API $1'
+            $content = $content -replace "struct\s+(?!TRIPSITTERUE_API\\b)($ApiPattern)", 'struct TRIPSITTERUE_API $1'
 
             # Create directory if needed
             $dstDir = Split-Path $dstFile -Parent
@@ -154,9 +163,10 @@ Files synced:
 }
 
 # Check for mutual exclusivity of switches
+
 if ($ToEngine -and $ToRepo) {
     Write-Error "Cannot specify both -ToEngine and -ToRepo switches. Choose one direction for sync: use -ToEngine to copy from repo to Engine (Sync-ToEngine function) or -ToRepo to copy from Engine to repo (Sync-ToRepo function)."
-    throw
+    exit 1
 }
 
 if ($ToEngine) {

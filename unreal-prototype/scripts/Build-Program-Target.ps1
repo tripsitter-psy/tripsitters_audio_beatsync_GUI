@@ -1,9 +1,61 @@
+
 # Build script for TripSitter Program target
+#
+# $UEPath can be overridden via the -UEPath parameter. Unreal Engine installs may live on other drives or under Epic Launcher GUID folders.
+# If not provided or not found, this script will attempt to auto-detect the Unreal Engine installation from common registry locations and folders.
+# If detection fails, you must pass -UEPath explicitly.
 param(
     [string]$Configuration = "Development",
     [string]$Platform = "Win64",
     [string]$UEPath = "C:\Program Files\Epic Games\UE_5.7"
 )
+
+# Auto-detect UEPath if not passed or not found
+if (-not (Test-Path $UEPath)) {
+    $detectedUEPath = $null
+    # Try registry (Epic Launcher)
+    try {
+        $regPaths = @(
+            'HKLM:\SOFTWARE\WOW6432Node\Epic Games\Unreal Engine',
+            'HKLM:\SOFTWARE\Epic Games\Unreal Engine'
+        )
+        foreach ($reg in $regPaths) {
+            if (Test-Path $reg) {
+                $keys = Get-ChildItem -Path $reg -ErrorAction SilentlyContinue
+                foreach ($key in $keys) {
+                    $InstallDir = (Get-ItemProperty -Path $key.PSPath -Name InstallLocation -ErrorAction SilentlyContinue).InstallLocation
+                    if ($InstallDir -and (Test-Path $InstallDir)) {
+                        $detectedUEPath = $InstallDir
+                        break
+                    }
+                }
+            }
+            if ($detectedUEPath) { break }
+        }
+    } catch {}
+    # Try common folders
+    if (-not $detectedUEPath) {
+        $commonFolders = @(
+            'C:\Program Files\Epic Games\UE_5.7',
+            'C:\Program Files\Epic Games\UE_5.3',
+            'D:\Program Files\Epic Games\UE_5.7',
+            'D:\Program Files\Epic Games\UE_5.3'
+        )
+        foreach ($folder in $commonFolders) {
+            if (Test-Path $folder) {
+                $detectedUEPath = $folder
+                break
+            }
+        }
+    }
+    if ($detectedUEPath) {
+        $UEPath = $detectedUEPath
+        Write-Host "Auto-detected Unreal Engine path: $UEPath" -ForegroundColor Green
+    } else {
+        Write-Host "ERROR: Unreal Engine path not found. Please pass -UEPath with the correct install location." -ForegroundColor Red
+        exit 1
+    }
+}
 
 Write-Host "Building TripSitter Program Target" -ForegroundColor Cyan
 Write-Host "Configuration: $Configuration" -ForegroundColor Cyan
@@ -19,7 +71,7 @@ if (!(Test-Path $EngineSymlink)) {
 }
 
 # Verify UBT exists
-$UBTPath = Join-Path $UEPath "Engine\Binaries\DOTNET\UnrealBuildTool\UnrealBuildTool.exe"
+$UBTPath = Join-Path $UEPath "Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.exe"
 if (!(Test-Path $UBTPath)) {
     $UBTPath = Join-Path $UEPath "Engine\Binaries\Win64\UnrealBuildTool.exe"
     if (!(Test-Path $UBTPath)) {

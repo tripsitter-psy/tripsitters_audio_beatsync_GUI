@@ -6,13 +6,6 @@
 #include <memory>
 #include <functional>
 
-// Forward declarations for ONNX Runtime types
-namespace Ort {
-    struct Env;
-    struct Session;
-    struct SessionOptions;
-    struct MemoryInfo;
-}
 
 namespace BeatSync {
 
@@ -60,10 +53,10 @@ struct OnnxConfig {
  * @brief Segment information from All-In-One model
  */
 struct MusicSegment {
-    double startTime;                 ///< Segment start time in seconds
-    double endTime;                   ///< Segment end time in seconds
-    std::string label;                ///< Segment label (intro, verse, chorus, etc.)
-    float confidence;                 ///< Confidence score [0, 1]
+    double startTime = 0.0;                 ///< Segment start time in seconds
+    double endTime = 0.0;                   ///< Segment end time in seconds
+    std::string label = "";                ///< Segment label (intro, verse, chorus, etc.)
+    float confidence = 0.0f;                ///< Confidence score [0, 1]
 };
 
 /**

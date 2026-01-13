@@ -17,7 +17,6 @@
 #include "Async/AsyncWork.h"
 #include "BeatsyncProcessingTask.h"
 
-// ...existing code...
 
 class SEditableTextBox;
 class SProgressBar;

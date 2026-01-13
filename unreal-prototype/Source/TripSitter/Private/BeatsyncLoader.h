@@ -95,9 +95,9 @@ public:
                              const TArray<double>& BeatTimes);
 
     // Frame extraction for preview
+    // Note: ExtractFrame copies data to TArray and frees the C buffer internally
     static bool ExtractFrame(const FString& VideoPath, double Timestamp,
                              TArray<uint8>& OutData, int32& OutWidth, int32& OutHeight);
-    static void FreeFrameData(uint8* Data);
 
     // AI Analyzer (ONNX neural network) - GPU accelerated
     static bool IsAIAvailable();

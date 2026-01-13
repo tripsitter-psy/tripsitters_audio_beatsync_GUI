@@ -120,7 +120,6 @@ static int runHiddenCommand(const std::string& cmdLine, std::string& output) {
 #endif
 
 extern "C" {
-#include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libavutil/opt.h>
 #include <libavutil/timestamp.h>
@@ -792,8 +791,9 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
                     // Use anullsrc for audio - guaranteed to work
                     std::ostringstream audioFilter2;
                     audioFilter2 << "anullsrc=channel_layout=stereo:sample_rate=44100:duration=";
-                    // Estimate total duration (won't be exact but ensures silence track exists)
-                    audioFilter2 << (inputVideos.size() * 10.0) << "[aout]";
+                    // Use a conservatively large duration to avoid truncation
+                    constexpr double fallbackLargeDuration = 36000.0; // 10 hours
+                    audioFilter2 << fallbackLargeDuration << "[aout]";
 
                     std::string fullFilter2 = filterComplex + ";" + audioFilter2.str();
 
@@ -816,12 +816,11 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
                     }
 #endif
 
+                    logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
                     if (logf) {
-                        logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
-                        if (logf) {
-                            fprintf(logf, "\n--- FFmpeg transition run (anullsrc fallback) ---\ncmd: %s\nexit: %d\noutput:\n%s\n", cmd2.str().c_str(), exitCode, ffmpegOutput2.c_str());
-                            fclose(logf);
-                        }
+                        fprintf(logf, "\n--- FFmpeg transition run (anullsrc fallback) ---\ncmd: %s\nexit: %d\noutput:\n%s\n", cmd2.str().c_str(), exitCode, ffmpegOutput2.c_str());
+                        fclose(logf);
+                        logf = nullptr;
                     }
                 }
 

@@ -8,7 +8,8 @@ using namespace BeatSync;
 TEST_CASE("Tracing writes start and end records to file", "[tracing]") {
     auto now_ns = std::chrono::steady_clock::now().time_since_epoch().count();
     auto tmp = std::filesystem::temp_directory_path() / ("beatsync_test_trace_" + std::to_string(now_ns) + ".log");
-    tracing::InitTracing(tmp.string());
+    auto status = tracing::InitTracing(tmp.string());
+    REQUIRE(status == 0); // or use appropriate success value
     {
         TRACE_SCOPE("test-span");
     }
@@ -17,6 +18,7 @@ TEST_CASE("Tracing writes start and end records to file", "[tracing]") {
     REQUIRE(std::filesystem::exists(tmp));
     {
         std::ifstream in(tmp.string());
+        REQUIRE(in.is_open());
         std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         REQUIRE(content.find("START test-span") != std::string::npos);
         REQUIRE(content.find("END test-span") != std::string::npos);

@@ -1,5 +1,18 @@
+# Copyright years for installer and metadata
+set(PROJECT_COPYRIGHT_YEARS "2024-2026")
+
+
 cmake_minimum_required(VERSION 3.15)
+
+
 project(TripSitterBeatSync)
+
+# Configure NSIS installer template
+configure_file(
+    installer/nsis_template.nsi.in
+    installer/nsis_template.nsi
+    @ONLY
+)
 
 # Version configuration - can be overridden with -DBEATSYNC_VERSION=...
 set(BEATSYNC_VERSION "1.0.0" CACHE STRING "BeatSync library version")
@@ -75,20 +88,25 @@ set(OPTIONAL_SOURCES)
 
 # Tracing support (optional)
 option(BEATSYNC_ENABLE_TRACING "Enable OpenTelemetry tracing" OFF)
+
+# Tracing support (optional)
+option(BEATSYNC_ENABLE_TRACING "Enable OpenTelemetry tracing" OFF)
 if(BEATSYNC_ENABLE_TRACING)
-    # Try to discover OpenTelemetry C++ SDK via CMake config package (vcpkg provides opentelemetry-cpp)
     find_package(opentelemetry-cpp CONFIG QUIET)
     if(opentelemetry-cpp_FOUND)
         message(STATUS "OpenTelemetry C++ SDK found - enabling tracing support")
         add_compile_definitions(BEATSYNC_ENABLE_TRACING)
         add_compile_definitions(USE_TRACING)
-        # Link OpenTelemetry libraries to beatsync_backend_shared
-        if(TARGET beatsync_backend_shared)
-            target_link_libraries(beatsync_backend_shared PRIVATE opentelemetry_cpp_trace opentelemetry_cpp_sdk)
-        endif()
     else()
         message(WARNING "BEATSYNC_ENABLE_TRACING is ON but opentelemetry-cpp not found. Tracing will be a no-op.")
     endif()
+endif()
+
+# ...existing code...
+
+# Link OpenTelemetry libraries to beatsync after target creation
+if(BEATSYNC_ENABLE_TRACING AND opentelemetry-cpp_FOUND)
+    target_link_libraries(beatsync PRIVATE opentelemetry_cpp_trace opentelemetry_cpp_sdk)
 endif()
 
 # BeatNet and Demucs/StemSeparator are now always compiled for AI analysis modes
