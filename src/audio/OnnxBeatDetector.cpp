@@ -16,13 +16,12 @@
 #include <stdexcept>
 #include <sstream>
 #include <iostream>
+#include <filesystem>
 
 #ifdef USE_ONNX
 #include <onnxruntime_cxx_api.h>
-#ifdef _WIN32
-// DirectML provider factory declaration (from dml_provider_factory.h if available)
-extern "C" OrtStatus* OrtSessionOptionsAppendExecutionProvider_DML(OrtSessionOptions* options, int device_id);
-#endif
+// DirectML support removed - use CUDA EP instead for GPU acceleration
+// DirectML requires linking against directml.lib which isn't part of ONNX Runtime vcpkg
 #endif
 
 namespace BeatSync {
@@ -313,24 +312,9 @@ struct OnnxBeatDetector::Impl {
                     // CUDA not available
                 }
 
-                // Try DirectML on Windows if CUDA failed
-#ifdef _WIN32
-                if (!gpuEnabled) {
-                    try {
-                        const OrtApi& ortApi = Ort::GetApi();
-                        OrtStatus* status = OrtSessionOptionsAppendExecutionProvider_DML(
-                            static_cast<OrtSessionOptions*>(*sessionOptions), cfg.gpuDeviceId);
-                        if (status == nullptr) {
-                            gpuEnabled = true;
-                        } else {
-                            ortApi.ReleaseStatus(status);
-                        }
-                    } catch (...) {
-                        // DirectML not available, fall back to CPU
-                    }
-                }
-#endif
-                (void)gpuEnabled; // Suppress unused variable warning if neither provider available
+                // Note: DirectML fallback removed - requires separate directml.lib linking
+                // CUDA EP is the preferred GPU acceleration method
+                (void)gpuEnabled; // Suppress unused variable warning if CUDA not available
             }
 
             // Load model
