@@ -48,8 +48,10 @@ The project consists of two main components:
 
 ### Build Backend
 
+
 ```powershell
-cd C:\Users\samue\Desktop\BeatSyncEditor
+# Change to your local clone location
+cd <path-to-BeatSyncEditor>
 
 # Configure (first run installs dependencies)
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
@@ -73,11 +75,14 @@ cmake --build build --config Release --target beatsync_backend_shared
 ### Build TripSitter GUI
 
 ```powershell
+# Set your Unreal Engine path (Windows example)
+$Env:UE_ENGINE_PATH = 'C:\UE5_Source\UnrealEngine'
+
 # Copy source to UE engine
-Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "$Env:UE_ENGINE_PATH\Engine\Source\Programs\TripSitter\Private\" -Recurse -Force
 
 # Build
-& "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+& "$Env:UE_ENGINE_PATH\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
 
 ## C API Overview

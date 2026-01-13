@@ -24,8 +24,17 @@ if (-not (Test-Path $targetPath)) {
 }
 
 $shortcutPath = Join-Path $desktopPath "BeatSync Backend Tests.lnk"
-$s = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcutPath)
-$s.TargetPath = $targetPath
-$s.WorkingDirectory = $workingDir
-$s.Save()
-Write-Host "Shortcut created successfully at: $shortcutPath"
+try {
+    $shell = New-Object -ComObject WScript.Shell
+    $s = $shell.CreateShortcut($shortcutPath)
+    $s.TargetPath = $targetPath
+    $s.WorkingDirectory = $workingDir
+    $s.Save()
+    Write-Host "Shortcut created successfully at: $shortcutPath"
+} catch {
+    Write-Error "Failed to create shortcut at $shortcutPath: $($_.Exception.Message)"
+} finally {
+    # Cleanup COM object if needed
+    if ($null -ne $s) { [System.Runtime.Interopservices.Marshal]::ReleaseComObject($s) | Out-Null }
+    if ($null -ne $shell) { [System.Runtime.Interopservices.Marshal]::ReleaseComObject($shell) | Out-Null }
+}

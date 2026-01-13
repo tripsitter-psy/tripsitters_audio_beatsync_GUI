@@ -51,8 +51,8 @@ public:
     struct CallbackData
     {
         FProgressCb Func;
-            void* Key = nullptr; // O(1) lookup key (e.g., writer pointer)
-        };
+        void* Key = nullptr; // O(1) lookup key for callback storage (e.g., writer pointer)
+    };
 
 private:
     // Internal state handled in .cpp

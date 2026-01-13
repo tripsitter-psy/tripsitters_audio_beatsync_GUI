@@ -33,10 +33,14 @@ fi
 
 # TEMP disk space check
 TMPDIR=${TMPDIR:-/tmp}
-available_gb=$(python3 -c 'import shutil,sys; print(shutil.disk_usage(sys.argv[1]).free // (1024**3))' "$TMPDIR")
-echo "Temp path: $TMPDIR (Free: ${available_gb}GB)"
-if [ "$available_gb" -lt 10 ]; then
-  echo "WARNING: Less than 10GB free in TEMP. nvcc and builds may fail with 'ptxas' or 'No space left' errors." >&2
+if command -v python3 >/dev/null 2>&1; then
+  available_gb=$(python3 -c 'import shutil,sys; print(shutil.disk_usage(sys.argv[1]).free // (1024**3))' "$TMPDIR")
+  echo "Temp path: $TMPDIR (Free: ${available_gb}GB)"
+  if [ "$available_gb" -lt 10 ]; then
+    echo "WARNING: Less than 10GB free in TEMP. nvcc and builds may fail with 'ptxas' or 'No space left' errors." >&2
+  fi
+else
+  echo "Temp path: $TMPDIR (python3 not found — skipping disk space check)"
 fi
 
 # Optional GitHub runner check (requires GITHUB_TOKEN and GITHUB_REPOSITORY in OWNER/REPO form)
@@ -45,7 +49,7 @@ if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
   api="https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners"
   RUNNERS_JSON=$(mktemp) || { echo "Failed to create temp file"; exit 1; }
   trap "rm -f '$RUNNERS_JSON'" EXIT
-  if curl -sS -H "Authorization: token $GITHUB_TOKEN" "$api" >"$RUNNERS_JSON"; then
+  if curl -sS --header @- "$api" >"$RUNNERS_JSON" <<< "Authorization: token $GITHUB_TOKEN"; then
     echo "Runners in repo (name => labels):"
     jq -r '.runners[] | "\(.name) => \(.labels | map(.name) | join(", "))"' "$RUNNERS_JSON" || true
     if jq -e '.runners | any(.labels[]?.name == "gpu")' "$RUNNERS_JSON" >/dev/null 2>&1; then

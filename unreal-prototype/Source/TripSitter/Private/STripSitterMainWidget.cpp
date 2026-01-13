@@ -2,6 +2,7 @@
 #include "BeatsyncLoader.h"
 #include "BeatsyncProcessingTask.h"
 #include "SWaveformViewer.h"
+#include "Fonts/CompositeFont.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
@@ -178,12 +179,20 @@ void STripSitterMainWidget::LoadAssets()
 		// The font path must be an absolute path for FSlateFontInfo to load it
 		FString AbsFontPath = FPaths::ConvertRelativePathToFull(FontPath);
 
-		// Create FSlateFontInfo with the font file path - Slate will load it at runtime
-		TitleFont = FSlateFontInfo(AbsFontPath, 28);
-		HeadingFont = FSlateFontInfo(AbsFontPath, 16);
-		ButtonFont = FSlateFontInfo(AbsFontPath, 18);
-		ButtonFontSmall = FSlateFontInfo(AbsFontPath, 14);
-		BodyFont = FSlateFontInfo(AbsFontPath, 12);
+		// Create FCompositeFont for the TTF file using non-deprecated API
+		TSharedRef<FCompositeFont> CustomCompositeFont = MakeShared<FCompositeFont>(
+			FName("Corpta"),
+			AbsFontPath,
+			EFontHinting::Default,
+			EFontLoadingPolicy::LazyLoad
+		);
+
+		// Create FSlateFontInfo instances at different sizes using the composite font
+		TitleFont = FSlateFontInfo(CustomCompositeFont, 28);
+		HeadingFont = FSlateFontInfo(CustomCompositeFont, 16);
+		ButtonFont = FSlateFontInfo(CustomCompositeFont, 18);
+		ButtonFontSmall = FSlateFontInfo(CustomCompositeFont, 14);
+		BodyFont = FSlateFontInfo(CustomCompositeFont, 12);
 		bCustomFontLoaded = true;
 		UE_LOG(LogTemp, Log, TEXT("TripSitter: Loaded custom font from %s"), *AbsFontPath);
 	}

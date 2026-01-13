@@ -835,6 +835,8 @@ BEATSYNC_API int bs_ai_analyze_file(void* analyzer, const char* audio_path,
             if (out_result->beats) {
                 memcpy(out_result->beats, result.beats.data(), result.beats.size() * sizeof(double));
                 out_result->beat_count = result.beats.size();
+            } else {
+                out_result->beat_count = 0;
             }
         }
 
@@ -844,6 +846,14 @@ BEATSYNC_API int bs_ai_analyze_file(void* analyzer, const char* audio_path,
             if (out_result->downbeats) {
                 memcpy(out_result->downbeats, result.downbeats.data(), result.downbeats.size() * sizeof(double));
                 out_result->downbeat_count = result.downbeats.size();
+            } else {
+                // Free beats if previously allocated
+                if (out_result->beats) {
+                    free(out_result->beats);
+                    out_result->beats = nullptr;
+                    out_result->beat_count = 0;
+                }
+                out_result->downbeat_count = 0;
             }
         }
 
@@ -1042,6 +1052,8 @@ BEATSYNC_API int bs_ai_analyze_quick(void* analyzer, const char* audio_path,
             if (out_result->beats) {
                 memcpy(out_result->beats, result.beats.data(), result.beats.size() * sizeof(double));
                 out_result->beat_count = result.beats.size();
+            } else {
+                out_result->beat_count = 0;
             }
         }
 
@@ -1050,6 +1062,14 @@ BEATSYNC_API int bs_ai_analyze_quick(void* analyzer, const char* audio_path,
             if (out_result->downbeats) {
                 memcpy(out_result->downbeats, result.downbeats.data(), result.downbeats.size() * sizeof(double));
                 out_result->downbeat_count = result.downbeats.size();
+            } else {
+                // Free beats if previously allocated
+                if (out_result->beats) {
+                    free(out_result->beats);
+                    out_result->beats = nullptr;
+                    out_result->beat_count = 0;
+                }
+                out_result->downbeat_count = 0;
             }
         }
 

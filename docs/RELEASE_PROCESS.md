@@ -66,15 +66,22 @@ Options:
 
 ### Local Signing (Development)
 
-```powershell
-# Sign a single file
-.\scripts\sign-windows-binaries.ps1 -BuildDir build\bin\Release `
-    -CertificatePath "path\to\cert.pfx" `
-    -CertificatePassword "password"
 
-# Dry run (shows what would be signed)
+```powershell
+# Sign a single file (do NOT pass -CertificatePassword in plaintext)
+# Use secure alternatives: prompt for password interactively, read from a protected secret store or key vault, or pass via a secure environment variable.
+# Example (prompt for password):
+$certPassword = Read-Host -AsSecureString "Enter certificate password"
+.\scripts\sign-windows-binaries.ps1 -BuildDir build\bin\Release `
+   -CertificatePath "path\to\cert.pfx" `
+   -CertificatePassword $certPassword
+
+# Use -DryRun to verify what would be signed without performing actual signing:
 .\scripts\sign-windows-binaries.ps1 -BuildDir build\bin\Release -DryRun
 ```
+
+> **Security Note:**
+> Never expose sensitive values like -CertificatePassword on the command line or in scripts. Always use secure input methods or secret management tools. The sign-windows-binaries.ps1 script supports -BuildDir, -CertificatePassword, and -DryRun flags; substitute secure handling as appropriate for your environment.
 
 ## Installer Configuration
 

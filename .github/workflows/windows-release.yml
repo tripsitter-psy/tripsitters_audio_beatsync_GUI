@@ -71,12 +71,12 @@ jobs:
         env:
           CERT: ${{ secrets.CODESIGN_CERTIFICATE_BASE64 }}
         run: |
-          if [ -n "$CERT" ]; then
-            echo "has_cert=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_cert=false" >> $GITHUB_OUTPUT
-          fi
-        shell: bash
+          if ($env:CERT) {
+            "has_cert=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            "has_cert=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+        shell: powershell
 
       - name: Sign binaries (if certificate available)
         if: steps.cert-check.outputs.has_cert == 'true'

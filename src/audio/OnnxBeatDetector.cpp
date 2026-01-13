@@ -65,7 +65,14 @@ struct MelSpectrogramExtractor::Impl {
     static int nextPow2(int v) {
         if (v <= 0) return 1; // Clamp non-positive input to 1
         int p = 1;
-        while (p < v) p <<= 1;
+        // Guard against overflow: if p > INT_MAX/2, next shift would overflow
+        while (p < v) {
+            if (p > (std::numeric_limits<int>::max() >> 1)) {
+                // Would overflow on next shift; clamp to INT_MAX
+                return std::numeric_limits<int>::max();
+            }
+            p <<= 1;
+        }
         return p;
     }
 
@@ -131,8 +138,13 @@ struct MelSpectrogramExtractor::Impl {
     }
 
     void initWindow() {
-        // Hann window
+        // Defensive: handle nFft <= 1
         window.resize(nFft);
+        if (nFft <= 1) {
+            if (nFft == 1) window[0] = 1.0;
+            return;
+        }
+        // Hann window
         for (int n = 0; n < nFft; ++n) {
             window[n] = 0.5 * (1.0 - std::cos(2.0 * PI * n / (nFft - 1)));
         }
@@ -692,28 +704,29 @@ bool OnnxBeatDetector::loadModel(const std::string& modelPath, const OnnxConfig&
     return m_impl->loadModel(modelPath, config);
 }
 
-bool OnnxBeatDetector::isLoaded() const {
+// Private implementation methods called from inline header methods
+bool OnnxBeatDetector::isLoadedImpl() const {
     return m_impl->loaded;
 }
 
-OnnxModelType OnnxBeatDetector::getModelType() const {
+OnnxModelType OnnxBeatDetector::getModelTypeImpl() const {
     return m_impl->config.modelType;
 }
 
-const OnnxConfig& OnnxBeatDetector::getConfig() const {
+const OnnxConfig& OnnxBeatDetector::getConfigImpl() const {
     return m_impl->config;
 }
 
-void OnnxBeatDetector::setConfig(const OnnxConfig& config) {
+void OnnxBeatDetector::setConfigImpl(const OnnxConfig& config) {
     m_impl->config = config;
 }
 
-BeatGrid OnnxBeatDetector::analyze(const std::vector<float>& samples, int sampleRate,
-                                    ProgressCallback progress) {
+BeatGrid OnnxBeatDetector::analyzeImpl(const std::vector<float>& samples, int sampleRate,
+                                        ProgressCallback progress) {
     TRACE_FUNC();
     BeatGrid grid;
 
-    OnnxAnalysisResult result = analyzeDetailed(samples, sampleRate, progress);
+    OnnxAnalysisResult result = analyzeDetailedImpl(samples, sampleRate, progress);
 
     grid.setBeats(result.beats);
     grid.setBPM(result.bpm);
@@ -722,14 +735,14 @@ BeatGrid OnnxBeatDetector::analyze(const std::vector<float>& samples, int sample
     return grid;
 }
 
-OnnxAnalysisResult OnnxBeatDetector::analyzeDetailed(const std::vector<float>& samples,
-                                                      int sampleRate,
-                                                      ProgressCallback progress) {
+OnnxAnalysisResult OnnxBeatDetector::analyzeDetailedImpl(const std::vector<float>& samples,
+                                                          int sampleRate,
+                                                          ProgressCallback progress) {
     TRACE_FUNC();
     return m_impl->runInference(samples, sampleRate, progress);
 }
 
-std::vector<double> OnnxBeatDetector::processChunk(const std::vector<float>& chunk) {
+std::vector<double> OnnxBeatDetector::processChunkImpl(const std::vector<float>& chunk) {
     // For streaming, accumulate chunks and process when we have enough
     m_impl->streamBuffer.insert(m_impl->streamBuffer.end(), chunk.begin(), chunk.end());
 
@@ -764,16 +777,16 @@ std::vector<double> OnnxBeatDetector::processChunk(const std::vector<float>& chu
     return adjustedBeats;
 }
 
-void OnnxBeatDetector::reset() {
+void OnnxBeatDetector::resetImpl() {
     m_impl->streamBuffer.clear();
     m_impl->streamTime = 0.0;
 }
 
-std::string OnnxBeatDetector::getLastError() const {
+std::string OnnxBeatDetector::getLastErrorImpl() const {
     return m_impl->lastError;
 }
 
-std::string OnnxBeatDetector::getModelInfo() const {
+std::string OnnxBeatDetector::getModelInfoImpl() const {
     std::ostringstream oss;
     oss << "Model: " << m_impl->modelPath << "\n";
     oss << "Type: ";

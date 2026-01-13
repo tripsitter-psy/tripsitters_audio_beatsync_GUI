@@ -285,9 +285,12 @@ void FBeatsyncLoader::Shutdown()
         FScopeLock Lock(&GProgressCallbacksLock);
         GProgressCallbacks.Empty();
     }
-    // Wait for any in-flight callbacks to finish
-    if (GActiveProgressCallbacks > 0 && GProgressCallbacksEvent) {
-        GProgressCallbacksEvent->Wait();
+    // Wait for any in-flight callbacks to finish (with timeout to prevent indefinite hangs)
+    if (GActiveProgressCallbacks.load() > 0 && GProgressCallbacksEvent) {
+        constexpr uint32 TimeoutMs = 5000; // 5 second timeout
+        if (!GProgressCallbacksEvent->Wait(TimeoutMs)) {
+            UE_LOG(LogTemp, Warning, TEXT("Timeout waiting for progress callbacks to complete during shutdown"));
+        }
     }
     if (GApi.DllHandle) {
         FPlatformProcess::FreeDllHandle(GApi.DllHandle);

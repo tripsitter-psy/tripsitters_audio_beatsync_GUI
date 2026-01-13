@@ -27,6 +27,8 @@ class SimpleBeatModel(nn.Module):
     This model is only for testing model export and inference plumbing, not for accuracy."""
     def __init__(self):
         super().__init__()
+        # initialize weights deterministically
+        torch.manual_seed(0)
         # simple linear layers to produce 3 outputs
         self.fc = nn.Sequential(
             nn.Flatten(),
@@ -34,8 +36,6 @@ class SimpleBeatModel(nn.Module):
             nn.ReLU(),
             nn.Linear(32, 3),
         )
-        # initialize weights deterministically
-        torch.manual_seed(0)
         for p in self.parameters():
             nn.init.uniform_(p, -0.1, 0.1)
 

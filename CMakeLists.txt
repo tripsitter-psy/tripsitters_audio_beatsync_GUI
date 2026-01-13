@@ -88,9 +88,6 @@ set(OPTIONAL_SOURCES)
 
 # Tracing support (optional)
 option(BEATSYNC_ENABLE_TRACING "Enable OpenTelemetry tracing" OFF)
-
-# Tracing support (optional)
-option(BEATSYNC_ENABLE_TRACING "Enable OpenTelemetry tracing" OFF)
 if(BEATSYNC_ENABLE_TRACING)
     find_package(opentelemetry-cpp CONFIG QUIET)
     if(opentelemetry-cpp_FOUND)
@@ -104,10 +101,11 @@ endif()
 
 # ...existing code...
 
+
+# ...existing code...
+
 # Link OpenTelemetry libraries to beatsync after target creation
-if(BEATSYNC_ENABLE_TRACING AND opentelemetry-cpp_FOUND)
-    target_link_libraries(beatsync PRIVATE opentelemetry_cpp_trace opentelemetry_cpp_sdk)
-endif()
+# (moved to after beatsync target definition)
 
 # BeatNet and Demucs/StemSeparator are now always compiled for AI analysis modes
 # These are called via Python scripts and don't need external libraries

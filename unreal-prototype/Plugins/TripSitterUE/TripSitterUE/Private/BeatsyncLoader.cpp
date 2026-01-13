@@ -205,7 +205,8 @@ bool FBeatsyncLoader::AnalyzeAudio(void* handle, const FString& path, FBeatGrid&
     // Prepare C beatgrid
     bs_beatgrid_t grid = {};
 
-    int res = GApi.analyze_audio(handle, TCHAR_TO_ANSI(*path), &grid);
+    FTCHARToANSI PathAnsi(*path);
+    int res = GApi.analyze_audio(handle, PathAnsi.Get(), &grid);
     if (res != 0) return false;
 
     outGrid.BPM = grid.bpm;
@@ -362,7 +363,8 @@ bool FBeatsyncLoader::ExtractFrame(const FString& videoPath, double timestamp, T
 
     unsigned char* data = nullptr;
     int w = 0, h = 0;
-    int res = GApi.video_extract_frame(TCHAR_TO_ANSI(*videoPath), timestamp, &data, &w, &h);
+    FTCHARToANSI VideoPathAnsi(*videoPath);
+    int res = GApi.video_extract_frame(VideoPathAnsi.Get(), timestamp, &data, &w, &h);
     if (res != 0 || !data) return false;
 
     int size = w * h * 3;

@@ -142,25 +142,36 @@ typedef struct {
     float downbeat_threshold;       // Downbeat activation threshold (0.0-1.0, default 0.5)
 } bs_ai_config_t;
 
+
 // Segment structure for AI results
+// Memory ownership: The label field is heap-allocated (malloc) and is freed by bs_free_ai_result().
 typedef struct bs_segment_t {
-    double start_time;
-    double end_time;
-    char* label;  // "intro", "verse", "chorus", etc. (heap-allocated via malloc, freed by bs_free_ai_result)
-    float confidence;
+  double start_time;
+  double end_time;
+  char* label;  // "intro", "verse", "chorus", etc. (heap-allocated; freed by bs_free_ai_result)
+  float confidence;
 } bs_segment_t;
 
 // Extended beat grid with downbeats and segments
+// Memory ownership and nullability:
+// - All pointers (beats, downbeats, segments, and each segment->label) are allocated by the library and must be freed only by calling bs_free_ai_result().
+// - Callers must not free these buffers directly.
+// - On failure, all pointers will be NULL and counts zero; on partial results, some arrays may be NULL while others are populated.
+// - Callers must always check for NULL before accessing arrays.
+// - bs_free_ai_result(bs_ai_result_t*) will free all memory for beats, downbeats, segments, and segment labels.
+// - Do not attempt to free or reuse these pointers after calling bs_free_ai_result().
+//
+// See also: bs_ai_result_t, bs_segment_t, bs_free_ai_result
 typedef struct {
-    double* beats;          // Beat timestamps (malloc, caller frees with bs_free_ai_result)
-    size_t beat_count;
-    double* downbeats;      // Downbeat timestamps (malloc)
-    size_t downbeat_count;
-    double bpm;
-    double duration;
-    // Segment information (for All-In-One model)
-    bs_segment_t* segments; // Array of segments (malloc, caller frees with bs_free_ai_result)
-    size_t segment_count;
+  double* beats;          // Beat timestamps (malloc, freed by bs_free_ai_result)
+  size_t beat_count;
+  double* downbeats;      // Downbeat timestamps (malloc, freed by bs_free_ai_result)
+  size_t downbeat_count;
+  double bpm;
+  double duration;
+  // Segment information (for All-In-One model)
+  bs_segment_t* segments; // Array of segments (malloc, freed by bs_free_ai_result)
+  size_t segment_count;
 } bs_ai_result_t;
 
 // Create AI analyzer with configuration

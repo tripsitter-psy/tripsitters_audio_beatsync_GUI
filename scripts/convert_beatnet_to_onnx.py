@@ -22,7 +22,7 @@ def main():
                         help="Path to pre-trained weights (.pt or .pth file)")
     parser.add_argument("--mode", type=int, default=1, choices=[1, 2, 3],
                         help="BeatNet mode: 1=offline, 2=online, 3=streaming")
-    parser.add_argument("--opset", type=int, default=14, help="ONNX opset version")
+    parser.add_argument("--opset", type=int, default=14, help="ONNX opset version (minimum 18)")
     parser.add_argument("--verify", action="store_true", help="Verify exported model with ONNX Runtime")
     args = parser.parse_args()
 
@@ -78,12 +78,17 @@ def main():
                 'downbeat_activation': {0: 'batch', 1: 'time'}
             }
 
+
+            used_opset = args.opset
+            if args.opset < 18:
+                print(f"WARNING: --opset {args.opset} is less than the minimum supported opset 18. Using opset_version=18.", file=sys.stderr)
+                used_opset = 18
             torch.onnx.export(
                 model,
                 dummy_input,
                 args.out,
                 export_params=True,
-                opset_version=max(args.opset, 18),
+                opset_version=used_opset,
                 do_constant_folding=True,
                 input_names=['mel_spectrogram'],
                 output_names=['beat_activation', 'downbeat_activation'],
@@ -243,12 +248,17 @@ def main():
             'downbeat_activation': {0: 'batch', 1: 'time'}
         }
 
+
+        used_opset = args.opset
+        if args.opset < 18:
+            print(f"WARNING: --opset {args.opset} is less than the minimum supported opset 18. Using opset_version=18.", file=sys.stderr)
+            used_opset = 18
         torch.onnx.export(
             model,
             dummy_input,
             args.out,
             export_params=True,
-            opset_version=max(args.opset, 18),
+            opset_version=used_opset,
             do_constant_folding=True,
             input_names=['mel_spectrogram'],
             output_names=['beat_activation', 'downbeat_activation'],

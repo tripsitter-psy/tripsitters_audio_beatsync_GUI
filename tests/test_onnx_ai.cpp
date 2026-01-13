@@ -11,9 +11,31 @@
 // Backend C API header
 #include "backend/beatsync_capi.h"
 
-// Test fixture paths
-static const char* TEST_AUDIO_FILE = "tests/fixtures/test_clicks.wav";
-static const char* TEST_MODEL_DIR = "models";
+// Test fixture paths (configurable via environment or CMake defines)
+#ifndef TEST_AUDIO_FILE
+#define TEST_AUDIO_FILE nullptr
+#endif
+#ifndef TEST_MODEL_DIR
+#define TEST_MODEL_DIR nullptr
+#endif
+
+#include <cstdlib>
+static std::string get_env_or_default(const char* envvar, const char* fallback) {
+    const char* val = std::getenv(envvar);
+    return (val && *val) ? val : fallback;
+}
+
+#ifdef TEST_AUDIO_FILE_OVERRIDE
+static std::string get_test_audio_file() { return TEST_AUDIO_FILE_OVERRIDE; }
+#else
+static std::string get_test_audio_file() { return get_env_or_default("TEST_AUDIO_FILE", "tests/fixtures/test_clicks.wav"); }
+#endif
+
+#ifdef TEST_MODEL_DIR_OVERRIDE
+static std::string get_test_model_dir() { return TEST_MODEL_DIR_OVERRIDE; }
+#else
+static std::string get_test_model_dir() { return get_env_or_default("TEST_MODEL_DIR", "models"); }
+#endif
 
 // ==================== ONNX AI Availability Tests ====================
 
@@ -99,7 +121,7 @@ TEST_CASE("AI analyze file null handling", "[backend][ai][null]") {
     bs_ai_result_t result = {};
 
     // Null analyzer
-    REQUIRE(bs_ai_analyze_file(nullptr, TEST_AUDIO_FILE, &result, nullptr, nullptr) == -1);
+    REQUIRE(bs_ai_analyze_file(nullptr, get_test_audio_file().c_str(), &result, nullptr, nullptr) == -1);
 
     // Null audio path
     bs_ai_config_t config = {};
@@ -108,7 +130,7 @@ TEST_CASE("AI analyze file null handling", "[backend][ai][null]") {
     REQUIRE(bs_ai_analyze_file(nullptr, nullptr, &result, nullptr, nullptr) == -1);
 
     // Null result
-    REQUIRE(bs_ai_analyze_file(nullptr, TEST_AUDIO_FILE, nullptr, nullptr, nullptr) == -1);
+    REQUIRE(bs_ai_analyze_file(nullptr, get_test_audio_file().c_str(), nullptr, nullptr, nullptr) == -1);
 }
 
 TEST_CASE("AI analyze samples null handling", "[backend][ai][null]") {
@@ -132,13 +154,13 @@ TEST_CASE("AI analyze quick null handling", "[backend][ai][null]") {
     bs_ai_result_t result = {};
 
     // Null analyzer
-    REQUIRE(bs_ai_analyze_quick(nullptr, TEST_AUDIO_FILE, &result, nullptr, nullptr) == -1);
+    REQUIRE(bs_ai_analyze_quick(nullptr, get_test_audio_file().c_str(), &result, nullptr, nullptr) == -1);
 
     // Null audio path
     REQUIRE(bs_ai_analyze_quick(nullptr, nullptr, &result, nullptr, nullptr) == -1);
 
     // Null result
-    REQUIRE(bs_ai_analyze_quick(nullptr, TEST_AUDIO_FILE, nullptr, nullptr, nullptr) == -1);
+    REQUIRE(bs_ai_analyze_quick(nullptr, get_test_audio_file().c_str(), nullptr, nullptr, nullptr) == -1);
 }
 
 // ==================== AI Error and Info Functions ====================
@@ -260,20 +282,22 @@ TEST_CASE("AI full pipeline integration", "[backend][ai][integration]") {
     }
 
     // Skip if test audio doesn't exist
-    if (!std::filesystem::exists(TEST_AUDIO_FILE)) {
-        WARN("Test audio file not found: " << TEST_AUDIO_FILE);
+    auto test_audio_file = get_test_audio_file();
+    if (!std::filesystem::exists(test_audio_file)) {
+        WARN("Test audio file not found: " << test_audio_file);
         SKIP("Test audio file not available");
     }
 
     // Skip if no models directory
-    if (!std::filesystem::exists(TEST_MODEL_DIR)) {
-        WARN("Models directory not found: " << TEST_MODEL_DIR);
+    auto test_model_dir = get_test_model_dir();
+    if (!std::filesystem::exists(test_model_dir)) {
+        WARN("Models directory not found: " << test_model_dir);
         SKIP("Models directory not available");
     }
 
     // Look for any .onnx model
     std::string beatModelPath;
-    for (const auto& entry : std::filesystem::directory_iterator(TEST_MODEL_DIR)) {
+    for (const auto& entry : std::filesystem::directory_iterator(test_model_dir)) {
         if (entry.path().extension() == ".onnx") {
             beatModelPath = entry.path().string();
             break;
@@ -281,7 +305,7 @@ TEST_CASE("AI full pipeline integration", "[backend][ai][integration]") {
     }
 
     if (beatModelPath.empty()) {
-        WARN("No ONNX models found in " << TEST_MODEL_DIR);
+        WARN("No ONNX models found in " << test_model_dir);
         SKIP("No ONNX models available");
     }
 
@@ -300,7 +324,7 @@ TEST_CASE("AI full pipeline integration", "[backend][ai][integration]") {
     AIProgressState progressState;
     bs_ai_result_t result = {};
 
-    int ret = bs_ai_analyze_file(analyzer, TEST_AUDIO_FILE, &result, ai_progress_callback, &progressState);
+    int ret = bs_ai_analyze_file(analyzer, get_test_audio_file().c_str(), &result, ai_progress_callback, &progressState);
 
     INFO("Analysis returned: " << ret);
     INFO("Progress callback calls: " << progressState.call_count);

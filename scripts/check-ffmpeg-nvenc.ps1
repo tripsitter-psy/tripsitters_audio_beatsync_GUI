@@ -2,7 +2,7 @@
 $ffmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue
 if ($ffmpeg) {
     Write-Host 'FFmpeg found at:' $ffmpeg.Source
-    & $ffmpeg.Source -hide_banner -encoders 2>&1 | Select-String -Pattern 'nvenc|h264_nvenc|hevc_nvenc'
+    & $ffmpeg.Source -hide_banner -encoders 2>&1 | Select-String -Pattern 'nvenc'
 } else {
     Write-Host 'FFmpeg not in PATH. Checking common locations...'
     $paths = @(

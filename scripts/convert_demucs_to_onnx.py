@@ -53,8 +53,6 @@ def main():
     # Try to import demucs
     try:
         import demucs.pretrained
-        from demucs.apply import apply_model
-        from demucs.audio import convert_audio
         USE_DEMUCS = True
     except ImportError:
         print("WARNING: Demucs not installed. Creating a lightweight separator architecture.")
@@ -230,8 +228,12 @@ def main():
                 elif 'model' in state_dict:
                     state_dict = state_dict['model']
 
-                model.load_state_dict(state_dict, strict=False)
+                result = model.load_state_dict(state_dict, strict=False)
                 print("  Weights loaded successfully!")
+                if getattr(result, 'missing_keys', None):
+                    print(f"  WARNING: Missing keys in state_dict: {result.missing_keys}")
+                if getattr(result, 'unexpected_keys', None):
+                    print(f"  WARNING: Unexpected keys in state_dict: {result.unexpected_keys}")
             except Exception as e:
                 print(f"  WARNING: Could not load weights: {e}")
                 print("  Using random initialization instead.")

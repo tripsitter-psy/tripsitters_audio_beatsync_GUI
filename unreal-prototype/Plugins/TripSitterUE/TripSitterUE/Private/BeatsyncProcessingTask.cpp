@@ -1,3 +1,11 @@
+FBeatsyncProcessingTask::~FBeatsyncProcessingTask()
+{
+    // Clear the progress callback to avoid dangling references
+    if (Writer)
+    {
+        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
+    }
+}
 #include "BeatsyncProcessingTask.h"
 #include "Async/Async.h"
 #include "HAL/FileManager.h"
@@ -150,10 +158,13 @@ void FBeatsyncProcessingTask::DoWork()
         return;
     }
 
-    // Set up progress callback for video processing
-    FBeatsyncLoader::SetProgressCallback(Writer, [this](double Prog) {
-        if (!bCancelRequested) {
-            ReportProgress(0.2f + 0.5f * static_cast<float>(Prog), TEXT("Processing video..."));
+    // Set up progress callback for video processing using a weak pointer to avoid dangling 'this'
+    TWeakPtr<FBeatsyncProcessingTask> WeakThis = AsShared();
+    FBeatsyncLoader::SetProgressCallback(Writer, [WeakThis](double Prog) {
+        if (auto Pinned = WeakThis.Pin()) {
+            if (!Pinned->bCancelRequested) {
+                Pinned->ReportProgress(0.2f + 0.5f * static_cast<float>(Prog), TEXT("Processing video..."));
+            }
         }
     });
 

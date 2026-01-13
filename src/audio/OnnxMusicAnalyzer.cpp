@@ -1,3 +1,10 @@
+#include "OnnxBeatDetector.h"
+// Ensure OnnxBeatDetector translation unit is linked
+namespace {
+    struct LinkOnnxBeatDetector {
+        LinkOnnxBeatDetector() { BeatSync::ensureOnnxBeatDetectorIsLinked(); }
+    } g_linkOnnxBeatDetector;
+}
 /**
  * @file OnnxMusicAnalyzer.cpp
  * @brief Unified music analysis pipeline combining stem separation and beat detection

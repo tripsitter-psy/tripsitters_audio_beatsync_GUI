@@ -61,54 +61,7 @@ def main():
     # The original model expects: (batch, time, features)
     # But we want to feed mel spectrograms: (batch, 1, n_mels, time)
 
-    class BeatNetWrapper(nn.Module):
-        """
-        Wrapper to make BeatNet ONNX-exportable.
 
-        BeatNet's BDA model expects input shape: (batch, time, 1)
-        and outputs: (batch, time, 3) with classes [no_beat, beat, downbeat]
-        """
-        def __init__(self, model):
-            super().__init__()
-            self.conv1 = model.conv1
-            self.linear0 = model.linear0
-            self.lstm = model.lstm
-            self.linear = model.linear
-            # Note: softmax removed for ONNX (apply in post-processing)
-
-        def forward(self, x):
-            # x: (batch, time, 1) - raw audio or processed signal
-            batch_size = x.shape[0]
-            seq_len = x.shape[1]
-
-            # Transpose for conv1d: (batch, 1, time)
-            x = x.permute(0, 2, 1)
-
-            # Conv1d
-            x = self.conv1(x)  # (batch, 2, time-9)
-
-            # Flatten and linear
-            x = x.permute(0, 2, 1)  # (batch, time-9, 2)
-            x = x.reshape(batch_size, -1)  # (batch, (time-9)*2)
-
-            # Pad to match linear0 input size if needed
-            expected_size = self.linear0.in_features
-            if x.shape[1] < expected_size:
-                x = torch.nn.functional.pad(x, (0, expected_size - x.shape[1]))
-            elif x.shape[1] > expected_size:
-                x = x[:, :expected_size]
-
-            x = self.linear0(x)  # (batch, 150)
-            x = x.unsqueeze(1)  # (batch, 1, 150) for LSTM
-
-            # LSTM
-            x, _ = self.lstm(x)  # (batch, 1, 150)
-
-            # Output
-            x = self.linear(x)  # (batch, 1, 3)
-            x = torch.softmax(x, dim=-1)
-
-            return x
 
     # Actually, let's just trace the original model directly
     # First understand its exact input requirements
@@ -181,18 +134,22 @@ def main():
 
         # Try without dynamic axes
         print("\n  Retrying with fixed input size...")
-        torch.onnx.export(
-            export_model,
-            dummy_input,
-            args.out,
-            export_params=True,
-            opset_version=args.opset,
-            do_constant_folding=True,
-            input_names=['input'],
-            output_names=['output'],
-            dynamo=False
-        )
-        print(f"  Saved: {args.out}")
+        try:
+            torch.onnx.export(
+                export_model,
+                dummy_input,
+                args.out,
+                export_params=True,
+                opset_version=args.opset,
+                do_constant_folding=True,
+                input_names=['input'],
+                output_names=['output'],
+                dynamo=False
+            )
+            print(f"  Saved: {args.out}")
+        except Exception as e2:
+            print(f"  Retry also failed: {e2}", file=sys.stderr)
+            return 1
 
     # Verify
     if args.verify:
@@ -228,7 +185,7 @@ def main():
 
     print("\n=== Done ===")
     print("\nBeatNet model expects:")
-    print("  - Input: (batch, seq_len, 1) - audio feature frames")
+    print(f"  - Input: (batch, seq_len, {dim_in}) - audio feature frames")
     print("  - Output: (batch, seq_len, 3) - [no_beat, beat, downbeat] probabilities")
     print("\nNote: BeatNet uses internal feature extraction (spectral flux).")
     print("For direct audio input, use the mel spectrogram models instead.")

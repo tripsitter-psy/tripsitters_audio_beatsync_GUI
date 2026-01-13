@@ -76,10 +76,12 @@ struct StemSeparationResult {
     /// Get all stems mixed (should approximate original)
     std::vector<float> getMix() const {
         if (stems[0].empty()) return {};
-        size_t numSamples = stems[0].size() / 2;
-        std::vector<float> mix(numSamples * 2, 0.0f);
+        size_t mixSize = stems[0].size();
+        std::vector<float> mix(mixSize, 0.0f);
         for (int s = 0; s < 4; ++s) {
-            for (size_t i = 0; i < stems[s].size(); ++i) {
+            // Bounds check: only iterate up to the smaller of stem size and mix size
+            size_t stemSize = std::min(stems[s].size(), mixSize);
+            for (size_t i = 0; i < stemSize; ++i) {
                 mix[i] += stems[s][i];
             }
         }

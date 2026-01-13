@@ -180,7 +180,7 @@ def main():
     parser.add_argument("--out", default="models/tcn_beats.onnx", help="Output ONNX file")
     parser.add_argument("--ensemble", action="store_true", help="Create ensemble of all models")
     parser.add_argument("--inspect", action="store_true", help="Just inspect pkl structure")
-    parser.add_argument("--opset", type=int, default=14, help="ONNX opset version")
+    parser.add_argument("--opset", type=int, default=18, help="ONNX opset version (minimum 18)")
     parser.add_argument("--verify", action="store_true", help="Verify exported model")
     args = parser.parse_args()
 
@@ -386,12 +386,12 @@ def main():
                         weight = np.transpose(weight, (1, 0, 2, 3))
                     try:
                         state_dict[f'{name}.weight'] = torch.from_numpy(weight.astype(np.float32))
-                    except:
+                    except Exception as e:
                         pass
                 if 'bias' in w and w['bias'] is not None:
                     try:
                         state_dict[f'{name}.bias'] = torch.from_numpy(w['bias'].astype(np.float32))
-                    except:
+                    except Exception as e:
                         pass
 
             # Load output weights
@@ -408,6 +408,8 @@ def main():
 
             try:
                 sub_model.load_state_dict(state_dict, strict=False)
+            except Exception as e:
+                pass
                 print(f"  Model {model_idx + 1}/{len(all_weights)}: weights loaded")
             except Exception as e:
                 print(f"  Model {model_idx + 1}/{len(all_weights)}: partial load ({e})")

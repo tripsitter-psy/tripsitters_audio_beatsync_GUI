@@ -38,6 +38,12 @@ vcpkg_installed/
 *.lib
 
 # Temporary files
+
+# Unreal runtime-generated files
+Saved/
+
+# Unreal runtime-generated files
+Saved/
 *.log
 *.tmp
 *.temp

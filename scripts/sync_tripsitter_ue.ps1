@@ -71,8 +71,12 @@ function Sync-ToEngine {
                 New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
             }
 
-            Set-Content $dstFile -Value $content -NoNewline
-            Write-Host "  [OK] $file" -ForegroundColor Green
+            try {
+                Set-Content $dstFile -Value $content -NoNewline -ErrorAction Stop
+                Write-Host "  [OK] $file" -ForegroundColor Green
+            } catch {
+                Write-Host "  [FAIL] $file: $_" -ForegroundColor Red
+            }
         } else {
             Write-Host "  [SKIP] $file (not found in repo)" -ForegroundColor Yellow
         }
@@ -89,8 +93,10 @@ function Sync-ToEngine {
         Write-Host "  [OK] Resources folder" -ForegroundColor Green
     }
 
+    # Use Engine root for cd, and Build.bat path relative to that
+    $EngineRoot = Split-Path $EngineSource -Parent
     Write-Host "`nSync complete! Now run:" -ForegroundColor Cyan
-    Write-Host "  cd '$EngineSource'" -ForegroundColor White
+    Write-Host "  cd '$EngineRoot'" -ForegroundColor White
     Write-Host "  .\Engine\Build\BatchFiles\Build.bat TripSitter Win64 Shipping" -ForegroundColor White
 }
 
@@ -106,7 +112,6 @@ function Sync-ToRepo {
 
         if (Test-Path $srcFile) {
             $content = Get-Content $srcFile -Raw
-
 
             # Add TRIPSITTERUE_API back to class/struct declarations that don't have it
             $ApiMarkedClasses = @(
@@ -127,8 +132,12 @@ function Sync-ToRepo {
                 New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
             }
 
-            Set-Content $dstFile -Value $content -NoNewline
-            Write-Host "  [OK] $file" -ForegroundColor Green
+            try {
+                Set-Content $dstFile -Value $content -NoNewline -ErrorAction Stop
+                Write-Host "  [OK] $file" -ForegroundColor Green
+            } catch {
+                Write-Host "  [FAIL] $file: $_" -ForegroundColor Red
+            }
         } else {
             Write-Host "  [SKIP] $file (not found in engine)" -ForegroundColor Yellow
         }

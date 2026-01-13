@@ -155,7 +155,7 @@ std::vector<double> detectBeatsFromWaveform(const std::vector<float>& samples, i
     // Smooth
     auto smooth = gaussianSmooth(flux, smoothSigma);
 
-    // Adaptive threshold: median + thresholdFactor * std
+    // Adaptive threshold: local mean * thresholdFactor using a ±3 sample window (smooth, localMean, thresholdFactor, peaks)
     std::vector<double> peaks;
     for (size_t i = 1; i + 1 < smooth.size(); ++i) {
         if (smooth[i] > smooth[i-1] && smooth[i] >= smooth[i+1]) {

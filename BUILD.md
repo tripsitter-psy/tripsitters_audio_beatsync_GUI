@@ -28,8 +28,9 @@
 ### Backend DLL Only
 
 ```powershell
+
 # Navigate to project
-cd C:\Users\samue\Desktop\BeatSyncEditor
+cd path\to\BeatSyncEditor
 
 # Configure with vcpkg (first run installs dependencies, ~30-60 min)
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
@@ -52,20 +53,29 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmak
 cmake --build build --config Release --target beatsync_backend_shared
 ```
 
+
 ### TripSitter GUI (Unreal Engine)
+
+> **Before building the TripSitter GUI:**
+> Set the `UE5_ROOT` environment variable to your Unreal Engine source root directory. For example:
+> - **PowerShell:** `$env:UE5_ROOT = 'C:\UE5_Source\UnrealEngine'`
+> - **cmd.exe:** `set UE5_ROOT=C:\UE5_Source\UnrealEngine`
+> - **bash:** `export UE5_ROOT=/mnt/c/UE5_Source/UnrealEngine`
+
+
 
 ```powershell
 # Copy DLL to ThirdParty
 Copy-Item 'build\Release\beatsync_backend_shared.dll' 'unreal-prototype\ThirdParty\beatsync\lib\x64\' -Force
 
 # Copy source files to engine
-Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "$env:UE5_ROOT\Engine\Source\Programs\TripSitter\Private\" -Recurse -Force
 
 # Build TripSitter
-& "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+& "$env:UE5_ROOT\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
 
-Output: `C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe`
+Output: `%UE5_ROOT%\Engine\Binaries\Win64\TripSitter.exe`
 
 ## Dependencies
 
@@ -118,38 +128,41 @@ cmake --build build --config RelWithDebInfo
 - Optimizations + debug symbols
 - Good for profiling
 
-## Build Targets
 
-| Target | Description |
-|--------|-------------|
-| `beatsync_backend_shared` | Main DLL for Unreal plugin |
-| `beatsync_backend_static` | Static lib for tests |
-| `test_backend_api` | C API unit tests |
+# Build Instructions
 
-## Testing
+*Last updated: January 13, 2026*
+
+## Prerequisites
+
+### Windows
+
+1. **Visual Studio 2022** (Build Tools or Community Edition)
+   - Include "Desktop development with C++"
+   - C++ CMake tools for Windows
+
+2. **CMake 3.20+**
+   - Usually included with Visual Studio
+   - Or download from <https://cmake.org/download/>
+
+3. **vcpkg** (included as submodule)
+   - Already configured in this repository
+   - Uses manifest mode (`vcpkg.json`)
+
+4. **NVIDIA GPU Support** (optional, for AI acceleration)
+   - CUDA Toolkit 12.x
+   - TensorRT 10.9.0.34
+
+5. **Unreal Engine 5** (for TripSitter GUI)
+   - Source build at `<UE_SOURCE>`
+
+## Quick Start
+
+### Backend DLL Only
 
 ```powershell
-# Build and run tests
-cmake --build build --config Release --target test_backend_api
-./build/tests/Release/test_backend_api.exe
-```
-
-## Troubleshooting
-
-### vcpkg Dependencies Not Installing
-
-Ensure you're using the toolchain file:
-
-```powershell
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
-```
-
-### TensorRT Not Found
-
-Use the overlay triplet:
-
-```powershell
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
+# Navigate to project
+cd path\to\BeatSyncEditor
 ```
 
 The triplet at `triplets/x64-windows.cmake` sets `TENSORRT_HOME`.

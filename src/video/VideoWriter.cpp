@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <set>
 #include <chrono>
 #include <ctime>
 #include <cstring>
@@ -718,16 +719,26 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
                     // Probe input file for audio stream using libavformat
                     bool hasAudio = false;
                     AVFormatContext* probeCtx = nullptr;
-                    if (avformat_open_input(&probeCtx, inputVideos[i].c_str(), nullptr, nullptr) == 0) {
-                        if (avformat_find_stream_info(probeCtx, nullptr) >= 0) {
+                    int openErr = avformat_open_input(&probeCtx, inputVideos[i].c_str(), nullptr, nullptr);
+                    if (openErr == 0) {
+                        int infoErr = avformat_find_stream_info(probeCtx, nullptr);
+                        if (infoErr >= 0) {
                             for (unsigned int s = 0; s < probeCtx->nb_streams; ++s) {
                                 if (probeCtx->streams[s]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
                                     hasAudio = true;
                                     break;
                                 }
                             }
+                        } else {
+                            char errbuf[256];
+                            av_strerror(infoErr, errbuf, sizeof(errbuf));
+                            std::cerr << "[Beatsync] avformat_find_stream_info failed for '" << inputVideos[i] << "': " << errbuf << std::endl;
                         }
                         avformat_close_input(&probeCtx);
+                    } else {
+                        char errbuf[256];
+                        av_strerror(openErr, errbuf, sizeof(errbuf));
+                        std::cerr << "[Beatsync] avformat_open_input failed for '" << inputVideos[i] << "': " << errbuf << std::endl;
                     }
 
                     if (hasAudio) {
@@ -1036,11 +1047,14 @@ void VideoWriter::reportProgress(double progress) {
 
 // ==================== GPU Encoder Detection ====================
 
-bool VideoWriter::probeEncoder(const std::string& encoder) const {
-    std::string ffmpegPath = getFFmpegPath();
-    std::string output;
+// Cache all available encoders in a single FFmpeg call
+static std::set<std::string> getAvailableEncoders(const std::string& ffmpegPath) {
+    static std::set<std::string> cachedEncoders;
+    static bool cachePopulated = false;
 
-    // Query FFmpeg for available encoders
+    if (cachePopulated) return cachedEncoders;
+
+    std::string output;
     std::string cmd = "\"" + ffmpegPath + "\" -hide_banner -encoders";
 
 #ifdef _WIN32
@@ -1049,7 +1063,8 @@ bool VideoWriter::probeEncoder(const std::string& encoder) const {
     std::string fullCmd = cmd + " 2>&1";
     FILE* pipe = popen_compat(fullCmd.c_str(), "r");
     if (!pipe) {
-        return false;
+        cachePopulated = true;
+        return cachedEncoders;
     }
     char buffer[512];
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
@@ -1059,12 +1074,39 @@ bool VideoWriter::probeEncoder(const std::string& encoder) const {
 #endif
 
     if (rc != 0) {
-        return false;
+        cachePopulated = true;
+        return cachedEncoders;
     }
 
-    // Check if encoder name appears in output
-    // FFmpeg encoder list format: " V..... h264_nvenc           NVIDIA NVENC H.264 encoder"
-    return output.find(encoder) != std::string::npos;
+    // Parse encoder list - format: " V..... h264_nvenc           NVIDIA NVENC H.264 encoder"
+    // Extract encoder names from lines starting with " V" (video encoders)
+    std::istringstream stream(output);
+    std::string line;
+    while (std::getline(stream, line)) {
+        // Skip header lines and non-video encoders
+        if (line.size() < 8 || line[0] != ' ' || line[1] != 'V') continue;
+
+        // Extract encoder name: starts after " V..... " (8 chars)
+        size_t nameStart = 8;
+        while (nameStart < line.size() && line[nameStart] == ' ') nameStart++;
+        if (nameStart >= line.size()) continue;
+
+        size_t nameEnd = line.find(' ', nameStart);
+        if (nameEnd == std::string::npos) nameEnd = line.size();
+
+        std::string encoderName = line.substr(nameStart, nameEnd - nameStart);
+        if (!encoderName.empty()) {
+            cachedEncoders.insert(encoderName);
+        }
+    }
+
+    cachePopulated = true;
+    return cachedEncoders;
+}
+
+bool VideoWriter::probeEncoder(const std::string& encoder) const {
+    auto encoders = getAvailableEncoders(getFFmpegPath());
+    return encoders.find(encoder) != encoders.end();
 }
 
 GPUEncoderInfo VideoWriter::detectBestEncoder(const std::string& speedPreset) const {

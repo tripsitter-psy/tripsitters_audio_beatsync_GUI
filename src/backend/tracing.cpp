@@ -17,7 +17,7 @@ namespace {
 using opentelemetry::nostd::shared_ptr;
 using opentelemetry::trace::TracerProvider;
 using sdktrace = opentelemetry::sdk::trace;
-static shared_ptr<TracerProvider> g_provider;
+static std::shared_ptr<opentelemetry::trace::TracerProvider> g_provider;
 }
 
 namespace BeatSync {
@@ -29,16 +29,16 @@ bool InitializeTracing(const std::string& serviceName) {
 
     try {
         // Create OTLP exporter (gRPC) with configured endpoint
-        exporters::otlp::OtlpGrpcExporterOptions options;
+        opentelemetry::exporters::otlp::OtlpGrpcExporterOptions options;
         options.endpoint = endpoint;
-        auto exporter = std::unique_ptr<sdktrace::SpanExporter>(new exporters::otlp::OtlpGrpcExporter(options));
-        auto processor = std::unique_ptr<sdktrace::SpanProcessor>(new sdktrace::SimpleSpanProcessor(std::move(exporter)));
-        
+        auto exporter = std::unique_ptr<opentelemetry::sdk::trace::SpanExporter>(new opentelemetry::exporters::otlp::OtlpGrpcExporter(options));
+        auto processor = std::unique_ptr<opentelemetry::sdk::trace::SpanProcessor>(new opentelemetry::sdk::trace::SimpleSpanProcessor(std::move(exporter)));
+
         // Create resource with service name
-        auto resource = sdk::resource::Resource::Create({{"service.name", serviceName}});
-        auto provider = std::make_shared<sdktrace::TracerProvider>(std::move(processor), resource);
-        
-        trace::Provider::SetTracerProvider(provider);
+        auto resource = opentelemetry::sdk::resource::Resource::Create({{"service.name", serviceName}});
+        auto provider = std::make_shared<opentelemetry::sdk::trace::TracerProvider>(std::move(processor), resource);
+
+        opentelemetry::trace::Provider::SetTracerProvider(provider);
         g_provider = provider;
         std::clog << "BeatSync: Tracing initialized (OTLP endpoint=" << endpoint << ", service=" << serviceName << ")\n";
         return true;
@@ -50,13 +50,16 @@ bool InitializeTracing(const std::string& serviceName) {
 
 void ShutdownTracing() {
     if (g_provider) {
-        // Shutdown the provider to flush any pending spans
-        bool ok = g_provider->Shutdown();
-        if (!ok) {
-            std::cerr << "BeatSync: Warning - tracing shutdown failed (Shutdown() returned false)\n";
+        // Attempt to cast to SDK provider for Shutdown
+        auto sdk_provider = std::dynamic_pointer_cast<opentelemetry::sdk::trace::TracerProvider>(g_provider);
+        if (sdk_provider) {
+            bool ok = sdk_provider->Shutdown();
+            if (!ok) {
+                std::cerr << "BeatSync: Warning - tracing shutdown failed (Shutdown() returned false)\n";
+            }
         }
         // Set to no-op provider instead of nullptr
-        trace::Provider::SetTracerProvider(std::make_shared<trace::NoopTracerProvider>());
+        opentelemetry::trace::Provider::SetTracerProvider(std::make_shared<opentelemetry::trace::NoopTracerProvider>());
         g_provider.reset();
         std::clog << "BeatSync: Tracing shutdown" << std::endl;
     }

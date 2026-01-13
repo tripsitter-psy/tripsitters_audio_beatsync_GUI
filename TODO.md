@@ -111,9 +111,13 @@ This project is a desktop application for beat-syncing videos to audio. It consi
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
 cmake --build build --config Release --target beatsync_backend_shared
 
+
 # Build TripSitter
-Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
-& "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+# Set the UE5 root directory as an environment variable (e.g., $Env:UE5_ROOT in PowerShell or %UE5_ROOT% in cmd), or adjust the path below as needed.
+# Example (PowerShell): $Env:UE5_ROOT="C:\UE5_Source\UnrealEngine"
+# Example (cmd): set UE5_ROOT=C:\UE5_Source\UnrealEngine
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "$Env:UE5_ROOT\Engine\Source\Programs\TripSitter\Private\" -Recurse -Force
+& "$Env:UE5_ROOT\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 
 # Run tests
 cmake --build build --config Release --target test_backend_api

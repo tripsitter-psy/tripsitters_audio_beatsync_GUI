@@ -21,7 +21,10 @@ This repository includes optional OpenTelemetry tracing support for the backend 
 
 4. In Unreal plugin, the `TripSitterUE` module calls `bs_initialize_tracing("tripsitter")` on startup when the backend DLL is present. You can also call `bs_initialize_tracing` manually.
 
-5. View traces in Jaeger or use AI Toolkit trace viewer (`ai-mlstudio.tracing.open`) and point it to `http://localhost:4318`.
+5. View traces in Jaeger or use the AI Toolkit trace viewer in VS Code:
+   - Open the Command Palette (Ctrl+Shift+P or Cmd+Shift+P) and run the command `AI Toolkit: Open Trace Viewer` (`ai-mlstudio.tracing.open`).
+   - Point the viewer to `http://localhost:4318`.
+   - For more details, see the [AI Toolkit extension documentation](https://marketplace.visualstudio.com/items?itemName=ms-ai-tools.ai-toolkit).
 
 ## Notes & recommendations
 
@@ -34,8 +37,8 @@ This repository includes optional OpenTelemetry tracing support for the backend 
 - `src/backend/tracing.h/.cpp` - tracing init/shutdown helpers
 - Uses the project tracing API in `src/tracing/Tracing.h` - prefer `TRACE_FUNC()`/`TRACE_SCOPE(name)` and `::BeatSync::tracing::Span`.
 - `src/backend/beatsync_capi.h/.cpp` - added `bs_initialize_tracing`, `bs_shutdown_tracing`, and lightweight span helpers for C API callers
-- `unreal-prototype/Source/TripSitterUE/Public/BeatsyncLoader.h` and `Private/BeatsyncLoader.cpp` - added wrappers for span helpers and tracing related exports
-- `unreal-prototype/Source/TripSitterUE/Private/TripSitterUEModule.*` - calls backend tracing init/shutdown on module startup/shutdown
+- `unreal-prototype/Plugins/TripSitterUE/TripSitterUE/Public/BeatsyncLoader.h` and `Private/BeatsyncLoader.cpp` - added wrappers for span helpers and tracing related exports
+- `unreal-prototype/Plugins/TripSitterUE/TripSitterUE/Private/TripSitterUEModule.*` - calls backend tracing init/shutdown on module startup/shutdown
 - `tools/tracing/docker-compose.yml` and helper scripts - start OTLP collector + Jaeger
 
 ## Future Work

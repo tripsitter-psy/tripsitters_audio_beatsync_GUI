@@ -122,71 +122,51 @@ public:
     /**
      * @brief Check if a model is loaded and ready
      */
-    bool isLoaded() const;
+    bool isLoaded() const { return m_impl != nullptr && isLoadedImpl(); }
 
-    /**
-     * @brief Get the loaded model type
-     */
-    OnnxModelType getModelType() const;
+    OnnxModelType getModelType() const {
+        if (!m_impl) return OnnxModelType();
+        return getModelTypeImpl();
+    }
 
-    /**
-     * @brief Get current configuration
-     */
-    const OnnxConfig& getConfig() const;
+    const OnnxConfig& getConfig() const {
+        static OnnxConfig defaultConfig;
+        if (!m_impl) return defaultConfig;
+        return getConfigImpl();
+    }
 
-    /**
-     * @brief Update configuration (some changes require model reload)
-     */
-    void setConfig(const OnnxConfig& config);
+    void setConfig(const OnnxConfig& config) {
+        if (m_impl) setConfigImpl(config);
+    }
 
-    /**
-     * @brief Analyze audio and return a BeatGrid
-     * @param samples Mono audio samples (float, normalized to [-1, 1])
-     * @param sampleRate Sample rate of the input audio
-     * @param progress Optional progress callback
-     * @return BeatGrid with detected beats and estimated BPM
-     */
-    BeatGrid analyze(const std::vector<float>& samples, int sampleRate,
-                     ProgressCallback progress = nullptr);
+    BeatGrid analyze(const std::vector<float>& samples, int sampleRate, ProgressCallback progress = nullptr) {
+        if (!m_impl) return BeatGrid();
+        return analyzeImpl(samples, sampleRate, progress);
+    }
 
-    /**
-     * @brief Analyze audio with full detailed results
-     * @param samples Mono audio samples
-     * @param sampleRate Sample rate of the input audio
-     * @param progress Optional progress callback
-     * @return Full analysis result including beats, downbeats, segments, and activations
-     */
-    OnnxAnalysisResult analyzeDetailed(const std::vector<float>& samples, int sampleRate,
-                                       ProgressCallback progress = nullptr);
+    OnnxAnalysisResult analyzeDetailed(const std::vector<float>& samples, int sampleRate, ProgressCallback progress = nullptr) {
+        if (!m_impl) return OnnxAnalysisResult();
+        return analyzeDetailedImpl(samples, sampleRate, progress);
+    }
 
-    /**
-     * @brief Process a single chunk for streaming/real-time use
-     * @param chunk Audio chunk (should be ~100ms for best results)
-     * @return Vector of beat times as absolute stream timestamps (seconds from stream start).
-     *         Timestamps are accumulated across calls, so each returned beat time represents
-     *         the position in the overall audio stream, not relative to the current chunk.
-     *
-     * Note: Call reset() before starting a new audio stream to zero the accumulated time.
-     */
-    std::vector<double> processChunk(const std::vector<float>& chunk);
+    std::vector<double> processChunk(const std::vector<float>& chunk) {
+        if (!m_impl) return {};
+        return processChunkImpl(chunk);
+    }
 
-    /**
-     * @brief Reset streaming state
-     *
-     * Clears the internal audio buffer and resets the accumulated stream time to zero.
-     * Call this before processing a new audio stream.
-     */
-    void reset();
+    void reset() {
+        if (m_impl) resetImpl();
+    }
 
-    /**
-     * @brief Get last error message
-     */
-    std::string getLastError() const;
+    std::string getLastError() const {
+        if (!m_impl) return "OnnxBeatDetector not loaded";
+        return getLastErrorImpl();
+    }
 
-    /**
-     * @brief Get model information string
-     */
-    std::string getModelInfo() const;
+    std::string getModelInfo() const {
+        if (!m_impl) return "";
+        return getModelInfoImpl();
+    }
 
     /**
      * @brief Check if ONNX Runtime is available
@@ -198,7 +178,19 @@ public:
      */
     static std::vector<std::string> getAvailableProviders();
 
+    // Private implementation methods
 private:
+    bool isLoadedImpl() const;
+    OnnxModelType getModelTypeImpl() const;
+    const OnnxConfig& getConfigImpl() const;
+    void setConfigImpl(const OnnxConfig& config);
+    BeatGrid analyzeImpl(const std::vector<float>& samples, int sampleRate, ProgressCallback progress);
+    OnnxAnalysisResult analyzeDetailedImpl(const std::vector<float>& samples, int sampleRate, ProgressCallback progress);
+    std::vector<double> processChunkImpl(const std::vector<float>& chunk);
+    void resetImpl();
+    std::string getLastErrorImpl() const;
+    std::string getModelInfoImpl() const;
+
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };

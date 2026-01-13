@@ -32,6 +32,9 @@ static FString GetBeatsyncDllPath()
         // Try engine-relative fallback
         FString Relative = FPaths::Combine(FPaths::ConvertRelativePathToFull(FPaths::EngineDir()), TEXT(".."));
         DllPath = FPaths::Combine(Relative, TEXT("unreal-prototype"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("lib"), Subdir, Filename);
+        if (!FPaths::FileExists(DllPath)) {
+            UE_LOG(LogTemp, Warning, TEXT("Beatsync DLL not found. Checked project-relative and engine-relative paths. Last attempted: %s (Relative base: %s). FPaths::FileExists returned false."), *DllPath, *Relative);
+        }
     }
 
     return DllPath;

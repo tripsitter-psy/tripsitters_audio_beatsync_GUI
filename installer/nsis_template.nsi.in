@@ -104,9 +104,29 @@ Section "Uninstall"
     ; Remove Desktop shortcut
     Delete "$DESKTOP\@CPACK_NSIS_DISPLAY_NAME@.lnk"
 
+
     ; Remove files (CPack populates this)
     @CPACK_NSIS_DELETE_FILES@
     @CPACK_NSIS_DELETE_DIRECTORIES@
+
+    ; Remove runtime/user data (logs, configs, etc.)
+    ; Remove logs/configs under $INSTDIR if present
+    IfFileExists "$INSTDIR\logs\*.*" 0 +2
+        Delete "$INSTDIR\logs\*.*"
+    IfDirExists "$INSTDIR\logs" 0 +2
+        RMDir /r "$INSTDIR\logs"
+    IfFileExists "$INSTDIR\config\*.*" 0 +2
+        Delete "$INSTDIR\config\*.*"
+    IfDirExists "$INSTDIR\config" 0 +2
+        RMDir /r "$INSTDIR\config"
+
+    ; Remove per-user data
+    IfDirExists "$APPDATA\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_NAME@" 0 +2
+        RMDir /r "$APPDATA\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_NAME@"
+
+    ; Remove per-machine data
+    IfDirExists "$PROGRAMDATA\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_NAME@" 0 +2
+        RMDir /r "$PROGRAMDATA\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_NAME@"
 
     ; Remove uninstaller
     Delete "$INSTDIR\Uninstall.exe"

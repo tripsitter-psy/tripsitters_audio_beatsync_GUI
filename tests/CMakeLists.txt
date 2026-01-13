@@ -78,6 +78,15 @@ if(BUILD_TESTS)
     if(USE_ONNX AND onnxruntime_FOUND)
         target_link_libraries(test_onnx_ai PRIVATE onnxruntime::onnxruntime)
     endif()
+
+    # Allow CI or user to override test paths
+    if(DEFINED TEST_AUDIO_FILE)
+        target_compile_definitions(test_onnx_ai PRIVATE TEST_AUDIO_FILE_OVERRIDE="${TEST_AUDIO_FILE}")
+    endif()
+    if(DEFINED TEST_MODEL_DIR)
+        target_compile_definitions(test_onnx_ai PRIVATE TEST_MODEL_DIR_OVERRIDE="${TEST_MODEL_DIR}")
+    endif()
+
     add_test(NAME onnx_ai COMMAND test_onnx_ai)
     set_tests_properties(onnx_ai PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endif()

@@ -55,7 +55,11 @@ def main():
         print("         For best results: pip install allin1")
         USE_ALLIN1 = False
 
-    os.makedirs(os.path.dirname(args.out) if os.path.dirname(args.out) else ".", exist_ok=True)
+
+    if not getattr(args, 'out', None):
+        raise ValueError("output path --out must be provided")
+    out_path = os.path.abspath(args.out)
+    os.makedirs(os.path.dirname(out_path) if os.path.dirname(out_path) else ".", exist_ok=True)
 
     if USE_ALLIN1:
         print("Loading All-In-One pretrained model...")
@@ -108,8 +112,10 @@ def main():
             )
 
         except Exception as e:
-            print(f"ERROR exporting allin1 model: {e}", file=sys.stderr)
-            print("Falling back to standalone architecture...")
+            import traceback
+            print(f"ERROR exporting allin1 model:", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            print("Falling back to standalone architecture...", file=sys.stderr)
             USE_ALLIN1 = False
 
     if not USE_ALLIN1:
@@ -288,11 +294,11 @@ def main():
 
                 return beat_act, downbeat_act, segment_act, segment_labels, tempo_logits
 
+        torch.manual_seed(42)
         model = AllInOneEncoder()
         model.eval()
 
         # Initialize weights
-        torch.manual_seed(42)
         for m in model.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')

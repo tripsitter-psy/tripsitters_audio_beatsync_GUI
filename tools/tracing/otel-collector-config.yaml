@@ -5,13 +5,15 @@ receivers:
       http: {}
 
 exporters:
-  logging:
-    logLevel: debug
+  debug:
+    verbosity: detailed
   otlp/jaeger:
-    endpoint: "http://jaeger:14268/api/traces"
+    endpoint: "jaeger:4317"
+    tls:
+      insecure: true
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
-      exporters: [logging, otlp/jaeger]
+      exporters: [debug, otlp/jaeger]

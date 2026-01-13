@@ -5,6 +5,8 @@
 #include "Framework/Application/SlateApplication.h"
 #include "StandaloneRenderer.h"
 #include "HAL/PlatformProcess.h"
+#include "HAL/PlatformTime.h"
+#include "Misc/App.h"
 #include "Misc/CoreDelegates.h"
 #include "Async/TaskGraphInterfaces.h"
 
@@ -48,14 +50,32 @@ int RunTripSitter(const TCHAR* CommandLine)
 	FSlateApplication::Get().AddWindow(MainWindow);
 
 	// Application main loop (matching SlateViewer pattern)
+	// Track delta time for consistent timing
+	double LastTime = FPlatformTime::Seconds();
+	constexpr double TargetFrameTime = 1.0 / 60.0; // Target 60 FPS for smooth UI
+
 	while (!IsEngineExitRequested())
 	{
 		BeginExitIfRequested();
 
+		double CurrentTime = FPlatformTime::Seconds();
+		float DeltaTime = static_cast<float>(CurrentTime - LastTime);
+		LastTime = CurrentTime;
+
+		// Update app time for any time-dependent features
+		FApp::SetDeltaTime(DeltaTime);
+
 		FTaskGraphInterface::Get().ProcessThreadUntilIdle(ENamedThreads::GameThread);
 		FSlateApplication::Get().PumpMessages();
 		FSlateApplication::Get().Tick();
-		FPlatformProcess::Sleep(0.01f);
+
+		// Sleep to maintain target frame rate and reduce CPU usage
+		double FrameTime = FPlatformTime::Seconds() - CurrentTime;
+		double SleepTime = TargetFrameTime - FrameTime;
+		if (SleepTime > 0.0)
+		{
+			FPlatformProcess::Sleep(static_cast<float>(SleepTime));
+		}
 
 		GFrameCounter++;
 	}

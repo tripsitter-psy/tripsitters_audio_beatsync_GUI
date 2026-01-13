@@ -15,8 +15,9 @@ graph = helper.make_graph(nodes=[const_node], name='BeatStubGraph', inputs=[], o
 # Create model (force opset 12 for ONNX Runtime compatibility)
 opset12 = helper.make_operatorsetid('', 12)
 model = helper.make_model(graph, opset_imports=[opset12])
-# Ensure the model IR version is compatible with the ONNX Runtime in vcpkg (set to 12)
-model.ir_version = 12
+
+# Ensure the model IR version is compatible with the ONNX Runtime in vcpkg (set to 10)
+model.ir_version = 10
 
 # Save model
 with open('tests/models/beat_stub.onnx', 'wb') as f:

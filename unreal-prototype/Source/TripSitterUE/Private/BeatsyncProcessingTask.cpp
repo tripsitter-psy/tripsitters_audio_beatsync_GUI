@@ -282,7 +282,10 @@ void FBeatsyncProcessingTask::DoWork()
     {
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
     }
-    IFileManager::Get().Delete(*TempEffectsPath, false, true, true);
+    if (!TempEffectsPath.IsEmpty())
+    {
+        IFileManager::Get().Delete(*TempEffectsPath, false, true, true);
+    }
 
     FBeatsyncLoader::DestroyVideoWriter(Writer);
 

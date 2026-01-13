@@ -35,12 +35,19 @@ if (-not (Test-Path $UEPath)) {
     } catch {}
     # Try common folders
     if (-not $detectedUEPath) {
-        $commonFolders = @(
-            'C:\Program Files\Epic Games\UE_5.7',
-            'C:\Program Files\Epic Games\UE_5.3',
-            'D:\Program Files\Epic Games\UE_5.7',
-            'D:\Program Files\Epic Games\UE_5.3'
+        $parentDirs = @(
+            'C:\Program Files\Epic Games',
+            'D:\Program Files\Epic Games'
         )
+        $commonFolders = @()
+        foreach ($parent in $parentDirs) {
+            if (Test-Path $parent) {
+                $found = Get-ChildItem -Path $parent -Directory -Filter 'UE_*' | Sort-Object Name -Descending | Select-Object -ExpandProperty FullName
+                if ($found) {
+                    $commonFolders += $found
+                }
+            }
+        }
         foreach ($folder in $commonFolders) {
             if (Test-Path $folder) {
                 $detectedUEPath = $folder

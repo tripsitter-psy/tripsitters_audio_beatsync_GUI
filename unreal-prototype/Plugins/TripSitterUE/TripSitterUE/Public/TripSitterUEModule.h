@@ -2,6 +2,7 @@
 
 #include "Modules/ModuleManager.h"
 #include "Framework/Commands/UICommandList.h"
+#include "Framework/MultiBox/MultiBoxBuilder.h"
 
 class FTripSitterUEModule : public IModuleInterface
 {

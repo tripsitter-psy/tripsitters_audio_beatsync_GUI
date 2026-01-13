@@ -28,7 +28,17 @@ if (Get-Command 'nvidia-smi' -ErrorAction SilentlyContinue) {
 
 if (Get-Command docker -ErrorAction SilentlyContinue) {
     Write-Host "Docker found — testing container GPU access..."
-    docker run --rm --gpus all $CudaImage nvidia-smi | Out-Host
+    # Timeout after 120s to avoid indefinite hangs
+    $job = Start-Job { docker run --rm --gpus all $using:CudaImage nvidia-smi }
+    $completed = Wait-Job $job -Timeout 120
+    if ($completed) {
+        Receive-Job $job | Out-Host
+        $LASTEXITCODE = $job.State -eq 'Completed' ? 0 : 1
+    } else {
+        Stop-Job $job
+        Write-Warning "Docker GPU test timed out after 120 seconds."
+    }
+    Remove-Job $job -Force
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "Docker GPU test failed with exit code $LASTEXITCODE. Docker may not be configured for GPUs (nvidia container toolkit)."
     }

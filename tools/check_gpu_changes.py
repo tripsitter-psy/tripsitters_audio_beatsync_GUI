@@ -50,8 +50,12 @@ for f in files:
                 if re.search(p, diff, re.IGNORECASE):
                     matched.append((f, f'content match: {p}'))
                     break
-        except Exception:
-            pass
+        except Exception as e:
+            logger = globals().get('logger', None)
+            if logger:
+                logger.exception(f"Error running git diff for {f}")
+            else:
+                print(f"[WARN] Exception running git diff for {f}: {e}")
 
 if not matched:
     print('No GPU/ONNX-related changes detected.')

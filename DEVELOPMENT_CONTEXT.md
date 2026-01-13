@@ -8,7 +8,7 @@
 - **Frontend**: Unreal Engine 5 standalone program (TripSitter) with Slate UI
 - **GPU Acceleration**: CUDA + TensorRT support for neural network inference
 
-**Location**: `C:\Users\samue\Desktop\BeatSyncEditor`
+**Location**: `<project-root>`
 
 ---
 

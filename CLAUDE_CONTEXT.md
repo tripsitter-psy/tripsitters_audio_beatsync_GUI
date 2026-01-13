@@ -11,11 +11,18 @@ A beat-synced video editor with:
 
 | Item | Path |
 | ---- | ---- |
-| Project Root | `C:\Users\samue\Desktop\BeatSyncEditor` |
-| Backend DLL | `build/Release/beatsync_backend_shared.dll` |
-| UE Source | `C:\UE5_Source\UnrealEngine` |
-| TripSitter EXE | `C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe` |
-| TensorRT | `C:\TensorRT-10.9.0.34` |
+| Project Root | `<PROJECT_ROOT>` |
+| Backend DLL | `<BACKEND_DLL_PATH>` |
+| UE Source | `<UE_SOURCE>` |
+| TripSitter EXE | `<TRIPSITTER_EXE>` |
+| TensorRT | `<TENSORRT_PATH>` |
+
+> **Note:** Set the following environment variables to configure your local paths:
+> - PROJECT_ROOT
+> - BACKEND_DLL_PATH
+> - UE_SOURCE
+> - TRIPSITTER_EXE
+> - TENSORRT_PATH
 
 ## Build Commands
 

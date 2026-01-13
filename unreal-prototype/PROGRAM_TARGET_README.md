@@ -26,7 +26,7 @@ This creates a symlink from `Engine` -> `C:\Program Files\Epic Games\UE_5.7\Engi
 
 ### 2. Build the Program Target
 
-```bash
+```powershell
 # Generate project files
 "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\DotNET\UnrealBuildTool.exe" -projectfiles -project="TripSitter.uproject" -game -engine
 

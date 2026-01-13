@@ -1,13 +1,19 @@
 version: '3.7'
 services:
   jaeger:
-    image: jaegertracing/all-in-one:1.41
+    image: jaegertracing/all-in-one:1.54.0
     ports:
       - "16686:16686" # Jaeger UI
       - "14268:14268"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:16686"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.82.0
+    image: otel/opentelemetry-collector-contrib:0.142.0
     command: ["--config", "/etc/otel-collector-config.yaml"]
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
@@ -15,4 +21,5 @@ services:
       - "4317:4317" # OTLP gRPC
       - "4318:4318" # OTLP HTTP
     depends_on:
-      - jaeger
+      jaeger:
+        condition: service_healthy

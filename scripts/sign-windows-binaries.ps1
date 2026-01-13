@@ -126,6 +126,7 @@ if (-not $password -or $password -eq '') {
 
 # Import certificate to store securely
 $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+$password = $null  # Clear plaintext reference
 
 $thumbprint = $null
 try {
