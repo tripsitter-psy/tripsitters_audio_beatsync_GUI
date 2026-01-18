@@ -1,17 +1,16 @@
-// TripSitter - Beat Sync Editor (Windows Entry Point)
+// TripSitter - Windows Entry Point
 
-#include "TripSitterApp.h"
+#include "CoreMinimal.h"
 #include "Windows/WindowsHWrapper.h"
+
+// Forward declaration
+int RunTripSitter(const TCHAR* CommandLine);
 
 /**
  * WinMain, called when the application is started
  */
 int WINAPI WinMain(_In_ HINSTANCE hInInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR, _In_ int nCmdShow)
 {
-	UNREFERENCED_PARAMETER(hInInstance);
-	UNREFERENCED_PARAMETER(hPrevInstance);
-	UNREFERENCED_PARAMETER(nCmdShow);
-	// LPSTR parameter is unused as we get command line via GetCommandLineW()
-
-	return RunTripSitter(GetCommandLineW());
+    // Run TripSitter with the command line
+    return RunTripSitter(GetCommandLineW());
 }

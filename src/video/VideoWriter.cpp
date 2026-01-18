@@ -46,7 +46,15 @@ static int runHiddenCommand(const std::string& cmdLine, std::string& output) {
         output = "Error: CreatePipe failed with error " + std::to_string(err);
         return -1;
     }
-    SetHandleInformation(hReadPipe, HANDLE_FLAG_INHERIT, 0);
+
+    if (!SetHandleInformation(hReadPipe, HANDLE_FLAG_INHERIT, 0)) {
+        DWORD err = GetLastError();
+        // Clean up handles to avoid leaks
+        if (hReadPipe) { CloseHandle(hReadPipe); hReadPipe = NULL; }
+        if (hWritePipe) { CloseHandle(hWritePipe); hWritePipe = NULL; }
+        output = "Error: SetHandleInformation failed with error " + std::to_string(err);
+        return -1;
+    }
 
     STARTUPINFOA si = {0};
     si.cb = sizeof(si);
@@ -1824,6 +1832,12 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
 
     std::string sendcmdPath;  // Placeholder for cleanup compatibility
 
+    // Track if we need to output a label for the zoom filter to consume
+    // When prior filters exist and zoom is enabled, we need proper filter graph syntax
+    // because FFmpeg filter graphs can only consume an input stream once
+    bool zoomWillBeEnabled = m_effects.enableBeatZoom && !filteredBeats.empty();
+    std::string priorFilterOutput;  // Will be set if prior filters output a label for zoom
+
     // Beat flash effect using chained eq filters
     if (m_effects.enableBeatFlash && !filteredBeats.empty()) {
         double flashDuration = 0.08;
@@ -1853,6 +1867,22 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
                 vf = eqFilter.str();
             }
         }
+
+        // If zoom is also enabled, we need to output a label from the prior filters
+        // so zoom can consume it (can't use [0:v] twice in a filter graph)
+        if (zoomWillBeEnabled) {
+            // Wrap existing filters with input/output labels for filter graph syntax
+            // [0:v]colorbalance...,eq...[prior_out]
+            vf = "[0:v]" + vf + "[prior_out]";
+            priorFilterOutput = "[prior_out]";
+        }
+    }
+
+    // If there are prior filters (filterChain/colorbalance) but no flash, and zoom is enabled,
+    // we still need to add labels so zoom can properly chain
+    if (priorFilterOutput.empty() && !vf.empty() && zoomWillBeEnabled) {
+        vf = "[0:v]" + vf + "[prior_out]";
+        priorFilterOutput = "[prior_out]";
     }
 
     // Beat zoom effect using chained scale filters
@@ -1868,10 +1898,18 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         int cropX = (scaledW - m_outputWidth) / 2;
         int cropY = (scaledH - m_outputHeight) / 2;
 
+        std::string prevOutput;  // Track previous chunk's output label
+        // Set prevOutput to priorFilterOutput if any prior filters exist
+        prevOutput = priorFilterOutput;
+
+        // Calculate total number of chunks upfront so we know which is the last
+        size_t totalChunks = (filteredBeats.size() + BEATS_PER_FILTER - 1) / BEATS_PER_FILTER;
+
         // Split beats into chunks
         for (size_t chunk = 0; chunk * BEATS_PER_FILTER < filteredBeats.size(); ++chunk) {
             size_t startIdx = chunk * BEATS_PER_FILTER;
             size_t endIdx = std::min(startIdx + BEATS_PER_FILTER, filteredBeats.size());
+            bool isLastChunk = (chunk == totalChunks - 1);
 
             // Build enable expression for this chunk
             std::ostringstream enableExpr;
@@ -1882,21 +1920,37 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
                 enableExpr << "between(t," << bt << "," << (bt + zoomDuration) << ")";
             }
 
+            // Determine input: first chunk uses prevOutput (set to priorFilterOutput if any prior filters), otherwise [0:v]
+            std::string inputPad;
+            if (chunk == 0) {
+                inputPad = !prevOutput.empty() ? prevOutput : "[0:v]";
+            } else {
+                inputPad = prevOutput;
+            }
+            // Only add output label if not the last chunk - last chunk outputs directly
+            // so FFmpeg uses it as the default video output
+            std::string outputLabel = isLastChunk ? "" : "[zoom_out" + std::to_string(chunk) + "]";
+
             // Use scale+crop combination with enable expression
             // When enabled, scale up and crop to center; when disabled, pass through
             std::ostringstream zoomFilter;
-            zoomFilter << "split[zoom_main" << chunk << "][zoom_in" << chunk << "];"
+            zoomFilter << inputPad << "split[zoom_main" << chunk << "][zoom_in" << chunk << "];"
                       << "[zoom_in" << chunk << "]scale=" << scaledW << ":" << scaledH
                       << ",crop=" << m_outputWidth << ":" << m_outputHeight << ":" << cropX << ":" << cropY
                       << "[zoom_scaled" << chunk << "];"
-                      << "[zoom_main" << chunk << "][zoom_scaled" << chunk << "]overlay=enable='" << enableExpr.str() << "'";
+                      << "[zoom_main" << chunk << "][zoom_scaled" << chunk << "]overlay=enable='" << enableExpr.str() << "'"
+                      << outputLabel;
 
-            if (!vf.empty()) {
-                // Use semicolon separator for filter graph segments with labeled pads (split/overlay)
+            if (chunk == 0 && !vf.empty()) {
+                // First zoom chunk but have prior filters - connect them
                 vf = vf + ";" + zoomFilter.str();
-            } else {
+            } else if (chunk == 0) {
                 vf = zoomFilter.str();
+            } else {
+                vf = vf + ";" + zoomFilter.str();
             }
+
+            prevOutput = outputLabel;  // Save for next iteration (empty for last chunk)
         }
     }
 

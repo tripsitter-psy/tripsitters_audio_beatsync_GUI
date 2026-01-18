@@ -1,42 +1,69 @@
-// TripSitter - Alternative Program Entry Point (FTripSitterApplication-based)
-// Note: Main entry point is TripSitterApp.cpp with RunTripSitter()
-
+// TripSitter - Program Entry Point
 #include "CoreMinimal.h"
 #include "RequiredProgramMainCPPInclude.h"
 #include "TripSitterApplication.h"
+#include "Framework/Application/SlateApplication.h"
+#include "StandaloneRenderer.h"
+#include "Stats/StatsSystem.h"
+#include "Private/STripSitterMainWidget.h"
 
-IMPLEMENT_APPLICATION(TripSitterAlt, "TripSitter");
+IMPLEMENT_APPLICATION(TripSitter, "TripSitter");
 
-INT32_MAIN_INT32_ARGC_TCHAR_ARGV()
+int RunTripSitter(const TCHAR* CommandLine)
 {
-    // Initialize the engine with TCHAR arguments (platform-correct)
-    int32 PreInitResult = GEngineLoop.PreInit(ArgC, ArgV);
-    if (PreInitResult != 0)
+    FTaskTagScope TaskTagScope(ETaskTag::EGameThread);
+
+    // Initialize the engine
+    GEngineLoop.PreInit(CommandLine);
+
+    // Make sure all UObject classes are registered and default properties have been initialized
+    ProcessNewlyLoadedUObjects();
+
+    // Tell the module manager it may now process newly-loaded UObjects when new C++ modules are loaded
+    FModuleManager::Get().StartProcessingNewlyLoadedObjects();
+
+    // Initialize Slate as standalone application
+    FSlateApplication::InitializeAsStandaloneApplication(GetStandardStandaloneRenderer());
+    FSlateApplication::InitHighDPI(true);
+
+    // Create main window
+    TSharedRef<SWindow> MainWindow = SNew(SWindow)
+        .Title(FText::FromString(TEXT("TripSitter Beat Sync Editor")))
+        .ClientSize(FVector2D(1400, 900))
+        .SupportsMaximize(true)
+        .SupportsMinimize(true)
+        .IsInitiallyMaximized(false);
+
+    // Create the main widget content
+    MainWindow->SetContent(
+        SNew(STripSitterMainWidget)
+    );
+
+    // Add window and show
+    FSlateApplication::Get().AddWindow(MainWindow);
+
+    // Main application loop
+    while (!IsEngineExitRequested())
     {
-        UE_LOG(LogTemp, Error, TEXT("Engine PreInit failed with error code: %d"), PreInitResult);
-        return PreInitResult;
+        BeginExitIfRequested();
+
+        FTaskGraphInterface::Get().ProcessThreadUntilIdle(ENamedThreads::GameThread);
+        UE::Stats::FStats::AdvanceFrame(false);
+        FTSTicker::GetCoreTicker().Tick(FApp::GetDeltaTime());
+        FSlateApplication::Get().PumpMessages();
+        FSlateApplication::Get().Tick();
+        FPlatformProcess::Sleep(0.01f);
+
+        GFrameCounter++;
     }
 
-    // Create and run the application
-    FTripSitterApplication App;
+    // Cleanup
+    FCoreDelegates::OnExit.Broadcast();
+    FSlateApplication::Shutdown();
+    FModuleManager::Get().UnloadModulesAtShutdown();
 
-    if (!App.Initialize())
-    {
-        // Proper teardown on initialization failure
-        GEngineLoop.AppPreExit();
-        GEngineLoop.AppExit();
-        GEngineLoop.Exit();
-        return 1;
-    }
-
-    int32 ExitCode = App.Run();
-
-    App.Shutdown();
-
-    // Shutdown the engine properly
     GEngineLoop.AppPreExit();
     GEngineLoop.AppExit();
-    GEngineLoop.Exit();
 
-    return ExitCode;
+    return 0;
 }
