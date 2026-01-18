@@ -2,6 +2,7 @@
 #include "BeatsyncLoader.h"
 #include "BeatsyncProcessingTask.h"
 #include "SWaveformViewer.h"
+#include "SEffectTimeline.h"
 #include "Fonts/CompositeFont.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SButton.h"
@@ -245,6 +246,13 @@ void STripSitterMainWidget::Construct(const FArguments& InArgs)
 	TransitionOptions.Add(MakeShared<FString>(TEXT("Wipe")));
 	TransitionOptions.Add(MakeShared<FString>(TEXT("Zoom")));
 
+	// Stem effect mapping options
+	StemEffectOptions.Add(MakeShared<FString>(TEXT("None")));
+	StemEffectOptions.Add(MakeShared<FString>(TEXT("Flash")));
+	StemEffectOptions.Add(MakeShared<FString>(TEXT("Zoom")));
+	StemEffectOptions.Add(MakeShared<FString>(TEXT("Vignette")));
+	StemEffectOptions.Add(MakeShared<FString>(TEXT("Color Grade")));
+
 	// Initialize beatsync backend
 	if (!FBeatsyncLoader::Initialize())
 	{
@@ -398,6 +406,21 @@ void STripSitterMainWidget::Construct(const FArguments& InArgs)
 					[
 						SNew(SSeparator)
 						.ColorAndOpacity(NeonPurple)
+					]
+
+					// Stems Section (for effect mapping to individual drums/instruments)
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0, 15)
+					[
+						CreateStemsSection()
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						SNew(SSeparator)
+						.ColorAndOpacity(NeonCyan)
 					]
 
 					// Transitions Section
@@ -620,7 +643,15 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateWaveformSection()
 				SNew(SButton)
 				.Text(FText::FromString(TEXT("-")))
 				.OnClicked_Lambda([this]() {
-					if (WaveformViewer.IsValid()) WaveformViewer->ZoomOut();
+					if (WaveformViewer.IsValid())
+					{
+						WaveformViewer->ZoomOut();
+						// Sync effect timeline
+						if (EffectTimeline.IsValid())
+						{
+							EffectTimeline->SetTimeParameters(WaveformViewer->GetDuration(), WaveformViewer->GetZoomLevel(), WaveformViewer->GetScrollPosition());
+						}
+					}
 					return FReply::Handled();
 				})
 				.ToolTipText(FText::FromString(TEXT("Zoom Out")))
@@ -632,7 +663,15 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateWaveformSection()
 				SNew(SButton)
 				.Text(FText::FromString(TEXT("Fit")))
 				.OnClicked_Lambda([this]() {
-					if (WaveformViewer.IsValid()) WaveformViewer->ZoomToFit();
+					if (WaveformViewer.IsValid())
+					{
+						WaveformViewer->ZoomToFit();
+						// Sync effect timeline
+						if (EffectTimeline.IsValid())
+						{
+							EffectTimeline->SetTimeParameters(WaveformViewer->GetDuration(), WaveformViewer->GetZoomLevel(), WaveformViewer->GetScrollPosition());
+						}
+					}
 					return FReply::Handled();
 				})
 				.ToolTipText(FText::FromString(TEXT("Zoom to Fit")))
@@ -644,7 +683,15 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateWaveformSection()
 				SNew(SButton)
 				.Text(FText::FromString(TEXT("+")))
 				.OnClicked_Lambda([this]() {
-					if (WaveformViewer.IsValid()) WaveformViewer->ZoomIn();
+					if (WaveformViewer.IsValid())
+					{
+						WaveformViewer->ZoomIn();
+						// Sync effect timeline
+						if (EffectTimeline.IsValid())
+						{
+							EffectTimeline->SetTimeParameters(WaveformViewer->GetDuration(), WaveformViewer->GetZoomLevel(), WaveformViewer->GetScrollPosition());
+						}
+					}
 					return FReply::Handled();
 				})
 				.ToolTipText(FText::FromString(TEXT("Zoom In")))
@@ -663,6 +710,72 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateWaveformSection()
 				.BeatMarkerColor(FLinearColor(1.0f, 1.0f, 0.4f)) // Yellow
 				.SelectionColor(FLinearColor(0.0f, 0.2f, 0.3f, 0.5f))
 				.HandleColor(HotPink)
+				.OnSelectionChanged_Lambda([this](double Start, double End) {
+					// Sync selection to effect timeline
+					SelectionStart = Start;
+					SelectionEnd = End;
+					if (EffectTimeline.IsValid())
+					{
+						EffectTimeline->SetSelectionRange(Start, End);
+					}
+				})
+				.OnBeatTimesChanged_Lambda([this](const TArray<double>& BeatTimes) {
+					// Sync beat times back to main widget (don't recalculate BPM - user is manually editing)
+					AnalyzedBeatTimes = BeatTimes;
+				})
+			]
+		]
+
+		// Effect Timeline (separate from waveform)
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(0, 4)
+		[
+			SNew(SBox)
+			.HeightOverride(50)
+			[
+				SAssignNew(EffectTimeline, SEffectTimeline)
+				.OnAddRegion_Lambda([this](const FString& EffectName, double Time) {
+					if (WaveformViewer.IsValid())
+					{
+						// Get color based on effect type
+						FLinearColor Color;
+						if (EffectName == TEXT("Vignette"))
+							Color = FLinearColor(0.3f, 0.0f, 0.5f, 0.6f);
+						else if (EffectName == TEXT("Beat Flash"))
+							Color = FLinearColor(1.0f, 0.8f, 0.0f, 0.6f);
+						else if (EffectName == TEXT("Beat Zoom"))
+							Color = FLinearColor(0.0f, 0.8f, 1.0f, 0.6f);
+						else if (EffectName == TEXT("Color Grade"))
+							Color = FLinearColor(0.0f, 1.0f, 0.5f, 0.6f);
+						else if (EffectName == TEXT("Transition"))
+							Color = FLinearColor(1.0f, 0.0f, 0.5f, 0.6f);
+						else
+							Color = FLinearColor(0.5f, 0.5f, 0.5f, 0.6f);
+
+						double Duration = WaveformViewer->GetDuration();
+						double EndTime = FMath::Min(Time + 5.0, Duration);
+						WaveformViewer->AddEffectRegion(EffectName, Time, EndTime, Color);
+						// Update effect timeline reference
+						EffectTimeline->SetEffectRegions(&WaveformViewer->GetEffectRegions());
+					}
+				})
+				.OnRemoveRegion_Lambda([this](int32 Index) {
+					if (WaveformViewer.IsValid())
+					{
+						WaveformViewer->RemoveEffectRegion(Index);
+						EffectTimeline->SetEffectRegions(&WaveformViewer->GetEffectRegions());
+					}
+				})
+				.OnRegionChanged_Lambda([this](int32 Index, double Start, double End) {
+					if (WaveformViewer.IsValid())
+					{
+						WaveformViewer->SetEffectRegionRange(Index, Start, End);
+					}
+				})
+				.OnRegionSelected_Lambda([this](int32 Index) {
+					// Could highlight in UI or show effect properties panel
+				})
 			]
 		]
 
@@ -724,7 +837,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateWaveformSection()
 		.Padding(0, 2)
 		[
 			SNew(STextBlock)
-			.Text(FText::FromString(TEXT("Scroll to zoom | Middle-click drag to pan | Right-click to add effect regions")))
+			.Text(FText::FromString(TEXT("Scroll: zoom | Middle-drag: pan | Shift+Click: add beat | Ctrl+Click: remove beat")))
 			.Font(FCoreStyle::GetDefaultFontStyle("Italic", 9))
 			.ColorAndOpacity(FLinearColor(0.5f, 0.5f, 0.6f))
 		];
@@ -761,6 +874,14 @@ void STripSitterMainWidget::LoadWaveformFromAudio(const FString& FilePath)
 	{
 		WaveformViewer->SetWaveformBands(BassPeaks, MidPeaks, HighPeaks, Duration);
 		UE_LOG(LogTemp, Log, TEXT("TripSitter: Loaded frequency-band waveform with %d peaks, duration %.2fs"), BassPeaks.Num(), Duration);
+
+		// Sync effect timeline with waveform
+		if (EffectTimeline.IsValid())
+		{
+			EffectTimeline->SetTimeParameters(Duration, WaveformViewer->GetZoomLevel(), WaveformViewer->GetScrollPosition());
+			EffectTimeline->SetSelectionRange(WaveformViewer->GetSelectionStart(), WaveformViewer->GetSelectionEnd());
+			EffectTimeline->SetEffectRegions(&WaveformViewer->GetEffectRegions());
+		}
 	}
 	else
 	{
@@ -773,6 +894,14 @@ void STripSitterMainWidget::LoadWaveformFromAudio(const FString& FilePath)
 		{
 			WaveformViewer->SetWaveformData(Peaks, Duration);
 			UE_LOG(LogTemp, Log, TEXT("TripSitter: Loaded single-color waveform with %d peaks, duration %.2fs"), Peaks.Num(), Duration);
+
+			// Sync effect timeline with waveform
+			if (EffectTimeline.IsValid())
+			{
+				EffectTimeline->SetTimeParameters(Duration, WaveformViewer->GetZoomLevel(), WaveformViewer->GetScrollPosition());
+				EffectTimeline->SetSelectionRange(WaveformViewer->GetSelectionStart(), WaveformViewer->GetSelectionEnd());
+				EffectTimeline->SetEffectRegions(&WaveformViewer->GetEffectRegions());
+			}
 		}
 		else
 		{
@@ -784,7 +913,7 @@ void STripSitterMainWidget::LoadWaveformFromAudio(const FString& FilePath)
 TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 {
 	return SNew(SVerticalBox)
-		// Header row with title, Analyze button, and BPM display
+		// Header row with title and buttons
 		+ SVerticalBox::Slot()
 		.AutoHeight()
 		.Padding(0, 5)
@@ -809,7 +938,21 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 				.IsEnabled_Lambda([this]() { return !AudioPath.IsEmpty() && !bIsProcessing; })
 				[
 					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("ANALYZE AUDIO")))
+					.Text(FText::FromString(TEXT("ANALYZE")))
+					.Font(ButtonFontSmall)
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(10, 0, 0, 0)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SButton)
+				.OnClicked(this, &STripSitterMainWidget::OnApplyBeatMarkersClicked)
+				.IsEnabled_Lambda([this]() { return bAudioAnalyzed && AnalyzedBeatTimes.Num() > 0 && !bIsProcessing; })
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("APPLY BEATS")))
 					.Font(ButtonFontSmall)
 				]
 			]
@@ -827,13 +970,88 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 				.Text_Lambda([this]() {
 					if (bAudioAnalyzed && DetectedBPM > 0)
 					{
-						return FText::FromString(FString::Printf(TEXT("BPM: %.1f  |  Beats: %d"), DetectedBPM, AnalyzedBeatTimes.Num()));
+						return FText::FromString(FString::Printf(TEXT("Beats: %d"), AnalyzedBeatTimes.Num()));
 					}
 					return FText::FromString(TEXT(""));
 				})
-				// Use default font since Corpta doesn't have number glyphs
-				.Font(FCoreStyle::GetDefaultFontStyle("Bold", 16))
+				.Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
 				.ColorAndOpacity(NeonGreen)
+			]
+		]
+
+		// BPM adjustment row
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(0, 5)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
+				.Text(FText::FromString(TEXT("BPM:")))
+				.Font(FCoreStyle::GetDefaultFontStyle("Regular", 14))
+				.ColorAndOpacity(TextColor)
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(10, 0, 0, 0)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SBox)
+				.WidthOverride(80)
+				[
+					SAssignNew(BPMSpinBox, SSpinBox<double>)
+					.MinValue(20.0)
+					.MaxValue(300.0)
+					.MinSliderValue(60.0)
+					.MaxSliderValue(200.0)
+					.Delta(0.1)
+					.Value(120.0)
+					.OnValueChanged_Lambda([this](double NewValue) {
+						if (bAudioAnalyzed && NewValue >= 20.0 && NewValue <= 300.0 && FMath::Abs(NewValue - DetectedBPM) > 0.01)
+						{
+							OnBPMValueChanged(NewValue);
+						}
+					})
+					.IsEnabled_Lambda([this]() { return bAudioAnalyzed && DetectedBPM > 0; })
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(10, 0, 0, 0)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SButton)
+				.OnClicked(this, &STripSitterMainWidget::OnBPMHalfClicked)
+				.IsEnabled_Lambda([this]() { return bAudioAnalyzed && DetectedBPM > 40.0; })
+				.ToolTipText(FText::FromString(TEXT("Halve BPM (detected BPM might be double)")))
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("/2")))
+					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 12))
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(5, 0, 0, 0)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SButton)
+				.OnClicked(this, &STripSitterMainWidget::OnBPMDoubleClicked)
+				.IsEnabled_Lambda([this]() { return bAudioAnalyzed && DetectedBPM > 0 && DetectedBPM < 150.0; })
+				.ToolTipText(FText::FromString(TEXT("Double BPM (detected BPM might be half)")))
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("x2")))
+					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 12))
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.FillWidth(1.0f)
+			[
+				SNew(SSpacer)
 			]
 		]
 
@@ -1346,6 +1564,139 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateControlSection()
 		];
 }
 
+TSharedRef<SWidget> STripSitterMainWidget::CreateStemsSection()
+{
+	// Stem names and colors for display
+	const TCHAR* StemNames[] = { TEXT("Kick"), TEXT("Snare"), TEXT("Hi-Hat"), TEXT("Synth") };
+	const FLinearColor StemColors[] = {
+		FLinearColor(0.2f, 0.2f, 0.2f, 1.0f),  // Kick - Dark/Black
+		FLinearColor(0.2f, 0.4f, 1.0f, 1.0f),  // Snare - Blue
+		FLinearColor(1.0f, 0.9f, 0.2f, 1.0f),  // Hi-Hat - Yellow
+		FLinearColor(1.0f, 0.2f, 0.2f, 1.0f)   // Synth - Red
+	};
+
+	TSharedRef<SVerticalBox> StemsBox = SNew(SVerticalBox);
+
+	// Section header
+	StemsBox->AddSlot()
+		.AutoHeight()
+		.Padding(0, 0, 0, 10)
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(TEXT("STEM TRACKS")))
+			.Font(HeadingFont)
+			.ColorAndOpacity(NeonCyan)
+		];
+
+	// Add a row for each stem
+	for (int32 i = 0; i < 4; ++i)
+	{
+		const int32 StemIndex = i;
+
+		StemsBox->AddSlot()
+			.AutoHeight()
+			.Padding(0, 2)
+			[
+				SNew(SHorizontalBox)
+				// Color indicator
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(0, 0, 8, 0)
+				[
+					SNew(SBox)
+					.WidthOverride(16)
+					.HeightOverride(16)
+					[
+						SNew(SBorder)
+						.BorderBackgroundColor(StemColors[i])
+					]
+				]
+				// Stem name
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(0, 0, 10, 0)
+				[
+					SNew(SBox)
+					.WidthOverride(60)
+					[
+						SNew(STextBlock)
+						.Text(FText::FromString(StemNames[i]))
+						.Font(BodyFont)
+						.ColorAndOpacity(TextColor)
+					]
+				]
+				// Browse button
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(0, 0, 5, 0)
+				[
+					SNew(SButton)
+					.OnClicked_Lambda([this, StemIndex]() { return OnBrowseStemClicked(StemIndex); })
+					[
+						SNew(STextBlock)
+						.Text(FText::FromString(TEXT("Browse")))
+						.Font(ButtonFontSmall)
+					]
+				]
+				// File path display
+				+ SHorizontalBox::Slot()
+				.FillWidth(1.0f)
+				.VAlign(VAlign_Center)
+				.Padding(0, 0, 10, 0)
+				[
+					SNew(STextBlock)
+					.Text_Lambda([this, StemIndex]() {
+						if (StemConfigs[StemIndex].FilePath.IsEmpty())
+							return FText::FromString(TEXT("No file selected"));
+						return FText::FromString(FPaths::GetCleanFilename(StemConfigs[StemIndex].FilePath));
+					})
+					.Font(BodyFont)
+					.ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.7f)))
+				]
+				// Effect dropdown
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				[
+					SNew(SBox)
+					.WidthOverride(100)
+					[
+						SNew(SComboBox<TSharedPtr<FString>>)
+						.OptionsSource(&StemEffectOptions)
+						.OnSelectionChanged_Lambda([this, StemIndex](TSharedPtr<FString> Selection, ESelectInfo::Type) {
+							if (Selection.IsValid())
+							{
+								int32 EffectIndex = StemEffectOptions.Find(Selection);
+								StemConfigs[StemIndex].Effect = static_cast<EStemEffect>(EffectIndex);
+							}
+						})
+						.OnGenerateWidget_Lambda([this](TSharedPtr<FString> Item) {
+							return SNew(STextBlock)
+								.Text(FText::FromString(*Item))
+								.Font(BodyFont);
+						})
+						.InitiallySelectedItem(StemEffectOptions[0])
+						[
+							SNew(STextBlock)
+							.Text_Lambda([this, StemIndex]() {
+								int32 EffectIdx = static_cast<int32>(StemConfigs[StemIndex].Effect);
+								if (StemEffectOptions.IsValidIndex(EffectIdx))
+									return FText::FromString(*StemEffectOptions[EffectIdx]);
+								return FText::FromString(TEXT("None"));
+							})
+							.Font(BodyFont)
+						]
+					]
+				]
+			];
+	}
+
+	return StemsBox;
+}
+
 FReply STripSitterMainWidget::OnBrowseAudioClicked()
 {
 #if WITH_EDITOR
@@ -1571,6 +1922,127 @@ FReply STripSitterMainWidget::OnBrowseOutputClicked()
 	}
 #endif
 	return FReply::Handled();
+}
+
+FReply STripSitterMainWidget::OnBrowseStemClicked(int32 StemIndex)
+{
+	if (StemIndex < 0 || StemIndex >= 4) return FReply::Handled();
+
+	const TCHAR* StemNames[] = { TEXT("Kick"), TEXT("Snare"), TEXT("Hi-Hat"), TEXT("Synth") };
+
+#if WITH_EDITOR
+	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+	if (DesktopPlatform)
+	{
+		TArray<FString> OutFiles;
+		if (DesktopPlatform->OpenFileDialog(
+			FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr),
+			FString::Printf(TEXT("Select %s Stem File"), StemNames[StemIndex]),
+			TEXT(""),
+			TEXT(""),
+			TEXT("Audio Files (*.mp3;*.wav;*.flac)|*.mp3;*.wav;*.flac"),
+			EFileDialogFlags::None,
+			OutFiles))
+		{
+			if (OutFiles.Num() > 0)
+			{
+				StemConfigs[StemIndex].FilePath = OutFiles[0];
+				StemConfigs[StemIndex].bEnabled = true;
+				AnalyzeStemFile(StemIndex);
+			}
+		}
+	}
+#else
+	// Windows native file dialog for standalone builds
+	OPENFILENAMEW ofn;
+	WCHAR szFile[MAX_PATH] = { 0 };
+	ZeroMemory(&ofn, sizeof(ofn));
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = NULL;
+	ofn.lpstrFile = szFile;
+	ofn.nMaxFile = MAX_PATH;
+	ofn.lpstrFilter = L"Audio Files\0*.mp3;*.wav;*.flac\0All Files\0*.*\0";
+	ofn.nFilterIndex = 1;
+	ofn.lpstrTitle = L"Select Stem File";
+	ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+	if (GetOpenFileNameW(&ofn))
+	{
+		StemConfigs[StemIndex].FilePath = FString(szFile);
+		StemConfigs[StemIndex].bEnabled = true;
+		AnalyzeStemFile(StemIndex);
+	}
+#endif
+	return FReply::Handled();
+}
+
+void STripSitterMainWidget::AnalyzeStemFile(int32 StemIndex)
+{
+	if (StemIndex < 0 || StemIndex >= 4) return;
+	if (StemConfigs[StemIndex].FilePath.IsEmpty()) return;
+
+	const TCHAR* StemNames[] = { TEXT("Kick"), TEXT("Snare"), TEXT("Hi-Hat"), TEXT("Synth") };
+
+	StatusText = FString::Printf(TEXT("Analyzing %s stem..."), StemNames[StemIndex]);
+	if (StatusTextBlock.IsValid()) StatusTextBlock->SetText(FText::FromString(StatusText));
+
+	// Use the backend to analyze the stem file for beats
+	if (!FBeatsyncLoader::IsInitialized())
+	{
+		StatusText = TEXT("ERROR: Backend not loaded");
+		if (StatusTextBlock.IsValid()) StatusTextBlock->SetText(FText::FromString(StatusText));
+		return;
+	}
+
+	void* Analyzer = FBeatsyncLoader::CreateAnalyzer();
+	if (!Analyzer)
+	{
+		StatusText = TEXT("ERROR: Failed to create analyzer");
+		if (StatusTextBlock.IsValid()) StatusTextBlock->SetText(FText::FromString(StatusText));
+		return;
+	}
+
+	FBeatGrid BeatGrid;
+	bool bSuccess = FBeatsyncLoader::AnalyzeAudio(Analyzer, StemConfigs[StemIndex].FilePath, BeatGrid);
+	FBeatsyncLoader::DestroyAnalyzer(Analyzer);
+
+	if (bSuccess && BeatGrid.Beats.Num() > 0)
+	{
+		StemConfigs[StemIndex].BeatTimes = BeatGrid.Beats;
+		UpdateStemBeatsInWaveform();
+
+		StatusText = FString::Printf(TEXT("%s: Found %d beats at %.1f BPM"),
+			StemNames[StemIndex], BeatGrid.Beats.Num(), BeatGrid.BPM);
+		UE_LOG(LogTemp, Log, TEXT("TripSitter: %s stem analysis - %d beats at %.1f BPM"),
+			StemNames[StemIndex], BeatGrid.Beats.Num(), BeatGrid.BPM);
+	}
+	else
+	{
+		StatusText = FString::Printf(TEXT("Failed to analyze %s stem"), StemNames[StemIndex]);
+		UE_LOG(LogTemp, Warning, TEXT("TripSitter: Failed to analyze %s stem"), StemNames[StemIndex]);
+	}
+
+	if (StatusTextBlock.IsValid()) StatusTextBlock->SetText(FText::FromString(StatusText));
+}
+
+void STripSitterMainWidget::UpdateStemBeatsInWaveform()
+{
+	if (!WaveformViewer.IsValid()) return;
+
+	// Update waveform viewer with stem beat data
+	for (int32 i = 0; i < 4; ++i)
+	{
+		EStemType StemType = static_cast<EStemType>(i);
+		if (StemConfigs[i].bEnabled && StemConfigs[i].BeatTimes.Num() > 0)
+		{
+			WaveformViewer->SetStemBeatTimes(StemType, StemConfigs[i].BeatTimes);
+			WaveformViewer->SetStemEnabled(StemType, true);
+		}
+		else
+		{
+			WaveformViewer->ClearStemBeats(StemType);
+			WaveformViewer->SetStemEnabled(StemType, false);
+		}
+	}
 }
 
 FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
@@ -1853,13 +2325,17 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 		DetectedBPM = BeatGrid.BPM;
 		AnalyzedBeatTimes = BeatGrid.Beats;
 
-		// Update waveform viewer with beat markers
-		if (WaveformViewer.IsValid())
+		// Store first beat time for BPM recalculation anchor
+		OriginalFirstBeatTime = BeatGrid.Beats.Num() > 0 ? BeatGrid.Beats[0] : 0.0;
+
+		// Don't apply beats automatically - user clicks "Apply Beats" button
+		// This allows them to adjust BPM first if needed
+		if (BPMSpinBox.IsValid())
 		{
-			WaveformViewer->SetBeatTimes(BeatGrid.Beats);
+			BPMSpinBox->SetValue(DetectedBPM);
 		}
 
-		StatusText = FString::Printf(TEXT("Analysis complete (%s): %.1f BPM, %d beats detected"), *ModeStr, BeatGrid.BPM, BeatGrid.Beats.Num());
+		StatusText = FString::Printf(TEXT("Analysis complete (%s): %.1f BPM, %d beats - Click 'Apply Beats' to show grid"), *ModeStr, BeatGrid.BPM, BeatGrid.Beats.Num());
 		UE_LOG(LogTemp, Log, TEXT("TripSitter: Audio analysis complete - BPM: %.1f, Beats: %d"), BeatGrid.BPM, BeatGrid.Beats.Num());
 	}
 	else
@@ -1867,6 +2343,8 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 		bAudioAnalyzed = false;
 		DetectedBPM = 0.0;
 		AnalyzedBeatTimes.Empty();
+		// SSpinBox will show default value (120) when DetectedBPM is 0
+
 		StatusText = TEXT("ERROR: Beat detection failed");
 		UE_LOG(LogTemp, Warning, TEXT("TripSitter: Audio analysis failed for %s"), *AudioPath);
 	}
@@ -1877,6 +2355,103 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 	}
 
 	return FReply::Handled();
+}
+
+FReply STripSitterMainWidget::OnApplyBeatMarkersClicked()
+{
+	if (!bAudioAnalyzed || AnalyzedBeatTimes.Num() == 0)
+	{
+		StatusText = TEXT("No beats to apply - analyze audio first");
+		if (StatusTextBlock.IsValid()) StatusTextBlock->SetText(FText::FromString(StatusText));
+		return FReply::Handled();
+	}
+
+	// Apply beat times to waveform viewer
+	if (WaveformViewer.IsValid())
+	{
+		WaveformViewer->SetBeatTimes(AnalyzedBeatTimes);
+	}
+
+	StatusText = FString::Printf(TEXT("Applied %d beat markers at %.1f BPM"), AnalyzedBeatTimes.Num(), DetectedBPM);
+	if (StatusTextBlock.IsValid()) StatusTextBlock->SetText(FText::FromString(StatusText));
+	UE_LOG(LogTemp, Log, TEXT("TripSitter: Applied %d beat markers to waveform"), AnalyzedBeatTimes.Num());
+
+	return FReply::Handled();
+}
+
+FReply STripSitterMainWidget::OnBPMHalfClicked()
+{
+	if (DetectedBPM > 40.0)
+	{
+		OnBPMValueChanged(DetectedBPM / 2.0);
+	}
+	return FReply::Handled();
+}
+
+FReply STripSitterMainWidget::OnBPMDoubleClicked()
+{
+	if (DetectedBPM > 0 && DetectedBPM < 150.0)
+	{
+		OnBPMValueChanged(DetectedBPM * 2.0);
+	}
+	return FReply::Handled();
+}
+
+void STripSitterMainWidget::OnBPMValueChanged(double NewBPM)
+{
+	if (NewBPM < 20.0 || NewBPM > 300.0 || !bAudioAnalyzed)
+	{
+		return;
+	}
+
+	RecalculateBeatsFromBPM(NewBPM);
+
+	// Update the spinbox display (for programmatic changes like /2 and *2 buttons)
+	if (BPMSpinBox.IsValid())
+	{
+		BPMSpinBox->SetValue(DetectedBPM);
+	}
+
+	// Update status
+	StatusText = FString::Printf(TEXT("BPM adjusted to %.1f - %d beats"), DetectedBPM, AnalyzedBeatTimes.Num());
+	if (StatusTextBlock.IsValid()) StatusTextBlock->SetText(FText::FromString(StatusText));
+	UE_LOG(LogTemp, Log, TEXT("TripSitter: BPM adjusted to %.1f, recalculated %d beats"), DetectedBPM, AnalyzedBeatTimes.Num());
+}
+
+void STripSitterMainWidget::RecalculateBeatsFromBPM(double NewBPM)
+{
+	if (NewBPM <= 0 || AudioDuration <= 0)
+	{
+		return;
+	}
+
+	double OldBPM = DetectedBPM;
+	DetectedBPM = NewBPM;
+
+	// Calculate beat interval
+	double BeatInterval = 60.0 / NewBPM;
+
+	// Recalculate beat times starting from the original first beat
+	AnalyzedBeatTimes.Empty();
+
+	// Generate beats from first beat time to end of audio
+	double CurrentTime = OriginalFirstBeatTime;
+	while (CurrentTime < AudioDuration)
+	{
+		AnalyzedBeatTimes.Add(CurrentTime);
+		CurrentTime += BeatInterval;
+	}
+
+	// If waveform already has beats displayed, update them
+	if (WaveformViewer.IsValid() && WaveformViewer->GetDuration() > 0)
+	{
+		// Check if beats were already applied (waveform has beat data)
+		// We auto-update if they were viewing beats
+		WaveformViewer->SetBeatTimes(AnalyzedBeatTimes);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("TripSitter: Recalculated beats - Old BPM: %.1f, New BPM: %.1f, Beats: %d"),
+		OldBPM, NewBPM, AnalyzedBeatTimes.Num());
 }
 
 FReply STripSitterMainWidget::OnStartSyncClicked()
@@ -1980,15 +2555,15 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	if (WaveformViewer.IsValid())
 	{
 		const TArray<FEffectRegion>& EffectRegions = WaveformViewer->GetEffectRegions();
-		double SelectionStart = Params.AudioStart;
+		double LocalSelectionStart = Params.AudioStart;
 
 		if (EffectRegions.Num() > 0)
 		{
 			// Use the first effect region for now
 			// TODO: Support multiple effect regions with different effect types
 			// Convert absolute times to be relative to selection start
-			Params.EffectsConfig.EffectStartTime = FMath::Max(0.0, EffectRegions[0].StartTime - SelectionStart);
-			Params.EffectsConfig.EffectEndTime = EffectRegions[0].EndTime - SelectionStart;
+			Params.EffectsConfig.EffectStartTime = FMath::Max(0.0, EffectRegions[0].StartTime - LocalSelectionStart);
+			Params.EffectsConfig.EffectEndTime = EffectRegions[0].EndTime - LocalSelectionStart;
 			UE_LOG(LogTemp, Log, TEXT("TripSitter: Using effect region %.2f - %.2f (relative to selection)"),
 				Params.EffectsConfig.EffectStartTime, Params.EffectsConfig.EffectEndTime);
 		}
@@ -1997,6 +2572,42 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 			// No effect regions - apply to whole video
 			Params.EffectsConfig.EffectStartTime = 0.0;
 			Params.EffectsConfig.EffectEndTime = -1.0;
+		}
+	}
+
+	// Pass the user-edited beat times from the waveform viewer
+	// These are the beat markers the user has added/removed/moved in the UI
+	if (WaveformViewer.IsValid() && WaveformViewer->GetBeatTimes().Num() > 0)
+	{
+		Params.PreAnalyzedBeatTimes = WaveformViewer->GetBeatTimes();
+		Params.PreAnalyzedBPM = DetectedBPM;
+		UE_LOG(LogTemp, Log, TEXT("TripSitter: Using %d user-edited beat markers at %.1f BPM"),
+			Params.PreAnalyzedBeatTimes.Num(), Params.PreAnalyzedBPM);
+	}
+	else if (AnalyzedBeatTimes.Num() > 0)
+	{
+		// Fallback to analyzed beat times if waveform viewer doesn't have them
+		Params.PreAnalyzedBeatTimes = AnalyzedBeatTimes;
+		Params.PreAnalyzedBPM = DetectedBPM;
+		UE_LOG(LogTemp, Log, TEXT("TripSitter: Using %d analyzed beat markers at %.1f BPM"),
+			Params.PreAnalyzedBeatTimes.Num(), Params.PreAnalyzedBPM);
+	}
+
+	// Pass stem effect configurations (Kick, Snare, Hi-Hat, Synth)
+	for (int32 i = 0; i < 4; ++i)
+	{
+		Params.StemConfigs[i].BeatTimes = StemConfigs[i].BeatTimes;
+		Params.StemConfigs[i].Effect = static_cast<EStemEffectParam>(StemConfigs[i].Effect);
+		Params.StemConfigs[i].bEnabled = StemConfigs[i].bEnabled && StemConfigs[i].BeatTimes.Num() > 0;
+
+		if (Params.StemConfigs[i].bEnabled)
+		{
+			const TCHAR* StemNames[] = { TEXT("Kick"), TEXT("Snare"), TEXT("Hi-Hat"), TEXT("Synth") };
+			const TCHAR* EffectNames[] = { TEXT("None"), TEXT("Flash"), TEXT("Zoom"), TEXT("Vignette"), TEXT("ColorGrade") };
+			int32 EffectIdx = static_cast<int32>(Params.StemConfigs[i].Effect);
+			UE_LOG(LogTemp, Log, TEXT("TripSitter: Stem %s (%d beats) -> %s effect"),
+				StemNames[i], Params.StemConfigs[i].BeatTimes.Num(),
+				EffectIdx < 5 ? EffectNames[EffectIdx] : TEXT("Unknown"));
 		}
 	}
 

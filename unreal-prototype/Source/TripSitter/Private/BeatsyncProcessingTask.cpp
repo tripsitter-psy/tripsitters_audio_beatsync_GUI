@@ -63,9 +63,7 @@ void FBeatsyncProcessingTask::DoWork()
         return;
     }
 
-    // Step 1: Analyze audio
-    ReportProgress(0.05f, TEXT("Analyzing audio..."));
-
+    // Step 1: Get beat times (either from pre-analyzed UI markers or by analyzing audio)
     if (bCancelRequested)
     {
         Result.bSuccess = false;
@@ -80,12 +78,33 @@ void FBeatsyncProcessingTask::DoWork()
     FBeatGrid BeatGrid;
     bool bSuccess = false;
 
-    // Use analysis mode from UI params
-    bool bUseAI = (Params.AnalysisMode == EAnalysisModeParam::AIBeat || Params.AnalysisMode == EAnalysisModeParam::AIStems);
-    bool bUseStemSeparation = (Params.AnalysisMode == EAnalysisModeParam::AIStems);
+    // Check if we have pre-analyzed beat times from the UI (user-edited markers)
+    if (Params.PreAnalyzedBeatTimes.Num() > 0)
+    {
+        // Use the user-edited beat markers instead of re-analyzing
+        ReportProgress(0.05f, TEXT("Using edited beat markers..."));
+        BeatGrid.Beats = Params.PreAnalyzedBeatTimes;
+        BeatGrid.BPM = Params.PreAnalyzedBPM > 0 ? Params.PreAnalyzedBPM : 120.0;
+        BeatGrid.Duration = Params.AudioEnd > 0 ? (Params.AudioEnd - Params.AudioStart) : 0.0;
+        bSuccess = true;
+        UE_LOG(LogTemp, Log, TEXT("TripSitter: Using %d user-edited beat markers at %.1f BPM"),
+            BeatGrid.Beats.Num(), BeatGrid.BPM);
+    }
+    else
+    {
+        // No pre-analyzed beats - analyze the audio
+        ReportProgress(0.05f, TEXT("Analyzing audio..."));
+    }
 
-    // Try AI analyzer if requested and available
-    if (bUseAI && FBeatsyncLoader::IsAIAvailable())
+    // Only analyze audio if we don't have pre-analyzed beats from the UI
+    if (!bSuccess)
+    {
+        // Use analysis mode from UI params
+        bool bUseAI = (Params.AnalysisMode == EAnalysisModeParam::AIBeat || Params.AnalysisMode == EAnalysisModeParam::AIStems);
+        bool bUseStemSeparation = (Params.AnalysisMode == EAnalysisModeParam::AIStems);
+
+        // Try AI analyzer if requested and available
+        if (bUseAI && FBeatsyncLoader::IsAIAvailable())
     {
         FString ModeStr = bUseStemSeparation ? TEXT("AI + Stems") : TEXT("AI Beat");
         ReportProgress(0.05f, FString::Printf(TEXT("Analyzing audio with %s (GPU)..."), *ModeStr));
@@ -176,29 +195,30 @@ void FBeatsyncProcessingTask::DoWork()
         {
             UE_LOG(LogTemp, Warning, TEXT("TripSitter: Beat model not found at %s, falling back to spectral flux"), *ModelPath);
         }
-    }
-
-    // Fall back to CPU-based spectral flux if AI not available, not requested, or failed
-    if (!bSuccess)
-    {
-        ReportProgress(0.05f, TEXT("Analyzing audio (CPU)..."));
-        UE_LOG(LogTemp, Log, TEXT("TripSitter: Using spectral flux analyzer (CPU)"));
-
-        void* Analyzer = FBeatsyncLoader::CreateAnalyzer();
-        if (!Analyzer)
-        {
-            Result.bSuccess = false;
-            Result.ErrorMessage = TEXT("Failed to create analyzer");
-            auto LocalOnComplete = OnComplete;
-            AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
-                LocalOnComplete.ExecuteIfBound(Result);
-            });
-            return;
         }
 
-        bSuccess = FBeatsyncLoader::AnalyzeAudio(Analyzer, Params.AudioPath, BeatGrid);
-        FBeatsyncLoader::DestroyAnalyzer(Analyzer);
-    }
+        // Fall back to CPU-based spectral flux if AI not available, not requested, or failed
+        if (!bSuccess)
+        {
+            ReportProgress(0.05f, TEXT("Analyzing audio (CPU)..."));
+            UE_LOG(LogTemp, Log, TEXT("TripSitter: Using spectral flux analyzer (CPU)"));
+
+            void* Analyzer = FBeatsyncLoader::CreateAnalyzer();
+            if (!Analyzer)
+            {
+                Result.bSuccess = false;
+                Result.ErrorMessage = TEXT("Failed to create analyzer");
+                auto LocalOnComplete = OnComplete;
+                AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+                    LocalOnComplete.ExecuteIfBound(Result);
+                });
+                return;
+            }
+
+            bSuccess = FBeatsyncLoader::AnalyzeAudio(Analyzer, Params.AudioPath, BeatGrid);
+            FBeatsyncLoader::DestroyAnalyzer(Analyzer);
+        }
+    } // End of if (!bSuccess) - skip audio analysis if we have pre-analyzed beats
 
     if (!bSuccess || BeatGrid.Beats.Num() == 0)
     {

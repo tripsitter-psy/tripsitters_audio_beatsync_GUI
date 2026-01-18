@@ -14,6 +14,24 @@ enum class EAnalysisModeParam
     AIStems = 2    // AI + stem separation (best accuracy)
 };
 
+// Stem effect type enum (matches STripSitterMainWidget::EStemEffect)
+enum class EStemEffectParam : uint8
+{
+    None = 0,
+    Flash = 1,
+    Zoom = 2,
+    Vignette = 3,
+    ColorGrade = 4
+};
+
+// Stem effect configuration - maps a stem's beat times to an effect
+struct FStemEffectConfig
+{
+    TArray<double> BeatTimes;           // Beat times detected from this stem
+    EStemEffectParam Effect = EStemEffectParam::None;  // Which effect to apply at these beats
+    bool bEnabled = false;              // Whether this stem track is active
+};
+
 struct FBeatsyncProcessingParams
 {
     FString AudioPath;
@@ -31,6 +49,14 @@ struct FBeatsyncProcessingParams
     FEffectsConfig EffectsConfig;
     // Analysis mode: determines which beat detection method to use
     EAnalysisModeParam AnalysisMode = EAnalysisModeParam::AIBeat;
+    // Pre-analyzed beat times from the UI (user-edited markers)
+    // If non-empty, these are used instead of re-analyzing the audio
+    TArray<double> PreAnalyzedBeatTimes;
+    double PreAnalyzedBPM = 0.0;
+
+    // Stem effect configurations (Kick, Snare, Hi-Hat, Synth)
+    // Each stem can have its own beat times and mapped effect
+    FStemEffectConfig StemConfigs[4];
 };
 
 struct FBeatsyncProcessingResult

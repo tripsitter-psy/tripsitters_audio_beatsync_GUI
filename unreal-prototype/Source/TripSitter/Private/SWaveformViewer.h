@@ -6,6 +6,27 @@
 
 DECLARE_DELEGATE_TwoParams(FOnSelectionChanged, double /*Start*/, double /*End*/);
 DECLARE_DELEGATE_ThreeParams(FOnEffectRegionChanged, int32 /*RegionIndex*/, double /*Start*/, double /*End*/);
+DECLARE_DELEGATE_OneParam(FOnBeatTimesChanged, const TArray<double>& /*BeatTimes*/);
+
+// Stem types for beat-synced effects
+enum class EStemType : uint8
+{
+	Kick = 0,    // Kick drum - Black
+	Snare = 1,   // Snare drum - Blue
+	HiHat = 2,   // Open hi-hat - Yellow
+	Synth = 3,   // Synth hit - Red
+	Count = 4
+};
+
+// Stem beat data
+struct FStemBeats
+{
+	EStemType Type = EStemType::Kick;
+	FString Name;
+	FLinearColor Color;
+	TArray<double> BeatTimes;
+	bool bEnabled = true;
+};
 
 // Effect region for applying effects to specific time ranges
 struct FEffectRegion
@@ -40,15 +61,40 @@ public:
 		SLATE_ARGUMENT(FLinearColor, EffectRegionColor)
 		SLATE_EVENT(FOnSelectionChanged, OnSelectionChanged)
 		SLATE_EVENT(FOnEffectRegionChanged, OnEffectRegionChanged)
+		SLATE_EVENT(FOnBeatTimesChanged, OnBeatTimesChanged)
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
 
-	// Set waveform data (peak values 0.0-1.0)
+	// Set waveform data (peak values 0.0-1.0) - single color mode
 	void SetWaveformData(const TArray<float>& InPeaks, double InDuration);
+
+	// Set frequency-band waveform data (Rekordbox/Traktor style)
+	// Bass: Red (20-200 Hz), Mids: Cyan (200-2000 Hz), Highs: White (2000+ Hz)
+	void SetWaveformBands(const TArray<float>& InBassPeaks, const TArray<float>& InMidPeaks,
+	                      const TArray<float>& InHighPeaks, double InDuration);
+
+	// Check if we have frequency band data
+	bool HasBandData() const { return BassPeaks.Num() > 0; }
 
 	// Set beat times in seconds
 	void SetBeatTimes(const TArray<double>& InBeatTimes);
+
+	// Manual beat editing (main beat track)
+	void AddBeatAtTime(double Time);
+	void RemoveBeatAtTime(double Time, double Tolerance = 0.05);
+	void RemoveBeatAtIndex(int32 Index);
+	const TArray<double>& GetBeatTimes() const { return BeatTimes; }
+
+	// Stem beat management
+	void SetStemBeatTimes(EStemType Stem, const TArray<double>& InBeatTimes);
+	void ClearStemBeats(EStemType Stem);
+	void ClearAllStemBeats();
+	const TArray<double>& GetStemBeatTimes(EStemType Stem) const;
+	void SetStemEnabled(EStemType Stem, bool bEnabled);
+	bool IsStemEnabled(EStemType Stem) const;
+	static FString GetStemName(EStemType Stem);
+	static FLinearColor GetStemColor(EStemType Stem);
 
 	// Selection range (in seconds)
 	void SetSelectionRange(double InStart, double InEnd);
@@ -93,9 +139,15 @@ public:
 	virtual FCursorReply OnCursorQuery(const FGeometry& MyGeometry, const FPointerEvent& CursorEvent) const override;
 
 protected:
-	// Data
+	// Data - single color waveform
 	TArray<float> WaveformPeaks;
-	TArray<double> BeatTimes;
+	// Data - frequency band waveform (Rekordbox/Traktor style)
+	TArray<float> BassPeaks;   // Low frequencies (20-200 Hz) - Red
+	TArray<float> MidPeaks;    // Mid frequencies (200-2000 Hz) - Cyan/Blue
+	TArray<float> HighPeaks;   // High frequencies (2000+ Hz) - White
+
+	TArray<double> BeatTimes;        // Main beat track (yellow)
+	FStemBeats StemBeats[4];         // Stem beat tracks (Kick, Snare, HiHat, Synth)
 	double Duration = 0.0;
 	double SelectionStart = 0.0;
 	double SelectionEnd = -1.0; // -1 means full track
@@ -116,11 +168,12 @@ protected:
 	int32 SelectedEffectRegion = -1;
 
 	// Selection handle interaction
-	enum class EDragMode { None, DragStart, DragEnd, Pan, DragEffectStart, DragEffectEnd };
+	enum class EDragMode { None, DragStart, DragEnd, Pan, DragEffectStart, DragEffectEnd, DragBeat };
 	EDragMode CurrentDragMode = EDragMode::None;
 	double DragStartTime = 0.0;
 	FVector2D LastMousePos = FVector2D::ZeroVector;
 	int32 DragEffectIndex = -1;
+	int32 DragBeatIndex = -1;
 
 	// Handle hit testing
 	static constexpr float HandleWidth = 10.0f;
@@ -129,6 +182,7 @@ protected:
 	// Selection changed delegate
 	FOnSelectionChanged OnSelectionChanged;
 	FOnEffectRegionChanged OnEffectRegionChanged;
+	FOnBeatTimesChanged OnBeatTimesChanged;
 
 	// Context menu position
 	double ContextMenuTime = 0.0;
@@ -144,12 +198,18 @@ protected:
 	bool IsOverStartHandle(float X, float Width) const;
 	bool IsOverEndHandle(float X, float Width) const;
 
+	// Find beat marker near a pixel position (returns index or -1)
+	int32 FindBeatNearPixel(float X, float Width, float TolerancePixels = 10.0f) const;
+
 	// Check if mouse is over an effect region handle
 	int32 GetEffectRegionAtPosition(float X, float Width) const;
 	bool IsOverEffectStartHandle(int32 RegionIndex, float X, float Width) const;
 	bool IsOverEffectEndHandle(int32 RegionIndex, float X, float Width) const;
 
-	// Show context menu for adding effects
+	// Show context menu for beat markers (right-click on waveform)
+	void ShowBeatContextMenu(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent);
+
+	// Show context menu for adding effects (used by effect timeline)
 	void ShowEffectContextMenu(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent);
 
 	// Clamp all effect regions to stay within current selection bounds

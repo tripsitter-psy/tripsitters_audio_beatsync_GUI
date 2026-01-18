@@ -485,6 +485,12 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
                                    double startTime,
                                    double duration,
                                    const std::string& outputVideo) {
+    // Clamp very small start times to zero - values like 2e-05 (0.00002s) are essentially zero
+    // and can cause FFmpeg errors with scientific notation even with std::fixed in some cases
+    if (startTime < 0.001) {
+        startTime = 0.0;
+    }
+
     std::cout << "Extracting segment: " << inputVideo << " @ " << std::fixed << std::setprecision(6) << startTime << "s for " << duration << "s -> " << outputVideo << std::defaultfloat << "\n";
 
     // Use FFmpeg command-line for reliable segment extraction
@@ -628,6 +634,12 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
                                      double startTime,
                                      double duration,
                                      const std::string& outputVideo) {
+    // Clamp very small start times to zero - values like 2e-05 (0.00002s) are essentially zero
+    // and can cause FFmpeg errors with scientific notation even with std::fixed in some cases
+    if (startTime < 0.001) {
+        startTime = 0.0;
+    }
+
     // Use FFmpeg with re-encoding for frame-accurate extraction
     // This is slower but more precise than stream copy
     //
