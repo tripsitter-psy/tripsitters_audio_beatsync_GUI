@@ -2314,12 +2314,16 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 			return FReply::Handled();
 		}
 
-		// If user has set a BPM (via spinbox or previous analysis), use it as a hint
-		// This will generate evenly-spaced beats at the specified BPM
-		if (DetectedBPM > 0.0)
+		// If user has set a BPM in the spinbox, use it as a hint
+		// This reads the CURRENT spinbox value (what user typed), not DetectedBPM
+		if (BPMSpinBox.IsValid())
 		{
-			FBeatsyncLoader::SetBPMHint(Analyzer, DetectedBPM);
-			UE_LOG(LogTemp, Log, TEXT("TripSitter: Using BPM hint of %.1f"), DetectedBPM);
+			double SpinBoxBPM = BPMSpinBox->GetValue();
+			if (SpinBoxBPM >= 20.0 && SpinBoxBPM <= 300.0)
+			{
+				FBeatsyncLoader::SetBPMHint(Analyzer, SpinBoxBPM);
+				UE_LOG(LogTemp, Log, TEXT("TripSitter: Using BPM hint of %.1f from spinbox"), SpinBoxBPM);
+			}
 		}
 
 		bSuccess = FBeatsyncLoader::AnalyzeAudio(Analyzer, AudioPath, BeatGrid);
