@@ -222,7 +222,9 @@ void STripSitterMainWidget::Construct(const FArguments& InArgs)
 
 	AnalysisModeOptions.Add(MakeShared<FString>(TEXT("Energy (Fast)")));
 	AnalysisModeOptions.Add(MakeShared<FString>(TEXT("AI Beat Detection")));
-	AnalysisModeOptions.Add(MakeShared<FString>(TEXT("AI + Stem Separation (Best)")));
+	AnalysisModeOptions.Add(MakeShared<FString>(TEXT("AI + Stem Separation")));
+	AnalysisModeOptions.Add(MakeShared<FString>(TEXT("AudioFlux")));
+	AnalysisModeOptions.Add(MakeShared<FString>(TEXT("Stems + Flux (Best)")));
 
 	ResolutionOptions.Add(MakeShared<FString>(TEXT("1920x1080 (Full HD)")));
 	ResolutionOptions.Add(MakeShared<FString>(TEXT("1280x720 (HD)")));
@@ -244,7 +246,10 @@ void STripSitterMainWidget::Construct(const FArguments& InArgs)
 	TransitionOptions.Add(MakeShared<FString>(TEXT("Zoom")));
 
 	// Initialize beatsync backend
-	FBeatsyncLoader::Initialize();
+	if (!FBeatsyncLoader::Initialize())
+	{
+		UE_LOG(LogTemp, Error, TEXT("TripSitter: Failed to initialize Beatsync backend. Audio analysis and video processing will not be available."));
+	}
 
 	// Build UI with wallpaper background
 	ChildSlot
@@ -740,34 +745,96 @@ void STripSitterMainWidget::LoadWaveformFromAudio(const FString& FilePath)
 		return;
 	}
 
-	TArray<float> Peaks;
+	// RAII guard to ensure analyzer is always destroyed
+	ON_SCOPE_EXIT
+	{
+		FBeatsyncLoader::DestroyAnalyzer(Analyzer);
+	};
+
+	// Try frequency-band waveform first (Rekordbox/Traktor style)
+	TArray<float> BassPeaks, MidPeaks, HighPeaks;
 	double Duration = 0.0;
 
-	bool bSuccess = FBeatsyncLoader::GetWaveform(Analyzer, FilePath, Peaks, Duration);
-	FBeatsyncLoader::DestroyAnalyzer(Analyzer);
+	bool bSuccess = FBeatsyncLoader::GetWaveformBands(Analyzer, FilePath, BassPeaks, MidPeaks, HighPeaks, Duration);
 
 	if (bSuccess && WaveformViewer.IsValid())
 	{
-		WaveformViewer->SetWaveformData(Peaks, Duration);
-		UE_LOG(LogTemp, Log, TEXT("TripSitter: Loaded waveform with %d peaks, duration %.2fs"), Peaks.Num(), Duration);
+		WaveformViewer->SetWaveformBands(BassPeaks, MidPeaks, HighPeaks, Duration);
+		UE_LOG(LogTemp, Log, TEXT("TripSitter: Loaded frequency-band waveform with %d peaks, duration %.2fs"), BassPeaks.Num(), Duration);
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("TripSitter: Failed to load waveform from %s"), *FilePath);
+		// Fallback to single-color waveform
+		UE_LOG(LogTemp, Log, TEXT("TripSitter: Band waveform unavailable, falling back to single-color"));
+		TArray<float> Peaks;
+		bSuccess = FBeatsyncLoader::GetWaveform(Analyzer, FilePath, Peaks, Duration);
+
+		if (bSuccess && WaveformViewer.IsValid())
+		{
+			WaveformViewer->SetWaveformData(Peaks, Duration);
+			UE_LOG(LogTemp, Log, TEXT("TripSitter: Loaded single-color waveform with %d peaks, duration %.2fs"), Peaks.Num(), Duration);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("TripSitter: Failed to load waveform from %s"), *FilePath);
+		}
 	}
 }
 
 TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 {
 	return SNew(SVerticalBox)
+		// Header row with title, Analyze button, and BPM display
 		+ SVerticalBox::Slot()
 		.AutoHeight()
 		.Padding(0, 5)
 		[
-			SNew(STextBlock)
-			.Text(FText::FromString(TEXT("ANALYSIS OPTIONS")))
-			.Font(HeadingFont)
-			.ColorAndOpacity(NeonPurple)
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
+				.Text(FText::FromString(TEXT("ANALYSIS OPTIONS")))
+				.Font(HeadingFont)
+				.ColorAndOpacity(NeonPurple)
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(20, 0, 0, 0)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SButton)
+				.OnClicked(this, &STripSitterMainWidget::OnAnalyzeAudioClicked)
+				.IsEnabled_Lambda([this]() { return !AudioPath.IsEmpty() && !bIsProcessing; })
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("ANALYZE AUDIO")))
+					.Font(ButtonFontSmall)
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.FillWidth(1.0f)
+			[
+				SNew(SSpacer)
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(10, 0)
+			[
+				SAssignNew(BPMTextBlock, STextBlock)
+				.Text_Lambda([this]() {
+					if (bAudioAnalyzed && DetectedBPM > 0)
+					{
+						return FText::FromString(FString::Printf(TEXT("BPM: %.1f  |  Beats: %d"), DetectedBPM, AnalyzedBeatTimes.Num()));
+					}
+					return FText::FromString(TEXT(""));
+				})
+				// Use default font since Corpta doesn't have number glyphs
+				.Font(FCoreStyle::GetDefaultFontStyle("Bold", 16))
+				.ColorAndOpacity(NeonGreen)
+			]
 		]
 
 		+ SVerticalBox::Slot()
@@ -1314,7 +1381,8 @@ FReply STripSitterMainWidget::OnBrowseAudioClicked()
 	ofn.nMaxFile = MAX_PATH;
 	ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 	if (GetOpenFileNameW(&ofn)) {
-		FString Selected = UTF8_TO_TCHAR(TCHAR_TO_UTF8(szFile));
+		// Construct FString directly from wide-char buffer to avoid lossy round-trip UTF-8 conversions
+		FString Selected = FString(szFile);
 		AudioPath = Selected;
 		AudioPathBox->SetText(FText::FromString(AudioPath));
 		LoadWaveformFromAudio(AudioPath);
@@ -1505,12 +1573,318 @@ FReply STripSitterMainWidget::OnBrowseOutputClicked()
 	return FReply::Handled();
 }
 
+FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
+{
+	if (AudioPath.IsEmpty())
+	{
+		StatusText = TEXT("Please select an audio file first");
+		if (StatusTextBlock.IsValid())
+		{
+			StatusTextBlock->SetText(FText::FromString(StatusText));
+		}
+		return FReply::Handled();
+	}
+
+	if (!FBeatsyncLoader::IsInitialized())
+	{
+		StatusText = TEXT("ERROR: Backend not loaded");
+		if (StatusTextBlock.IsValid())
+		{
+			StatusTextBlock->SetText(FText::FromString(StatusText));
+		}
+		return FReply::Handled();
+	}
+
+	// Check analysis mode and availability
+	bool bUseAI = (AnalysisMode == EAnalysisMode::AIBeat || AnalysisMode == EAnalysisMode::AIStems);
+	bool bUseAudioFlux = (AnalysisMode == EAnalysisMode::AudioFlux);
+	bool bUseStemsFlux = (AnalysisMode == EAnalysisMode::StemsFlux);
+
+	if (bUseStemsFlux)
+	{
+		// Check if both AudioFlux and AI (for stems) are available
+		if (!FBeatsyncLoader::IsAudioFluxAvailable())
+		{
+			StatusText = TEXT("AudioFlux not available - falling back to Energy mode");
+			bUseStemsFlux = false;
+			UE_LOG(LogTemp, Warning, TEXT("TripSitter: Stems+Flux requested but AudioFlux not available"));
+		}
+		else if (!FBeatsyncLoader::IsAIAvailable())
+		{
+			// Fall back to plain AudioFlux if stems not available
+			StatusText = TEXT("Stem separation not available - using AudioFlux only");
+			bUseStemsFlux = false;
+			bUseAudioFlux = true;
+			UE_LOG(LogTemp, Warning, TEXT("TripSitter: Stems+Flux requested but stem separation not available, using AudioFlux"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Log, TEXT("TripSitter: Stems+Flux hybrid mode selected"));
+		}
+	}
+	else if (bUseAudioFlux)
+	{
+		// Check if AudioFlux is available
+		if (!FBeatsyncLoader::IsAudioFluxAvailable())
+		{
+			StatusText = TEXT("AudioFlux not available - falling back to Energy mode");
+			bUseAudioFlux = false;
+			UE_LOG(LogTemp, Warning, TEXT("TripSitter: AudioFlux analysis requested but not available, falling back to energy-based"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Log, TEXT("TripSitter: AudioFlux signal processing mode selected"));
+		}
+	}
+	else if (bUseAI)
+	{
+		// Check if AI is available
+		if (!FBeatsyncLoader::IsAIAvailable())
+		{
+			StatusText = TEXT("AI not available - falling back to Energy mode");
+			bUseAI = false;
+			UE_LOG(LogTemp, Warning, TEXT("TripSitter: AI analysis requested but not available, falling back to energy-based"));
+		}
+		else
+		{
+			FString Providers = FBeatsyncLoader::GetAIProviders();
+			UE_LOG(LogTemp, Log, TEXT("TripSitter: AI available with providers: %s"), *Providers);
+		}
+	}
+
+	FString ModeStr = bUseStemsFlux ? TEXT("Stems+Flux") :
+		(bUseAudioFlux ? TEXT("AudioFlux") :
+		(bUseAI ? (AnalysisMode == EAnalysisMode::AIStems ? TEXT("AI + Stems") : TEXT("AI Beat")) :
+		TEXT("Energy")));
+	StatusText = FString::Printf(TEXT("Analyzing audio (%s)..."), *ModeStr);
+	if (StatusTextBlock.IsValid())
+	{
+		StatusTextBlock->SetText(FText::FromString(StatusText));
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("TripSitter: Starting %s analysis for %s"), *ModeStr, *AudioPath);
+
+	bool bSuccess = false;
+	FBeatGrid BeatGrid;
+
+	if (bUseStemsFlux)
+	{
+		// Stems + AudioFlux hybrid analysis
+		UE_LOG(LogTemp, Log, TEXT("TripSitter: Running Stems+Flux analysis..."));
+
+		// Find stem model path
+		FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
+		FString StemModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("htdemucs.onnx"));
+
+		if (!FPaths::FileExists(StemModelPath))
+		{
+			StemModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("demucs.onnx"));
+		}
+
+		if (!FPaths::FileExists(StemModelPath))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("TripSitter: Stem model not found, running AudioFlux without stem separation"));
+			StemModelPath = TEXT("");
+		}
+		else
+		{
+			UE_LOG(LogTemp, Log, TEXT("TripSitter: Using stem model: %s"), *StemModelPath);
+		}
+
+		FAIResult AIResult;
+		bSuccess = FBeatsyncLoader::AudioFluxAnalyzeWithStems(AudioPath, StemModelPath, AIResult);
+
+		if (bSuccess)
+		{
+			BeatGrid.Beats = AIResult.Beats;
+			BeatGrid.BPM = AIResult.BPM;
+			BeatGrid.Duration = AIResult.Duration;
+			UE_LOG(LogTemp, Log, TEXT("TripSitter: Stems+Flux analysis returned %d beats, %.1f BPM"),
+				AIResult.Beats.Num(), AIResult.BPM);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("TripSitter: Stems+Flux analysis failed"));
+		}
+	}
+	else if (bUseAudioFlux)
+	{
+		// AudioFlux signal processing analysis
+		UE_LOG(LogTemp, Log, TEXT("TripSitter: Running AudioFlux analysis..."));
+
+		FAIResult AIResult;
+		bSuccess = FBeatsyncLoader::AudioFluxAnalyze(AudioPath, AIResult);
+
+		if (bSuccess)
+		{
+			// Convert AI result to BeatGrid format
+			BeatGrid.Beats = AIResult.Beats;
+			BeatGrid.BPM = AIResult.BPM;
+			BeatGrid.Duration = AIResult.Duration;
+			UE_LOG(LogTemp, Log, TEXT("TripSitter: AudioFlux analysis returned %d beats, %.1f BPM"),
+				AIResult.Beats.Num(), AIResult.BPM);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("TripSitter: AudioFlux analysis failed"));
+		}
+	}
+	else if (bUseAI)
+	{
+		// Find ONNX model path - check multiple locations
+		FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
+		FString ModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("beatnet.onnx"));
+
+		if (!FPaths::FileExists(ModelPath))
+		{
+			// Try ThirdParty location
+			ModelPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("models"), TEXT("beatnet.onnx"));
+		}
+		if (!FPaths::FileExists(ModelPath))
+		{
+			// Try relative to exe for standalone builds
+			ModelPath = FPaths::Combine(ExeDir, TEXT(".."), TEXT(".."), TEXT(".."),
+				TEXT("TripSitter"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("models"), TEXT("beatnet.onnx"));
+			FPaths::NormalizeDirectoryName(ModelPath);
+		}
+
+		if (!FPaths::FileExists(ModelPath))
+		{
+			StatusText = TEXT("ERROR: AI model not found (beatnet.onnx)");
+			UE_LOG(LogTemp, Error, TEXT("TripSitter: Could not find beatnet.onnx model"));
+			if (StatusTextBlock.IsValid())
+			{
+				StatusTextBlock->SetText(FText::FromString(StatusText));
+			}
+			return FReply::Handled();
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("TripSitter: Using AI model at %s"), *ModelPath);
+
+		// Configure AI analyzer
+		FAIConfig AIConfig;
+		AIConfig.BeatModelPath = ModelPath;
+		AIConfig.bUseGPU = true;
+		AIConfig.GPUDeviceId = 0;
+		AIConfig.BeatThreshold = 0.66f;
+		AIConfig.DownbeatThreshold = 0.66f;
+
+		// Enable stem separation for AIStems mode
+		if (AnalysisMode == EAnalysisMode::AIStems)
+		{
+			FString StemModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("demucs.onnx"));
+			if (FPaths::FileExists(StemModelPath))
+			{
+				AIConfig.StemModelPath = StemModelPath;
+				AIConfig.bUseStemSeparation = true;
+				AIConfig.bUseDrumsForBeats = true;
+				UE_LOG(LogTemp, Log, TEXT("TripSitter: Stem separation enabled with %s"), *StemModelPath);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("TripSitter: Stem model not found, using AI without stems"));
+			}
+		}
+
+		// Create AI analyzer
+		void* AIAnalyzer = FBeatsyncLoader::CreateAIAnalyzer(AIConfig);
+		if (!AIAnalyzer)
+		{
+			FString Error = FBeatsyncLoader::GetAILastError(nullptr);
+			StatusText = FString::Printf(TEXT("ERROR: Failed to create AI analyzer - %s"), *Error);
+			UE_LOG(LogTemp, Error, TEXT("TripSitter: Failed to create AI analyzer: %s"), *Error);
+			if (StatusTextBlock.IsValid())
+			{
+				StatusTextBlock->SetText(FText::FromString(StatusText));
+			}
+			return FReply::Handled();
+		}
+
+		// Run AI analysis
+		FAIResult AIResult;
+		if (AnalysisMode == EAnalysisMode::AIStems && AIConfig.bUseStemSeparation)
+		{
+			bSuccess = FBeatsyncLoader::AIAnalyzeFile(AIAnalyzer, AudioPath, AIResult);
+		}
+		else
+		{
+			bSuccess = FBeatsyncLoader::AIAnalyzeQuick(AIAnalyzer, AudioPath, AIResult);
+		}
+
+		if (bSuccess)
+		{
+			// Convert AI result to BeatGrid format
+			BeatGrid.Beats = AIResult.Beats;
+			BeatGrid.BPM = AIResult.BPM;
+			BeatGrid.Duration = AIResult.Duration;
+			UE_LOG(LogTemp, Log, TEXT("TripSitter: AI analysis returned %d beats, %d downbeats, %.1f BPM"),
+				AIResult.Beats.Num(), AIResult.Downbeats.Num(), AIResult.BPM);
+		}
+		else
+		{
+			FString Error = FBeatsyncLoader::GetAILastError(AIAnalyzer);
+			UE_LOG(LogTemp, Error, TEXT("TripSitter: AI analysis failed: %s"), *Error);
+		}
+
+		FBeatsyncLoader::DestroyAIAnalyzer(AIAnalyzer);
+	}
+	else
+	{
+		// Energy-based analysis
+		void* Analyzer = FBeatsyncLoader::CreateAnalyzer();
+		if (!Analyzer)
+		{
+			StatusText = TEXT("ERROR: Failed to create analyzer");
+			if (StatusTextBlock.IsValid())
+			{
+				StatusTextBlock->SetText(FText::FromString(StatusText));
+			}
+			return FReply::Handled();
+		}
+
+		bSuccess = FBeatsyncLoader::AnalyzeAudio(Analyzer, AudioPath, BeatGrid);
+		FBeatsyncLoader::DestroyAnalyzer(Analyzer);
+	}
+
+	if (bSuccess && BeatGrid.Beats.Num() > 0)
+	{
+		// Store results
+		bAudioAnalyzed = true;
+		DetectedBPM = BeatGrid.BPM;
+		AnalyzedBeatTimes = BeatGrid.Beats;
+
+		// Update waveform viewer with beat markers
+		if (WaveformViewer.IsValid())
+		{
+			WaveformViewer->SetBeatTimes(BeatGrid.Beats);
+		}
+
+		StatusText = FString::Printf(TEXT("Analysis complete (%s): %.1f BPM, %d beats detected"), *ModeStr, BeatGrid.BPM, BeatGrid.Beats.Num());
+		UE_LOG(LogTemp, Log, TEXT("TripSitter: Audio analysis complete - BPM: %.1f, Beats: %d"), BeatGrid.BPM, BeatGrid.Beats.Num());
+	}
+	else
+	{
+		bAudioAnalyzed = false;
+		DetectedBPM = 0.0;
+		AnalyzedBeatTimes.Empty();
+		StatusText = TEXT("ERROR: Beat detection failed");
+		UE_LOG(LogTemp, Warning, TEXT("TripSitter: Audio analysis failed for %s"), *AudioPath);
+	}
+
+	if (StatusTextBlock.IsValid())
+	{
+		StatusTextBlock->SetText(FText::FromString(StatusText));
+	}
+
+	return FReply::Handled();
+}
+
 FReply STripSitterMainWidget::OnStartSyncClicked()
 {
 	if (AudioPath.IsEmpty() || OutputPath.IsEmpty())
 	{
 		StatusText = TEXT("Please select audio and output files first");
-		StatusTextBlock->SetText(FText::FromString(StatusText));
+		if (StatusTextBlock.IsValid()) StatusTextBlock->SetText(FText::FromString(StatusText));
 		return FReply::Handled();
 	}
 
@@ -1518,14 +1892,14 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	if (VideoPaths.Num() == 0 && VideoPath.IsEmpty())
 	{
 		StatusText = TEXT("Please select a video file or folder");
-		StatusTextBlock->SetText(FText::FromString(StatusText));
+		if (StatusTextBlock.IsValid()) StatusTextBlock->SetText(FText::FromString(StatusText));
 		return FReply::Handled();
 	}
 
 	if (!FBeatsyncLoader::IsInitialized())
 	{
 		StatusText = TEXT("ERROR: Backend not loaded");
-		StatusTextBlock->SetText(FText::FromString(StatusText));
+		if (StatusTextBlock.IsValid()) StatusTextBlock->SetText(FText::FromString(StatusText));
 		return FReply::Handled();
 	}
 
@@ -1537,9 +1911,9 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 
 	bIsProcessing = true;
 	StatusText = TEXT("Starting...");
-	StatusTextBlock->SetText(FText::FromString(StatusText));
+	if (StatusTextBlock.IsValid()) StatusTextBlock->SetText(FText::FromString(StatusText));
 	Progress = 0.0f;
-	ProgressBar->SetPercent(Progress);
+	if (ProgressBar.IsValid()) ProgressBar->SetPercent(Progress);
 
 	UE_LOG(LogTemp, Log, TEXT("TripSitter: Starting async sync - Audio: %s, Video: %s, Output: %s"), *AudioPath, *VideoPath, *OutputPath);
 
@@ -1551,6 +1925,7 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	Params.OutputPath = OutputPath;
 	Params.bIsMultiClip = bIsMultiClip;
 	Params.BeatRate = static_cast<int32>(BeatRate);
+	Params.AnalysisMode = static_cast<EAnalysisModeParam>(AnalysisMode);
 
 	// Get selection range for audio trimming
 	if (WaveformViewer.IsValid() && WaveformViewer->GetDuration() > 0)
@@ -1597,6 +1972,32 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	else
 	{
 		Params.EffectsConfig.TransitionType = TEXT("fade");
+	}
+
+	// Get effect region from waveform viewer (if any effect regions are defined)
+	// Use the first effect region that matches enabled effects, or the whole selection range
+	// IMPORTANT: Effect region times must be relative to the selection start (like beat times)
+	if (WaveformViewer.IsValid())
+	{
+		const TArray<FEffectRegion>& EffectRegions = WaveformViewer->GetEffectRegions();
+		double SelectionStart = Params.AudioStart;
+
+		if (EffectRegions.Num() > 0)
+		{
+			// Use the first effect region for now
+			// TODO: Support multiple effect regions with different effect types
+			// Convert absolute times to be relative to selection start
+			Params.EffectsConfig.EffectStartTime = FMath::Max(0.0, EffectRegions[0].StartTime - SelectionStart);
+			Params.EffectsConfig.EffectEndTime = EffectRegions[0].EndTime - SelectionStart;
+			UE_LOG(LogTemp, Log, TEXT("TripSitter: Using effect region %.2f - %.2f (relative to selection)"),
+				Params.EffectsConfig.EffectStartTime, Params.EffectsConfig.EffectEndTime);
+		}
+		else
+		{
+			// No effect regions - apply to whole video
+			Params.EffectsConfig.EffectStartTime = 0.0;
+			Params.EffectsConfig.EffectEndTime = -1.0;
+		}
 	}
 
 	// Create and start async task
@@ -1657,7 +2058,21 @@ void STripSitterMainWidget::OnProcessingComplete(const FBeatsyncProcessingResult
 		ProgressBar->SetPercent(Progress);
 	}
 
-	ProcessingTask.Reset();
+	// Defer task cleanup - the completion callback is fired from within DoWork(),
+	// so the async task isn't technically "done" yet. Deleting it here causes an assertion.
+	// Use a deferred task to clean up after the current frame.
+	if (ProcessingTask.IsValid())
+	{
+		TUniquePtr<FAsyncTask<FBeatsyncProcessingTask>> TaskToCleanup = MoveTemp(ProcessingTask);
+		AsyncTask(ENamedThreads::GameThread, [Task = MoveTemp(TaskToCleanup)]() mutable {
+			// Task will be destroyed when this lambda exits
+			if (Task.IsValid())
+			{
+				Task->EnsureCompletion();
+				Task.Reset();
+			}
+		});
+	}
 }
 
 FReply STripSitterMainWidget::OnCancelClicked()
@@ -1666,7 +2081,10 @@ FReply STripSitterMainWidget::OnCancelClicked()
 	{
 		ProcessingTask->GetTask().RequestCancel();
 		StatusText = TEXT("Cancelling...");
-		StatusTextBlock->SetText(FText::FromString(StatusText));
+		if (StatusTextBlock.IsValid())
+		{
+			StatusTextBlock->SetText(FText::FromString(StatusText));
+		}
 	}
 	else
 	{

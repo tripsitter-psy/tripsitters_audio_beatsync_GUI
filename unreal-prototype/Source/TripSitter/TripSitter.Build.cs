@@ -62,8 +62,13 @@ public class TripSitter : ModuleRules
             }
             else if (Target.Platform == UnrealTargetPlatform.Mac)
             {
-                PublicAdditionalLibraries.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.dylib"));
-                RuntimeDependencies.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.dylib"));
+                var dylibPath = Path.Combine(BeatsyncLib, "libbeatsync_backend_shared.dylib");
+                PublicAdditionalLibraries.Add(dylibPath);
+                // Stage the dylib for packaging next to the executable
+                RuntimeDependencies.Add(dylibPath);
+                // For macOS app bundles, the dylib should be placed in Contents/Frameworks for @rpath resolution
+                // Use $(BinaryOutputDir)/../Frameworks/ for proper staging relative to the executable
+                RuntimeDependencies.Add("$(BinaryOutputDir)/../Frameworks/libbeatsync_backend_shared.dylib", dylibPath, StagedFileType.NonUFS);
             }
             else if (Target.Platform == UnrealTargetPlatform.Linux)
             {

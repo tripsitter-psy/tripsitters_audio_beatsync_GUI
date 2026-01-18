@@ -82,9 +82,6 @@ private:
     TSharedPtr<FThreadSafeBool> SharedCancelFlag;
     void* Writer = nullptr;
 
-    // Guard used by progress callback to ensure we don't invoke callbacks on destroyed task
-    TSharedPtr<FThreadSafeBool> ProgressGuard;
-
     void ReportProgress(float Progress, const FString& Status);
     bool HasAnyEffectsEnabled() const;
 };

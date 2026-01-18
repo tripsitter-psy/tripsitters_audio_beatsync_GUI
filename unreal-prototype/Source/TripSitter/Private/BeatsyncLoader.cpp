@@ -24,9 +24,23 @@ using bs_video_set_progress_callback_t = void (*)(void*, bs_progress_cb, void*);
 using bs_video_cut_at_beats_t = int (*)(void*, const char*, const double*, size_t, const char*, double);
 using bs_video_cut_at_beats_multi_t = int (*)(void*, const char**, size_t, const double*, size_t, const char*, double);
 using bs_video_concatenate_t = int (*)(const char**, size_t, const char*);
+using bs_video_normalize_sources_t = int (*)(void*, const char**, size_t, char**, size_t);
+using bs_video_cleanup_normalized_t = void (*)(char**, size_t);
 using bs_get_waveform_t = int (*)(void*, const char*, float**, size_t*, double*);
 using bs_free_waveform_t = void (*)(float*);
 using bs_video_add_audio_track_t = int (*)(void*, const char*, const char*, const char*, int, double, double);
+
+// Frequency-band waveform structure for Rekordbox/Traktor style display
+struct bs_waveform_bands_t {
+    float* bass_peaks;    // Low frequency peaks (20-200 Hz)
+    float* mid_peaks;     // Mid frequency peaks (200-2000 Hz)
+    float* high_peaks;    // High frequency peaks (2000+ Hz)
+    size_t count;         // Number of peaks in each array
+    double duration;      // Audio duration in seconds
+};
+
+using bs_get_waveform_bands_t = int (*)(void*, const char*, bs_waveform_bands_t*);
+using bs_free_waveform_bands_t = void (*)(bs_waveform_bands_t*);
 
 // Effects config structure matching C API
 struct bs_effects_config_t {
@@ -42,6 +56,8 @@ struct bs_effects_config_t {
     int enableBeatZoom;
     double zoomIntensity;
     int effectBeatDivisor;
+    double effectStartTime;
+    double effectEndTime;
 };
 
 using bs_video_set_effects_config_t = void (*)(void*, const bs_effects_config_t*);
@@ -82,6 +98,11 @@ using bs_ai_analyze_quick_t = int (*)(void*, const char*, bs_ai_result_t*, bs_ai
 using bs_free_ai_result_t = void (*)(bs_ai_result_t*);
 using bs_ai_get_last_error_t = const char* (*)(void*);
 
+// AudioFlux analyzer (signal processing)
+using bs_audioflux_is_available_t = int (*)();
+using bs_audioflux_analyze_t = int (*)(const char*, bs_ai_result_t*, bs_ai_progress_cb, void*);
+using bs_audioflux_analyze_with_stems_t = int (*)(const char*, const char*, bs_ai_result_t*, bs_ai_progress_cb, void*);
+
 struct FBeatsyncApi
 {
     void* DllHandle = nullptr;
@@ -97,9 +118,13 @@ struct FBeatsyncApi
     bs_video_cut_at_beats_t video_cut_at_beats = nullptr;
     bs_video_cut_at_beats_multi_t video_cut_at_beats_multi = nullptr;
     bs_video_concatenate_t video_concatenate = nullptr;
+    bs_video_normalize_sources_t video_normalize_sources = nullptr;
+    bs_video_cleanup_normalized_t video_cleanup_normalized = nullptr;
     bs_video_add_audio_track_t video_add_audio_track = nullptr;
     bs_get_waveform_t get_waveform = nullptr;
     bs_free_waveform_t free_waveform = nullptr;
+    bs_get_waveform_bands_t get_waveform_bands = nullptr;
+    bs_free_waveform_bands_t free_waveform_bands = nullptr;
     bs_video_set_effects_config_t video_set_effects_config = nullptr;
     bs_video_apply_effects_t video_apply_effects = nullptr;
     bs_video_extract_frame_t video_extract_frame = nullptr;
@@ -113,6 +138,10 @@ struct FBeatsyncApi
     bs_ai_analyze_quick_t ai_analyze_quick = nullptr;
     bs_free_ai_result_t free_ai_result = nullptr;
     bs_ai_get_last_error_t ai_get_last_error = nullptr;
+    // AudioFlux analyzer
+    bs_audioflux_is_available_t audioflux_is_available = nullptr;
+    bs_audioflux_analyze_t audioflux_analyze = nullptr;
+    bs_audioflux_analyze_with_stems_t audioflux_analyze_with_stems = nullptr;
 };
 
 static FBeatsyncApi GApi;
@@ -216,9 +245,13 @@ bool FBeatsyncLoader::Initialize()
     GApi.video_cut_at_beats = (bs_video_cut_at_beats_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_cut_at_beats"));
     GApi.video_cut_at_beats_multi = (bs_video_cut_at_beats_multi_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_cut_at_beats_multi"));
     GApi.video_concatenate = (bs_video_concatenate_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_concatenate"));
+    GApi.video_normalize_sources = (bs_video_normalize_sources_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_normalize_sources"));
+    GApi.video_cleanup_normalized = (bs_video_cleanup_normalized_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_cleanup_normalized"));
     GApi.video_add_audio_track = (bs_video_add_audio_track_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_add_audio_track"));
     GApi.get_waveform = (bs_get_waveform_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_get_waveform"));
     GApi.free_waveform = (bs_free_waveform_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_waveform"));
+    GApi.get_waveform_bands = (bs_get_waveform_bands_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_get_waveform_bands"));
+    GApi.free_waveform_bands = (bs_free_waveform_bands_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_waveform_bands"));
     GApi.video_set_effects_config = (bs_video_set_effects_config_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_effects_config"));
     GApi.video_apply_effects = (bs_video_apply_effects_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_apply_effects"));
     GApi.video_extract_frame = (bs_video_extract_frame_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_extract_frame"));
@@ -233,6 +266,13 @@ bool FBeatsyncLoader::Initialize()
     GApi.ai_analyze_quick = (bs_ai_analyze_quick_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_analyze_quick"));
     GApi.free_ai_result = (bs_free_ai_result_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_ai_result"));
     GApi.ai_get_last_error = (bs_ai_get_last_error_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_get_last_error"));
+
+    // AudioFlux analyzer functions (signal processing)
+    GApi.audioflux_is_available = (bs_audioflux_is_available_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_audioflux_is_available"));
+    GApi.audioflux_analyze = (bs_audioflux_analyze_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_audioflux_analyze"));
+    GApi.audioflux_analyze_with_stems = (bs_audioflux_analyze_with_stems_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_audioflux_analyze_with_stems"));
+    UE_LOG(LogTemp, Log, TEXT("AudioFlux function pointers: is_available=%p, analyze=%p, analyze_with_stems=%p"),
+        (void*)GApi.audioflux_is_available, (void*)GApi.audioflux_analyze, (void*)GApi.audioflux_analyze_with_stems);
 
     // Check required symbols - audio analyzer
     if (!GApi.create_analyzer || !GApi.destroy_analyzer || !GApi.analyze_audio) {
@@ -274,6 +314,19 @@ bool FBeatsyncLoader::Initialize()
         }
     } else {
         UE_LOG(LogTemp, Warning, TEXT("ONNX AI analyzer is NOT available - will fall back to spectral flux"));
+    }
+
+    // Log AudioFlux availability
+    if (GApi.audioflux_is_available) {
+        int avail = GApi.audioflux_is_available();
+        UE_LOG(LogTemp, Log, TEXT("AudioFlux is_available() returned %d"), avail);
+        if (avail) {
+            UE_LOG(LogTemp, Log, TEXT("AudioFlux analyzer is available (signal processing mode)"));
+        } else {
+            UE_LOG(LogTemp, Warning, TEXT("AudioFlux is_available returned 0 - not available"));
+        }
+    } else {
+        UE_LOG(LogTemp, Warning, TEXT("AudioFlux analyzer function pointer is NULL"));
     }
 
     return true;
@@ -379,25 +432,40 @@ void FBeatsyncLoader::SetProgressCallback(void* Handle, TFunction<void(double)> 
 {
     if (!GApi.video_set_progress_callback || !Handle) return;
 
+    if (Callback)
     {
-        FScopeLock Lock(&GProgressCallbacksLock);
-        // Replace or add the callback for this handle
-        GProgressCallbacks.Add(Handle, MakeUnique<TFunction<void(double)>>(MoveTemp(Callback)));
+        // Set new callback
+        {
+            FScopeLock Lock(&GProgressCallbacksLock);
+            GProgressCallbacks.Add(Handle, MakeUnique<TFunction<void(double)>>(MoveTemp(Callback)));
+        }
+        GApi.video_set_progress_callback(Handle, StaticProgressCallback, Handle);
     }
-    
-    GApi.video_set_progress_callback(Handle, StaticProgressCallback, Handle);
+    else
+    {
+        // Clear callback - remove from map AND tell C API to clear
+        {
+            FScopeLock Lock(&GProgressCallbacksLock);
+            GProgressCallbacks.Remove(Handle);
+        }
+        GApi.video_set_progress_callback(Handle, nullptr, nullptr);
+    }
 }
 
 bool FBeatsyncLoader::CutVideoAtBeats(void* Handle, const FString& InputVideo, const TArray<double>& BeatTimes, const FString& OutputVideo, double ClipDuration)
 {
     if (!GApi.video_cut_at_beats || !Handle || BeatTimes.Num() == 0) return false;
 
+    // Create persistent UTF-8 converters to keep strings alive during the C API call
+    FTCHARToUTF8 InputVideoUtf8(*InputVideo);
+    FTCHARToUTF8 OutputVideoUtf8(*OutputVideo);
+
     int Result = GApi.video_cut_at_beats(
         Handle,
-        TCHAR_TO_UTF8(*InputVideo),
+        InputVideoUtf8.Get(),
         BeatTimes.GetData(),
         BeatTimes.Num(),
-        TCHAR_TO_UTF8(*OutputVideo),
+        OutputVideoUtf8.Get(),
         ClipDuration
     );
 
@@ -409,8 +477,12 @@ bool FBeatsyncLoader::CutVideoAtBeatsMulti(void* Handle, const TArray<FString>& 
     if (!GApi.video_cut_at_beats_multi || !Handle || InputVideos.Num() == 0 || BeatTimes.Num() == 0) return false;
 
     // Convert FStrings to UTF8 and store them
+    // IMPORTANT: Reserve capacity upfront to prevent reallocation during the loop
+    // which would invalidate pointers stored in InputPtrs
     TArray<TArray<char>> ConvertedStrings;
+    ConvertedStrings.Reserve(InputVideos.Num());
     TArray<const char*> InputPtrs;
+    InputPtrs.Reserve(InputVideos.Num());
 
     for (const FString& Input : InputVideos) {
         FTCHARToUTF8 Converter(*Input);
@@ -440,8 +512,12 @@ bool FBeatsyncLoader::ConcatenateVideos(const TArray<FString>& Inputs, const FSt
     if (!GApi.video_concatenate || Inputs.Num() == 0) return false;
 
     // Convert FStrings to UTF8 and store them
+    // IMPORTANT: Reserve capacity upfront to prevent reallocation during the loop
+    // which would invalidate pointers stored in InputPtrs
     TArray<TArray<char>> ConvertedStrings;
+    ConvertedStrings.Reserve(Inputs.Num());
     TArray<const char*> InputPtrs;
+    InputPtrs.Reserve(Inputs.Num());
 
     for (const FString& Input : Inputs) {
         FTCHARToUTF8 Converter(*Input);
@@ -459,13 +535,24 @@ bool FBeatsyncLoader::ConcatenateVideos(const TArray<FString>& Inputs, const FSt
 
 bool FBeatsyncLoader::GetWaveform(void* Analyzer, const FString& FilePath, TArray<float>& OutPeaks, double& OutDuration)
 {
-    if (!GApi.get_waveform || !Analyzer) return false;
+    if (!GApi.get_waveform) {
+        UE_LOG(LogTemp, Error, TEXT("TripSitter: get_waveform function not loaded from DLL"));
+        return false;
+    }
+    if (!Analyzer) {
+        UE_LOG(LogTemp, Error, TEXT("TripSitter: Analyzer is null in GetWaveform"));
+        return false;
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("TripSitter: Loading waveform from: %s"), *FilePath);
 
     float* Peaks = nullptr;
     size_t Count = 0;
     double Duration = 0.0;
 
     int Result = GApi.get_waveform(Analyzer, TCHAR_TO_UTF8(*FilePath), &Peaks, &Count, &Duration);
+
+    UE_LOG(LogTemp, Log, TEXT("TripSitter: get_waveform returned %d, Count=%llu, Duration=%.2f"), Result, (unsigned long long)Count, Duration);
 
     if (Result == 0 && Peaks && Count > 0) {
         OutPeaks.SetNum(Count);
@@ -475,8 +562,11 @@ bool FBeatsyncLoader::GetWaveform(void* Analyzer, const FString& FilePath, TArra
         if (GApi.free_waveform) {
             GApi.free_waveform(Peaks);
         }
+        UE_LOG(LogTemp, Log, TEXT("TripSitter: Waveform loaded successfully with %d peaks"), OutPeaks.Num());
         return true;
     }
+
+    UE_LOG(LogTemp, Warning, TEXT("TripSitter: Failed to load waveform - Result=%d, Peaks=%p, Count=%llu"), Result, Peaks, (unsigned long long)Count);
 
     // Free Peaks if allocated on failure
     if (Peaks && GApi.free_waveform) {
@@ -492,17 +582,82 @@ void FBeatsyncLoader::FreeWaveform(float* Peaks)
     }
 }
 
+bool FBeatsyncLoader::GetWaveformBands(void* Analyzer, const FString& FilePath,
+                                        TArray<float>& OutBassPeaks, TArray<float>& OutMidPeaks,
+                                        TArray<float>& OutHighPeaks, double& OutDuration)
+{
+    if (!GApi.get_waveform_bands) {
+        UE_LOG(LogTemp, Error, TEXT("TripSitter: get_waveform_bands function not loaded from DLL"));
+        return false;
+    }
+    if (!Analyzer) {
+        UE_LOG(LogTemp, Error, TEXT("TripSitter: Analyzer is null in GetWaveformBands"));
+        return false;
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("TripSitter: Loading frequency-band waveform from: %s"), *FilePath);
+
+    bs_waveform_bands_t Bands = {};
+
+    int Result = GApi.get_waveform_bands(Analyzer, TCHAR_TO_UTF8(*FilePath), &Bands);
+
+    UE_LOG(LogTemp, Log, TEXT("TripSitter: get_waveform_bands returned %d, Count=%llu, Duration=%.2f"),
+           Result, (unsigned long long)Bands.count, Bands.duration);
+
+    if (Result == 0 && Bands.count > 0) {
+        // Copy bass peaks
+        if (Bands.bass_peaks) {
+            OutBassPeaks.SetNum(Bands.count);
+            FMemory::Memcpy(OutBassPeaks.GetData(), Bands.bass_peaks, Bands.count * sizeof(float));
+        }
+        // Copy mid peaks
+        if (Bands.mid_peaks) {
+            OutMidPeaks.SetNum(Bands.count);
+            FMemory::Memcpy(OutMidPeaks.GetData(), Bands.mid_peaks, Bands.count * sizeof(float));
+        }
+        // Copy high peaks
+        if (Bands.high_peaks) {
+            OutHighPeaks.SetNum(Bands.count);
+            FMemory::Memcpy(OutHighPeaks.GetData(), Bands.high_peaks, Bands.count * sizeof(float));
+        }
+        OutDuration = Bands.duration;
+
+        // Free the bands data
+        if (GApi.free_waveform_bands) {
+            GApi.free_waveform_bands(&Bands);
+        }
+
+        UE_LOG(LogTemp, Log, TEXT("TripSitter: Frequency-band waveform loaded successfully with %d peaks"),
+               OutBassPeaks.Num());
+        return true;
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("TripSitter: Failed to load frequency-band waveform - Result=%d, Count=%llu"),
+           Result, (unsigned long long)Bands.count);
+
+    // Free bands if allocated on failure
+    if (GApi.free_waveform_bands) {
+        GApi.free_waveform_bands(&Bands);
+    }
+    return false;
+}
+
 bool FBeatsyncLoader::AddAudioTrack(void* Handle, const FString& InputVideo, const FString& AudioFile,
                                      const FString& OutputVideo, bool bTrimToShortest,
                                      double AudioStart, double AudioEnd)
 {
     if (!GApi.video_add_audio_track || !Handle) return false;
 
+    // Create persistent UTF-8 converters to keep strings alive during the C API call
+    FTCHARToUTF8 InputVideoUtf8(*InputVideo);
+    FTCHARToUTF8 AudioFileUtf8(*AudioFile);
+    FTCHARToUTF8 OutputVideoUtf8(*OutputVideo);
+
     int Result = GApi.video_add_audio_track(
         Handle,
-        TCHAR_TO_UTF8(*InputVideo),
-        TCHAR_TO_UTF8(*AudioFile),
-        TCHAR_TO_UTF8(*OutputVideo),
+        InputVideoUtf8.Get(),
+        AudioFileUtf8.Get(),
+        OutputVideoUtf8.Get(),
         bTrimToShortest ? 1 : 0,
         AudioStart,
         AudioEnd
@@ -532,6 +687,8 @@ void FBeatsyncLoader::SetEffectsConfig(void* Handle, const FEffectsConfig& Confi
     CConfig.enableBeatZoom = Config.bEnableBeatZoom ? 1 : 0;
     CConfig.zoomIntensity = Config.ZoomIntensity;
     CConfig.effectBeatDivisor = Config.EffectBeatDivisor;
+    CConfig.effectStartTime = Config.EffectStartTime;
+    CConfig.effectEndTime = Config.EffectEndTime;
 
     GApi.video_set_effects_config(Handle, &CConfig);
 }
@@ -541,10 +698,14 @@ bool FBeatsyncLoader::ApplyEffects(void* Handle, const FString& InputVideo, cons
 {
     if (!GApi.video_apply_effects || !Handle) return false;
 
+    // Create persistent UTF-8 converters to keep strings alive during the C API call
+    FTCHARToUTF8 InputVideoUtf8(*InputVideo);
+    FTCHARToUTF8 OutputVideoUtf8(*OutputVideo);
+
     int Result = GApi.video_apply_effects(
         Handle,
-        TCHAR_TO_UTF8(*InputVideo),
-        TCHAR_TO_UTF8(*OutputVideo),
+        InputVideoUtf8.Get(),
+        OutputVideoUtf8.Get(),
         BeatTimes.Num() > 0 ? BeatTimes.GetData() : nullptr,
         BeatTimes.Num()
     );
@@ -561,8 +722,11 @@ bool FBeatsyncLoader::ExtractFrame(const FString& VideoPath, double Timestamp,
     int Width = 0;
     int Height = 0;
 
+    // Create persistent UTF-8 converter to keep string alive during the C API call
+    FTCHARToUTF8 VideoPathUtf8(*VideoPath);
+
     int Result = GApi.video_extract_frame(
-        TCHAR_TO_UTF8(*VideoPath),
+        VideoPathUtf8.Get(),
         Timestamp,
         &FrameData,
         &Width,
@@ -571,7 +735,18 @@ bool FBeatsyncLoader::ExtractFrame(const FString& VideoPath, double Timestamp,
 
     if (Result == 0 && FrameData && Width > 0 && Height > 0)
     {
-        int32 DataSize = Width * Height * 3; // RGB24
+        // Use int64 arithmetic to detect overflow before casting to int32
+        int64 DataSize64 = static_cast<int64>(Width) * static_cast<int64>(Height) * 3; // RGB24
+        if (DataSize64 > MAX_int32 || DataSize64 <= 0)
+        {
+            UE_LOG(LogTemp, Error, TEXT("ExtractFrame: Frame size overflow (%dx%d = %lld bytes)"), Width, Height, DataSize64);
+            if (GApi.free_frame_data)
+            {
+                GApi.free_frame_data(FrameData);
+            }
+            return false;
+        }
+        int32 DataSize = static_cast<int32>(DataSize64);
         OutData.SetNum(DataSize);
         FMemory::Memcpy(OutData.GetData(), FrameData, DataSize);
         OutWidth = Width;
@@ -665,6 +840,10 @@ bool FBeatsyncLoader::AIAnalyzeFile(void* Analyzer, const FString& FilePath, FAI
         return true;
     }
 
+    // Free result on failure path to prevent memory leak
+    if (GApi.free_ai_result) {
+        GApi.free_ai_result(&CResult);
+    }
     return false;
 }
 
@@ -697,6 +876,12 @@ bool FBeatsyncLoader::AIAnalyzeQuick(void* Analyzer, const FString& FilePath, FA
         return true;
     }
 
+    // Free result on failure path to prevent memory leak
+    if (GApi.free_ai_result) {
+        GApi.free_ai_result(&CResult);
+    } else {
+        UE_LOG(LogTemp, Warning, TEXT("FBeatsyncLoader::AIAnalyzeQuick: GApi.free_ai_result is null on failure path, CResult may leak!"));
+    }
     return false;
 }
 
@@ -705,4 +890,227 @@ FString FBeatsyncLoader::GetAILastError(void* Analyzer)
     if (!GApi.ai_get_last_error || !Analyzer) return FString();
     const char* Err = GApi.ai_get_last_error(Analyzer);
     return Err ? FString(UTF8_TO_TCHAR(Err)) : FString();
+}
+
+// =============================================================================
+// Video Normalization (pre-process videos to common format)
+// =============================================================================
+
+bool FBeatsyncLoader::NormalizeVideos(void* Handle, const TArray<FString>& InputVideos, TArray<FString>& OutNormalizedPaths)
+{
+    UE_LOG(LogTemp, Log, TEXT("NormalizeVideos: ENTER - Handle=%p, InputVideos.Num()=%d"), Handle, InputVideos.Num());
+
+    if (!GApi.video_normalize_sources) {
+        UE_LOG(LogTemp, Error, TEXT("NormalizeVideos: video_normalize_sources function pointer is NULL"));
+        return false;
+    }
+    if (!Handle) {
+        UE_LOG(LogTemp, Error, TEXT("NormalizeVideos: Handle is NULL"));
+        return false;
+    }
+    if (InputVideos.Num() == 0) {
+        UE_LOG(LogTemp, Error, TEXT("NormalizeVideos: InputVideos is empty"));
+        return false;
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("NormalizeVideos: Converting %d input paths to UTF8"), InputVideos.Num());
+
+    // Convert FStrings to UTF8 and store them
+    TArray<TArray<char>> ConvertedStrings;
+    ConvertedStrings.Reserve(InputVideos.Num());
+    TArray<const char*> InputPtrs;
+    InputPtrs.Reserve(InputVideos.Num());
+
+    for (int32 i = 0; i < InputVideos.Num(); ++i) {
+        const FString& Input = InputVideos[i];
+        UE_LOG(LogTemp, Log, TEXT("NormalizeVideos: Input[%d] = %s"), i, *Input);
+
+        FTCHARToUTF8 Converter(*Input);
+        TArray<char> Utf8String;
+        int32 Len = FCStringAnsi::Strlen(Converter.Get()) + 1;
+        Utf8String.SetNum(Len);
+        FMemory::Memcpy(Utf8String.GetData(), Converter.Get(), Len);
+        ConvertedStrings.Add(MoveTemp(Utf8String));
+        InputPtrs.Add(ConvertedStrings.Last().GetData());
+
+        UE_LOG(LogTemp, Log, TEXT("NormalizeVideos: InputPtr[%d] = %hs"), i, InputPtrs.Last());
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("NormalizeVideos: Allocating %d output buffers"), InputVideos.Num());
+
+    // Allocate output path buffers (use larger buffer to be safe)
+    const size_t PathBufferSize = 512;  // Increased from 260
+    TArray<char*> OutputBuffers;
+    OutputBuffers.SetNum(InputVideos.Num());
+    for (int32 i = 0; i < InputVideos.Num(); ++i) {
+        OutputBuffers[i] = new char[PathBufferSize];
+        OutputBuffers[i][0] = '\0';
+        UE_LOG(LogTemp, Log, TEXT("NormalizeVideos: OutputBuffer[%d] allocated at %p"), i, OutputBuffers[i]);
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("NormalizeVideos: Calling bs_video_normalize_sources..."));
+    UE_LOG(LogTemp, Log, TEXT("  Handle=%p, InputPtrs.GetData()=%p, Count=%d, OutputBuffers.GetData()=%p, BufferSize=%zu"),
+        Handle, InputPtrs.GetData(), InputPtrs.Num(), OutputBuffers.GetData(), PathBufferSize);
+
+    int Result = GApi.video_normalize_sources(
+        Handle,
+        InputPtrs.GetData(),
+        InputPtrs.Num(),
+        OutputBuffers.GetData(),
+        PathBufferSize
+    );
+
+    UE_LOG(LogTemp, Log, TEXT("NormalizeVideos: bs_video_normalize_sources returned %d"), Result);
+
+    if (Result == 0) {
+        OutNormalizedPaths.Empty();
+        OutNormalizedPaths.Reserve(InputVideos.Num());
+        for (int32 i = 0; i < InputVideos.Num(); ++i) {
+            if (OutputBuffers[i][0] != '\0') {
+                OutNormalizedPaths.Add(FString(UTF8_TO_TCHAR(OutputBuffers[i])));
+                UE_LOG(LogTemp, Log, TEXT("NormalizeVideos: Output[%d] = %s"), i, *OutNormalizedPaths.Last());
+            }
+        }
+        UE_LOG(LogTemp, Log, TEXT("Normalized %d videos successfully"), OutNormalizedPaths.Num());
+    } else {
+        UE_LOG(LogTemp, Error, TEXT("Video normalization failed with result %d"), Result);
+    }
+
+    // Free output buffers
+    for (int32 i = 0; i < OutputBuffers.Num(); ++i) {
+        delete[] OutputBuffers[i];
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("NormalizeVideos: EXIT - returning %s"), Result == 0 ? TEXT("true") : TEXT("false"));
+    return Result == 0;
+}
+
+void FBeatsyncLoader::CleanupNormalizedVideos(const TArray<FString>& NormalizedPaths)
+{
+    if (!GApi.video_cleanup_normalized || NormalizedPaths.Num() == 0) return;
+
+    // Convert FStrings to UTF8 and store them
+    TArray<TArray<char>> ConvertedStrings;
+    ConvertedStrings.Reserve(NormalizedPaths.Num());
+    TArray<char*> PathPtrs;
+    PathPtrs.Reserve(NormalizedPaths.Num());
+
+    for (const FString& Path : NormalizedPaths) {
+        FTCHARToUTF8 Converter(*Path);
+        TArray<char> Utf8String;
+        int32 Len = FCStringAnsi::Strlen(Converter.Get()) + 1;
+        Utf8String.SetNum(Len);
+        FMemory::Memcpy(Utf8String.GetData(), Converter.Get(), Len);
+        ConvertedStrings.Add(MoveTemp(Utf8String));
+        PathPtrs.Add(ConvertedStrings.Last().GetData());
+    }
+
+    GApi.video_cleanup_normalized(PathPtrs.GetData(), PathPtrs.Num());
+    UE_LOG(LogTemp, Log, TEXT("Cleaned up %d normalized video files"), NormalizedPaths.Num());
+}
+
+// =============================================================================
+// AudioFlux Analyzer (signal processing - CPU only)
+// =============================================================================
+
+bool FBeatsyncLoader::IsAudioFluxAvailable()
+{
+    if (!GApi.audioflux_is_available) {
+        UE_LOG(LogTemp, Warning, TEXT("IsAudioFluxAvailable: function pointer is NULL"));
+        return false;
+    }
+    int result = GApi.audioflux_is_available();
+    UE_LOG(LogTemp, Log, TEXT("IsAudioFluxAvailable: is_available() returned %d"), result);
+    return result != 0;
+}
+
+bool FBeatsyncLoader::AudioFluxAnalyze(const FString& FilePath, FAIResult& OutResult)
+{
+    if (!GApi.audioflux_analyze) {
+        UE_LOG(LogTemp, Error, TEXT("AudioFlux analyze function not loaded"));
+        return false;
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("AudioFlux: Starting analysis of %s"), *FilePath);
+
+    bs_ai_result_t CResult = {};
+    UE_LOG(LogTemp, Log, TEXT("AudioFlux: Calling bs_audioflux_analyze..."));
+    int Result = GApi.audioflux_analyze(TCHAR_TO_UTF8(*FilePath), &CResult, nullptr, nullptr);
+    UE_LOG(LogTemp, Log, TEXT("AudioFlux: bs_audioflux_analyze returned %d"), Result);
+
+    if (Result == 0) {
+        // Copy beats
+        if (CResult.beats && CResult.beat_count > 0) {
+            OutResult.Beats.SetNum(CResult.beat_count);
+            FMemory::Memcpy(OutResult.Beats.GetData(), CResult.beats, CResult.beat_count * sizeof(double));
+        }
+        // Copy downbeats (may be empty for AudioFlux)
+        if (CResult.downbeats && CResult.downbeat_count > 0) {
+            OutResult.Downbeats.SetNum(CResult.downbeat_count);
+            FMemory::Memcpy(OutResult.Downbeats.GetData(), CResult.downbeats, CResult.downbeat_count * sizeof(double));
+        }
+        OutResult.BPM = CResult.bpm;
+        OutResult.Duration = CResult.duration;
+
+        if (GApi.free_ai_result) {
+            GApi.free_ai_result(&CResult);
+        }
+
+        UE_LOG(LogTemp, Log, TEXT("AudioFlux analysis complete: BPM=%.1f, Beats=%d"), OutResult.BPM, OutResult.Beats.Num());
+        return true;
+    }
+
+    UE_LOG(LogTemp, Error, TEXT("AudioFlux analysis failed with result %d"), Result);
+    if (GApi.free_ai_result) {
+        GApi.free_ai_result(&CResult);
+    }
+    return false;
+}
+
+bool FBeatsyncLoader::AudioFluxAnalyzeWithStems(const FString& FilePath, const FString& StemModelPath, FAIResult& OutResult)
+{
+    if (!GApi.audioflux_analyze_with_stems) {
+        UE_LOG(LogTemp, Error, TEXT("AudioFlux analyze_with_stems function not loaded"));
+        return false;
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("AudioFlux+Stems: Starting analysis of %s with model %s"), *FilePath, *StemModelPath);
+
+    bs_ai_result_t CResult = {};
+
+    // Create persistent UTF-8 converters to avoid dangling pointers from TCHAR_TO_UTF8
+    FTCHARToUTF8 FilePathUtf8(*FilePath);
+    FTCHARToUTF8 StemModelPathUtf8(*StemModelPath);
+    const char* stemModelUtf8 = StemModelPath.IsEmpty() ? nullptr : StemModelPathUtf8.Get();
+
+    int Result = GApi.audioflux_analyze_with_stems(FilePathUtf8.Get(), stemModelUtf8, &CResult, nullptr, nullptr);
+    UE_LOG(LogTemp, Log, TEXT("AudioFlux+Stems: bs_audioflux_analyze_with_stems returned %d"), Result);
+
+    if (Result == 0) {
+        // Copy beats
+        if (CResult.beats && CResult.beat_count > 0) {
+            OutResult.Beats.SetNum(CResult.beat_count);
+            FMemory::Memcpy(OutResult.Beats.GetData(), CResult.beats, CResult.beat_count * sizeof(double));
+        }
+        // Copy downbeats (may be empty for AudioFlux)
+        if (CResult.downbeats && CResult.downbeat_count > 0) {
+            OutResult.Downbeats.SetNum(CResult.downbeat_count);
+            FMemory::Memcpy(OutResult.Downbeats.GetData(), CResult.downbeats, CResult.downbeat_count * sizeof(double));
+        }
+        OutResult.BPM = CResult.bpm;
+        OutResult.Duration = CResult.duration;
+
+        if (GApi.free_ai_result) {
+            GApi.free_ai_result(&CResult);
+        }
+
+        UE_LOG(LogTemp, Log, TEXT("AudioFlux+Stems analysis complete: BPM=%.1f, Beats=%d"), OutResult.BPM, OutResult.Beats.Num());
+        return true;
+    }
+
+    UE_LOG(LogTemp, Error, TEXT("AudioFlux+Stems analysis failed with result %d"), Result);
+    if (GApi.free_ai_result) {
+        GApi.free_ai_result(&CResult);
+    }
+    return false;
 }
