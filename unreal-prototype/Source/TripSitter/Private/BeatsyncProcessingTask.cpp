@@ -63,8 +63,8 @@ void FBeatsyncProcessingTask::DoWork()
         return;
     }
 
-    // Step 1: Get beat times (either from pre-analyzed UI markers or by analyzing audio)
-    if (bCancelRequested)
+        // Step 1: Get beat times (either from pre-analyzed UI markers or by analyzing audio)
+        if (IsCancelled())
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
@@ -105,96 +105,96 @@ void FBeatsyncProcessingTask::DoWork()
 
         // Try AI analyzer if requested and available
         if (bUseAI && FBeatsyncLoader::IsAIAvailable())
-    {
-        FString ModeStr = bUseStemSeparation ? TEXT("AI + Stems") : TEXT("AI Beat");
-        ReportProgress(0.05f, FString::Printf(TEXT("Analyzing audio with %s (GPU)..."), *ModeStr));
-        UE_LOG(LogTemp, Log, TEXT("TripSitter: Using %s analyzer (providers: %s)"), *ModeStr, *FBeatsyncLoader::GetAIProviders());
-
-        // Get path to beatnet model - look relative to executable or in ThirdParty
-        FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
-        FString ModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("beatnet.onnx"));
-        if (!FPaths::FileExists(ModelPath))
         {
-            // Try ThirdParty location
-            ModelPath = FPaths::Combine(ExeDir, TEXT(".."), TEXT(".."), TEXT("Source"), TEXT("Programs"),
-                                         TEXT("TripSitter"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("models"), TEXT("beatnet.onnx"));
-            ModelPath = FPaths::ConvertRelativePathToFull(ModelPath);
-        }
+            FString ModeStr = bUseStemSeparation ? TEXT("AI + Stems") : TEXT("AI Beat");
+            ReportProgress(0.05f, FString::Printf(TEXT("Analyzing audio with %s (GPU)..."), *ModeStr));
+            UE_LOG(LogTemp, Log, TEXT("TripSitter: Using %s analyzer (providers: %s)"), *ModeStr, *FBeatsyncLoader::GetAIProviders());
 
-        // Get path to stem separation model (demucs) if using AI+Stems mode
-        FString StemModelPath;
-        if (bUseStemSeparation)
-        {
-            StemModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("demucs.onnx"));
-            if (!FPaths::FileExists(StemModelPath))
+            // Get path to beatnet model - look relative to executable or in ThirdParty
+            FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
+            FString ModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("beatnet.onnx"));
+            if (!FPaths::FileExists(ModelPath))
             {
-                StemModelPath = FPaths::Combine(ExeDir, TEXT(".."), TEXT(".."), TEXT("Source"), TEXT("Programs"),
-                                                 TEXT("TripSitter"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("models"), TEXT("demucs.onnx"));
-                StemModelPath = FPaths::ConvertRelativePathToFull(StemModelPath);
-            }
-        }
-
-        if (FPaths::FileExists(ModelPath))
-        {
-            FAIConfig AIConfig;
-            AIConfig.BeatModelPath = ModelPath;
-            AIConfig.bUseGPU = true;  // Enable CUDA
-            AIConfig.bUseStemSeparation = bUseStemSeparation;
-            AIConfig.bUseDrumsForBeats = true;
-            AIConfig.BeatThreshold = 0.66f;
-            AIConfig.DownbeatThreshold = 0.66f;
-
-            // Set stem model path if using stem separation
-            if (bUseStemSeparation && FPaths::FileExists(StemModelPath))
-            {
-                AIConfig.StemModelPath = StemModelPath;
-                UE_LOG(LogTemp, Log, TEXT("TripSitter: Using stem separation model: %s"), *StemModelPath);
-            }
-            else if (bUseStemSeparation)
-            {
-                UE_LOG(LogTemp, Warning, TEXT("TripSitter: Stem model not found at %s, stem separation disabled"), *StemModelPath);
-                AIConfig.bUseStemSeparation = false;
+                // Try ThirdParty location
+                ModelPath = FPaths::Combine(ExeDir, TEXT(".."), TEXT(".."), TEXT("Source"), TEXT("Programs"),
+                                             TEXT("TripSitter"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("models"), TEXT("beatnet.onnx"));
+                ModelPath = FPaths::ConvertRelativePathToFull(ModelPath);
             }
 
-            void* AIAnalyzer = FBeatsyncLoader::CreateAIAnalyzer(AIConfig);
-            if (AIAnalyzer)
+            // Get path to stem separation model (demucs) if using AI+Stems mode
+            FString StemModelPath;
+            if (bUseStemSeparation)
             {
-                FAIResult AIResult;
-                // Use full analysis with stem separation, or quick mode without
-                if (AIConfig.bUseStemSeparation)
+                StemModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("demucs.onnx"));
+                if (!FPaths::FileExists(StemModelPath))
                 {
-                    bSuccess = FBeatsyncLoader::AIAnalyzeFile(AIAnalyzer, Params.AudioPath, AIResult);
+                    StemModelPath = FPaths::Combine(ExeDir, TEXT(".."), TEXT(".."), TEXT("Source"), TEXT("Programs"),
+                                                     TEXT("TripSitter"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("models"), TEXT("demucs.onnx"));
+                    StemModelPath = FPaths::ConvertRelativePathToFull(StemModelPath);
+                }
+            }
+
+            if (FPaths::FileExists(ModelPath))
+            {
+                FAIConfig AIConfig;
+                AIConfig.BeatModelPath = ModelPath;
+                AIConfig.bUseGPU = true;  // Enable CUDA
+                AIConfig.bUseStemSeparation = bUseStemSeparation;
+                AIConfig.bUseDrumsForBeats = true;
+                AIConfig.BeatThreshold = 0.66f;
+                AIConfig.DownbeatThreshold = 0.66f;
+
+                // Set stem model path if using stem separation
+                if (bUseStemSeparation && FPaths::FileExists(StemModelPath))
+                {
+                    AIConfig.StemModelPath = StemModelPath;
+                    UE_LOG(LogTemp, Log, TEXT("TripSitter: Using stem separation model: %s"), *StemModelPath);
+                }
+                else if (bUseStemSeparation)
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("TripSitter: Stem model not found at %s, stem separation disabled"), *StemModelPath);
+                    AIConfig.bUseStemSeparation = false;
+                }
+
+                void* AIAnalyzer = FBeatsyncLoader::CreateAIAnalyzer(AIConfig);
+                if (AIAnalyzer)
+                {
+                    FAIResult AIResult;
+                    // Use full analysis with stem separation, or quick mode without
+                    if (AIConfig.bUseStemSeparation)
+                    {
+                        bSuccess = FBeatsyncLoader::AIAnalyzeFile(AIAnalyzer, Params.AudioPath, AIResult);
+                    }
+                    else
+                    {
+                        bSuccess = FBeatsyncLoader::AIAnalyzeQuick(AIAnalyzer, Params.AudioPath, AIResult);
+                    }
+
+                    if (bSuccess && AIResult.Beats.Num() > 0)
+                    {
+                        BeatGrid.Beats = AIResult.Beats;
+                        BeatGrid.BPM = AIResult.BPM;
+                        BeatGrid.Duration = AIResult.Duration;
+                        UE_LOG(LogTemp, Log, TEXT("TripSitter: %s analysis found %d beats at %.1f BPM"), *ModeStr, AIResult.Beats.Num(), AIResult.BPM);
+                    }
+                    else
+                    {
+                        FString AIError = FBeatsyncLoader::GetAILastError(AIAnalyzer);
+                        UE_LOG(LogTemp, Warning, TEXT("TripSitter: %s analysis failed: %s, falling back to spectral flux"), *ModeStr, *AIError);
+                        bSuccess = false;
+                    }
+
+                    FBeatsyncLoader::DestroyAIAnalyzer(AIAnalyzer);
                 }
                 else
                 {
-                    bSuccess = FBeatsyncLoader::AIAnalyzeQuick(AIAnalyzer, Params.AudioPath, AIResult);
+                    UE_LOG(LogTemp, Warning, TEXT("TripSitter: Failed to create AI analyzer, falling back to spectral flux"));
                 }
-
-                if (bSuccess && AIResult.Beats.Num() > 0)
-                {
-                    BeatGrid.Beats = AIResult.Beats;
-                    BeatGrid.BPM = AIResult.BPM;
-                    BeatGrid.Duration = AIResult.Duration;
-                    UE_LOG(LogTemp, Log, TEXT("TripSitter: %s analysis found %d beats at %.1f BPM"), *ModeStr, AIResult.Beats.Num(), AIResult.BPM);
-                }
-                else
-                {
-                    FString AIError = FBeatsyncLoader::GetAILastError(AIAnalyzer);
-                    UE_LOG(LogTemp, Warning, TEXT("TripSitter: %s analysis failed: %s, falling back to spectral flux"), *ModeStr, *AIError);
-                    bSuccess = false;
-                }
-
-                FBeatsyncLoader::DestroyAIAnalyzer(AIAnalyzer);
             }
             else
             {
-                UE_LOG(LogTemp, Warning, TEXT("TripSitter: Failed to create AI analyzer, falling back to spectral flux"));
+                UE_LOG(LogTemp, Warning, TEXT("TripSitter: Beat model not found at %s, falling back to spectral flux"), *ModelPath);
             }
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("TripSitter: Beat model not found at %s, falling back to spectral flux"), *ModelPath);
-        }
         }
 
         // Fall back to CPU-based spectral flux if AI not available, not requested, or failed

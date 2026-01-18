@@ -10,6 +10,10 @@
 #include "../video/VideoProcessor.h"
 #include "../tracing/Tracing.h"
 
+#ifdef USE_AUDIOFLUX
+#include "../audio/AudioFluxBeatDetector.h"
+#endif
+
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -18,6 +22,14 @@
 #include <mutex>
 #include <unordered_map>
 #include <iostream>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <excpt.h>
+#endif
 
 // FFmpeg includes for frame conversion
 extern "C" {
@@ -59,7 +71,11 @@ BEATSYNC_API void bs_shutdown() {
 BEATSYNC_API void* bs_create_audio_analyzer() {
     try {
         return new BeatSync::AudioAnalyzer();
+    } catch (const std::exception& e) {
+        s_lastError = std::string("Error creating AudioAnalyzer: ") + e.what();
+        return nullptr;
     } catch (...) {
+        s_lastError = "Unknown error creating AudioAnalyzer";
         return nullptr;
     }
 }
@@ -67,6 +83,12 @@ BEATSYNC_API void* bs_create_audio_analyzer() {
 BEATSYNC_API void bs_destroy_audio_analyzer(void* analyzer) {
     if (analyzer) {
         delete static_cast<BeatSync::AudioAnalyzer*>(analyzer);
+    }
+}
+
+BEATSYNC_API void bs_set_bpm_hint(void* analyzer, double bpm) {
+    if (analyzer) {
+        static_cast<BeatSync::AudioAnalyzer*>(analyzer)->setBPMHint(bpm);
     }
 }
 
@@ -147,8 +169,10 @@ BEATSYNC_API int bs_get_waveform(void* analyzer, const char* filepath,
 
         *outDuration = audioData.duration;
 
-        // Downsample to approximately 2000 peak values for visualization
-        const size_t targetPeaks = 2000;
+        // Downsample to approximately 20000 peak values for visualization
+        // Higher resolution allows seeing individual transients (kick drums, snares)
+        // At 44100 Hz, 20000 peaks for a 5-min track = ~15ms per peak
+        const size_t targetPeaks = 20000;
         size_t samplesPerPeak = audioData.samples.size() / targetPeaks;
         if (samplesPerPeak < 1) samplesPerPeak = 1;
 
@@ -190,6 +214,236 @@ BEATSYNC_API void bs_free_waveform(float* peaks) {
     }
 }
 
+// Helper: compute frequency band energy using AudioFlux STFT when available
+#ifdef USE_AUDIOFLUX
+extern "C" {
+#include "flux_base.h"
+#include "stft_algorithm.h"
+}
+#endif
+
+BEATSYNC_API int bs_get_waveform_bands(void* analyzer, const char* filepath,
+                                        bs_waveform_bands_t* out_bands) {
+    TRACE_FUNC();
+    if (!analyzer || !filepath || !out_bands) {
+        return -1;
+    }
+
+    // Initialize output to zeros
+    out_bands->bass_peaks = nullptr;
+    out_bands->mid_peaks = nullptr;
+    out_bands->high_peaks = nullptr;
+    out_bands->count = 0;
+    out_bands->duration = 0.0;
+
+    try {
+        auto* a = static_cast<BeatSync::AudioAnalyzer*>(analyzer);
+        auto audioData = a->loadAudioFile(filepath);
+
+        if (audioData.samples.empty()) {
+            s_lastError = "Failed to load audio file for waveform bands";
+            return -1;
+        }
+
+        out_bands->duration = audioData.duration;
+        const int sampleRate = audioData.sampleRate;
+
+        // FFT parameters - 2048 samples at 44100 Hz gives ~21 Hz per bin
+        const int radix2Exp = 11;  // 2^11 = 2048
+        const size_t fftSize = 1 << radix2Exp;
+        const size_t hopSize = 256;  // Smaller hop = more time resolution
+        const size_t targetPeaks = 20000;  // High resolution for seeing kick transients
+
+        // Calculate frequency bin ranges
+        // Bass: 20-200 Hz, Mids: 200-2000 Hz, Highs: 2000+ Hz
+        const double binWidth = static_cast<double>(sampleRate) / fftSize;
+        const size_t bassStartBin = static_cast<size_t>(20.0 / binWidth);
+        const size_t bassEndBin = static_cast<size_t>(200.0 / binWidth);
+        const size_t midEndBin = static_cast<size_t>(2000.0 / binWidth);
+        const size_t highEndBin = fftSize / 2;
+
+#ifdef USE_AUDIOFLUX
+        // Use AudioFlux for fast STFT computation
+        STFTObj stftObj = nullptr;
+        WindowType windowType = Window_Hann;
+        int slideLength = static_cast<int>(hopSize);
+        int isContinue = 0;
+
+        if (stftObj_new(&stftObj, radix2Exp, &windowType, &slideLength, &isContinue) != 0 || !stftObj) {
+            s_lastError = "Failed to create AudioFlux STFT object";
+            return -1;
+        }
+
+        int numFrames = stftObj_calTimeLength(stftObj, static_cast<int>(audioData.samples.size()));
+        if (numFrames <= 0) {
+            stftObj_free(stftObj);
+            s_lastError = "Audio too short for frequency analysis";
+            return -1;
+        }
+
+        // Allocate STFT buffers (AudioFlux outputs fftLength values per frame)
+        std::vector<float> stftReal(numFrames * fftSize, 0.0f);
+        std::vector<float> stftImag(numFrames * fftSize, 0.0f);
+
+        // Compute STFT
+        stftObj_stft(stftObj, audioData.samples.data(), static_cast<int>(audioData.samples.size()),
+                     stftReal.data(), stftImag.data());
+        stftObj_free(stftObj);
+
+        // Extract energy per band from STFT
+        std::vector<float> bassEnergy(numFrames, 0.0f);
+        std::vector<float> midEnergy(numFrames, 0.0f);
+        std::vector<float> highEnergy(numFrames, 0.0f);
+
+        for (int frame = 0; frame < numFrames; ++frame) {
+            float bassSum = 0.0f, midSum = 0.0f, highSum = 0.0f;
+
+            // Sum magnitude in each band
+            for (size_t bin = bassStartBin; bin <= bassEndBin && bin < fftSize/2; ++bin) {
+                size_t idx = frame * fftSize + bin;
+                float mag = std::sqrt(stftReal[idx] * stftReal[idx] + stftImag[idx] * stftImag[idx]);
+                bassSum += mag;
+            }
+            for (size_t bin = bassEndBin + 1; bin <= midEndBin && bin < fftSize/2; ++bin) {
+                size_t idx = frame * fftSize + bin;
+                float mag = std::sqrt(stftReal[idx] * stftReal[idx] + stftImag[idx] * stftImag[idx]);
+                midSum += mag;
+            }
+            for (size_t bin = midEndBin + 1; bin < highEndBin; ++bin) {
+                size_t idx = frame * fftSize + bin;
+                float mag = std::sqrt(stftReal[idx] * stftReal[idx] + stftImag[idx] * stftImag[idx]);
+                highSum += mag;
+            }
+
+            // Normalize by bin count
+            size_t bassBins = bassEndBin - bassStartBin + 1;
+            size_t midBins = midEndBin - bassEndBin;
+            size_t highBins = highEndBin - midEndBin - 1;
+
+            bassEnergy[frame] = bassBins > 0 ? bassSum / bassBins : 0.0f;
+            midEnergy[frame] = midBins > 0 ? midSum / midBins : 0.0f;
+            highEnergy[frame] = highBins > 0 ? highSum / highBins : 0.0f;
+        }
+
+#else
+        // Fallback: compute energy using simple bandpass approximation
+        // This is faster than DFT but less accurate
+        if (audioData.samples.size() < fftSize) {
+            s_lastError = "Audio too short for frequency analysis";
+            return -1;
+        }
+        size_t numFrames = (audioData.samples.size() - fftSize) / hopSize + 1;
+
+        std::vector<float> bassEnergy(numFrames, 0.0f);
+        std::vector<float> midEnergy(numFrames, 0.0f);
+        std::vector<float> highEnergy(numFrames, 0.0f);
+
+        // Simple energy estimation using difference (high-pass) and smoothing (low-pass)
+        for (size_t frame = 0; frame < numFrames; ++frame) {
+            size_t start = frame * hopSize;
+            size_t end = std::min(start + fftSize, audioData.samples.size());
+
+            float sumLow = 0.0f, sumHigh = 0.0f, sumTotal = 0.0f;
+            float prevSample = 0.0f;
+
+            for (size_t i = start; i < end; ++i) {
+                float sample = audioData.samples[i];
+                float absSample = std::abs(sample);
+                sumTotal += absSample;
+
+                // High frequencies: difference between consecutive samples
+                float diff = std::abs(sample - prevSample);
+                sumHigh += diff;
+                prevSample = sample;
+            }
+
+            // Approximate: bass = smoothed total, highs = differences, mids = remainder
+            bassEnergy[frame] = sumTotal / (end - start);
+            highEnergy[frame] = sumHigh / (end - start);
+            midEnergy[frame] = std::max(0.0f, bassEnergy[frame] - highEnergy[frame] * 0.5f);
+        }
+#endif
+
+        // Normalize each band to 0-1 range
+        auto normalizeArray = [](std::vector<float>& arr) {
+            float maxVal = 0.0f;
+            for (float v : arr) {
+                if (v > maxVal) maxVal = v;
+            }
+            if (maxVal > 0.0f) {
+                for (float& v : arr) {
+                    v /= maxVal;
+                }
+            }
+        };
+
+        normalizeArray(bassEnergy);
+        normalizeArray(midEnergy);
+        normalizeArray(highEnergy);
+
+        // Downsample to target number of peaks
+        size_t numFramesU = static_cast<size_t>(numFrames);
+        size_t framesPerPeak = numFramesU / targetPeaks;
+        if (framesPerPeak < 1) framesPerPeak = 1;
+        size_t actualPeaks = (numFramesU + framesPerPeak - 1) / framesPerPeak;
+
+        // Allocate output arrays
+        out_bands->bass_peaks = static_cast<float*>(malloc(actualPeaks * sizeof(float)));
+        out_bands->mid_peaks = static_cast<float*>(malloc(actualPeaks * sizeof(float)));
+        out_bands->high_peaks = static_cast<float*>(malloc(actualPeaks * sizeof(float)));
+
+        if (!out_bands->bass_peaks || !out_bands->mid_peaks || !out_bands->high_peaks) {
+            free(out_bands->bass_peaks);
+            free(out_bands->mid_peaks);
+            free(out_bands->high_peaks);
+            out_bands->bass_peaks = nullptr;
+            out_bands->mid_peaks = nullptr;
+            out_bands->high_peaks = nullptr;
+            s_lastError = "Memory allocation failure for waveform bands";
+            return -1;
+        }
+
+        // Downsample by taking max in each window
+        for (size_t i = 0; i < actualPeaks; ++i) {
+            size_t start = i * framesPerPeak;
+            size_t end = std::min(start + framesPerPeak, numFramesU);
+
+            float maxBass = 0.0f, maxMid = 0.0f, maxHigh = 0.0f;
+            for (size_t j = start; j < end; ++j) {
+                if (bassEnergy[j] > maxBass) maxBass = bassEnergy[j];
+                if (midEnergy[j] > maxMid) maxMid = midEnergy[j];
+                if (highEnergy[j] > maxHigh) maxHigh = highEnergy[j];
+            }
+
+            out_bands->bass_peaks[i] = maxBass;
+            out_bands->mid_peaks[i] = maxMid;
+            out_bands->high_peaks[i] = maxHigh;
+        }
+
+        out_bands->count = actualPeaks;
+        return 0;
+
+    } catch (const std::exception& e) {
+        s_lastError = e.what();
+        return -1;
+    } catch (...) {
+        s_lastError = "Exception during waveform bands generation";
+        return -1;
+    }
+}
+
+BEATSYNC_API void bs_free_waveform_bands(bs_waveform_bands_t* bands) {
+    if (bands) {
+        free(bands->bass_peaks);
+        free(bands->mid_peaks);
+        free(bands->high_peaks);
+        bands->bass_peaks = nullptr;
+        bands->mid_peaks = nullptr;
+        bands->high_peaks = nullptr;
+        bands->count = 0;
+    }
+}
+
 // ==================== VideoWriter API ====================
 
 BEATSYNC_API void* bs_create_video_writer() {
@@ -201,7 +455,11 @@ BEATSYNC_API void* bs_create_video_writer() {
             s_effectsConfigs[writer] = BeatSync::EffectsConfig();
         }
         return writer;
+    } catch (const std::exception& e) {
+        s_lastError = std::string("Error creating VideoWriter: ") + e.what();
+        return nullptr;
     } catch (...) {
+        s_lastError = "Unknown exception creating VideoWriter";
         return nullptr;
     }
 }
@@ -366,15 +624,42 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
             }
 
             // Use segment start time as position within the source video (modular approach)
+            // For short looping videos, we cycle through the video content
             double sourceStart = 0.0;
+            double sourceDuration = duration;  // How much to extract from source
             double cachedDuration = durations[videoIdx];
+
             if (cachedDuration > 0) {
+                // Wrap the start position to stay within video bounds
                 sourceStart = fmod(startTime, cachedDuration);
+
+                // CRITICAL FIX: fmod can return tiny values close to zero due to floating-point
+                // precision issues. Clamp very small values to exactly 0.0 to avoid FFmpeg errors.
+                // 1 millisecond threshold is well below a single frame at any reasonable framerate.
+                if (sourceStart < 0.001) {
+                    sourceStart = 0.0;
+                }
+
+                // CRITICAL FIX: Ensure we don't try to extract more than what's available
+                // from the current position. For short looping videos, just extract
+                // what's available from this position (loop will continue with next video)
+                double availableFromStart = cachedDuration - sourceStart;
+                if (availableFromStart < sourceDuration) {
+                    // Not enough content from this position - start from beginning instead
+                    // to maximize usable content from this video
+                    if (cachedDuration >= sourceDuration) {
+                        sourceStart = 0.0;  // Reset to start
+                    } else {
+                        // Video is shorter than requested segment - use whole video
+                        sourceStart = 0.0;
+                        sourceDuration = cachedDuration;
+                    }
+                }
             } else {
                 sourceStart = fmod(startTime, DEFAULT_DURATION);  // Fallback
             }
 
-            if (w->copySegmentFast(videos[videoIdx], sourceStart, duration, tempFile)) {
+            if (w->copySegmentFast(videos[videoIdx], sourceStart, sourceDuration, tempFile)) {
                 tempFiles.push_back(tempFile);
             } else {
                 std::cerr << "Failed to copy segment: videoIdx=" << videoIdx 
@@ -398,8 +683,13 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
 
         // Cleanup handled by TempFileCleanup destructor
         return success ? 0 : -1;
+    } catch (const std::exception& e) {
+        // Cleanup handled by TempFileCleanup destructor
+        s_lastError = std::string("Error during video segment extraction: ") + e.what();
+        return -1;
     } catch (...) {
         // Cleanup handled by TempFileCleanup destructor
+        s_lastError = "Unknown exception in bs_video_extract_segments";
         return -1;
     }
 }
@@ -431,6 +721,65 @@ BEATSYNC_API int bs_video_concatenate(const char** inputs, size_t count, const c
     }
 }
 
+BEATSYNC_API int bs_video_normalize_sources(void* writer, const char** inputVideos, size_t videoCount,
+                                             char** normalizedPaths, size_t pathBufferSize) {
+    TRACE_FUNC();
+    if (!writer || !inputVideos || !normalizedPaths || videoCount == 0 || pathBufferSize == 0) {
+        return -1;
+    }
+
+    try {
+        auto* w = static_cast<BeatSync::VideoWriter*>(writer);
+
+        std::vector<std::string> inputs;
+        for (size_t i = 0; i < videoCount; ++i) {
+            if (inputVideos[i]) {
+                inputs.push_back(inputVideos[i]);
+            }
+        }
+
+        if (inputs.empty()) {
+            s_lastError = "No valid input videos provided";
+            return -1;
+        }
+
+        std::vector<std::string> outputPaths;
+        if (!w->normalizeVideos(inputs, outputPaths)) {
+            s_lastError = w->getLastError();
+            return -1;
+        }
+
+        // Copy paths to output buffers
+        for (size_t i = 0; i < outputPaths.size() && i < videoCount; ++i) {
+            if (!normalizedPaths[i]) continue;
+            if (outputPaths[i].length() >= pathBufferSize) {
+                s_lastError = "Normalized path exceeds buffer size for video " + std::to_string(i);
+                return -1;
+            }
+            strncpy(normalizedPaths[i], outputPaths[i].c_str(), pathBufferSize - 1);
+            normalizedPaths[i][pathBufferSize - 1] = '\0';
+        }
+
+        return 0;
+    } catch (const std::exception& e) {
+        s_lastError = e.what();
+        return -1;
+    } catch (...) {
+        s_lastError = "Unknown exception in bs_video_normalize_sources";
+        return -1;
+    }
+}
+
+BEATSYNC_API void bs_video_cleanup_normalized(char** normalizedPaths, size_t count) {
+    if (!normalizedPaths) return;
+
+    for (size_t i = 0; i < count; ++i) {
+        if (normalizedPaths[i] && normalizedPaths[i][0] != '\0') {
+            std::remove(normalizedPaths[i]);
+        }
+    }
+}
+
 BEATSYNC_API int bs_video_add_audio_track(void* writer, const char* inputVideo, const char* audioFile,
                                            const char* outputVideo, int trimToShortest,
                                            double audioStart, double audioEnd) {
@@ -459,9 +808,8 @@ BEATSYNC_API int bs_video_add_audio_track(void* writer, const char* inputVideo, 
 
 // ==================== Effects API ====================
 
-BEATSYNC_API void bs_video_set_effects_config(void* writer, const bs_effects_config_t* config) {
-    if (!writer) return;
-
+BEATSYNC_API int bs_video_set_effects_config(void* writer, const bs_effects_config_t* config) {
+    if (!writer) return 1;
     try {
         auto* w = static_cast<BeatSync::VideoWriter*>(writer);
 
@@ -473,7 +821,13 @@ BEATSYNC_API void bs_video_set_effects_config(void* writer, const bs_effects_con
             }
             BeatSync::EffectsConfig defaultCfg;  // All effects disabled by default
             w->setEffectsConfig(defaultCfg);
-            return;
+            return 0;
+        }
+
+        // Basic validation (example: transitionType must not be null, effectBeatDivisor > 0, etc.)
+        if (config->transitionType == nullptr || config->effectBeatDivisor <= 0) {
+            s_lastError = "Invalid effects config: transitionType null or effectBeatDivisor <= 0";
+            return 2;
         }
 
         BeatSync::EffectsConfig cfg;
@@ -495,6 +849,9 @@ BEATSYNC_API void bs_video_set_effects_config(void* writer, const bs_effects_con
 
         cfg.effectBeatDivisor = config->effectBeatDivisor;
 
+        cfg.effectStartTime = config->effectStartTime;
+        cfg.effectEndTime = config->effectEndTime;
+
         // Store in our map for later retrieval
         {
             std::lock_guard<std::mutex> lock(s_effectsConfigsMutex);
@@ -502,10 +859,13 @@ BEATSYNC_API void bs_video_set_effects_config(void* writer, const bs_effects_con
         }
 
         w->setEffectsConfig(cfg);
+        return 0;
     } catch (const std::exception& e) {
         s_lastError = e.what();
+        return 3;
     } catch (...) {
         s_lastError = "unknown error in bs_video_set_effects_config";
+        return 4;
     }
 }
 
@@ -744,12 +1104,13 @@ BEATSYNC_API void* bs_create_ai_analyzer(const bs_ai_config_t* config) {
         // Beat detection config
         cfg.beatConfig.useGPU = config->use_gpu != 0;
         cfg.beatConfig.gpuDeviceId = config->gpu_device_id;
-        if (config->beat_threshold > 0.0f) {
+        // Use default threshold (0.5) if sentinel (-1.0 or any negative) is provided
+        if (config->beat_threshold >= 0.0f) {
             cfg.beatConfig.beatThreshold = config->beat_threshold;
-        }
-        if (config->downbeat_threshold > 0.0f) {
+        } // else: use default
+        if (config->downbeat_threshold >= 0.0f) {
             cfg.beatConfig.downbeatThreshold = config->downbeat_threshold;
-        }
+        } // else: use default
 
         // Stem separation config
         cfg.stemConfig.useGPU = config->use_gpu != 0;
@@ -775,7 +1136,13 @@ BEATSYNC_API void* bs_create_ai_analyzer(const bs_ai_config_t* config) {
 BEATSYNC_API void bs_destroy_ai_analyzer(void* analyzer) {
 #ifdef USE_ONNX
     if (analyzer) {
-        delete static_cast<BeatSync::OnnxMusicAnalyzer*>(analyzer);
+        try {
+            delete static_cast<BeatSync::OnnxMusicAnalyzer*>(analyzer);
+        } catch (const std::exception& e) {
+            std::cerr << "[BeatSync] Warning: Exception destroying AI analyzer: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "[BeatSync] Warning: Unknown exception destroying AI analyzer" << std::endl;
+        }
     }
 #else
     (void)analyzer;
@@ -836,7 +1203,10 @@ BEATSYNC_API int bs_ai_analyze_file(void* analyzer, const char* audio_path,
                 memcpy(out_result->beats, result.beats.data(), result.beats.size() * sizeof(double));
                 out_result->beat_count = result.beats.size();
             } else {
+                // Allocation failed - no prior allocations to clean up at this point
+                s_aiLastError = "Memory allocation failed while copying beats";
                 out_result->beat_count = 0;
+                return -1;
             }
         }
 
@@ -853,7 +1223,9 @@ BEATSYNC_API int bs_ai_analyze_file(void* analyzer, const char* audio_path,
                     out_result->beats = nullptr;
                     out_result->beat_count = 0;
                 }
+                s_aiLastError = "Memory allocation failed while copying downbeats";
                 out_result->downbeat_count = 0;
+                return -1;
             }
         }
 
@@ -873,6 +1245,18 @@ BEATSYNC_API int bs_ai_analyze_file(void* analyzer, const char* audio_path,
                     if (!result.segments[i].label.empty()) {
                         size_t len = result.segments[i].label.size();
                         char* labelCopy = static_cast<char*>(malloc(len + 1));
+                        if (!labelCopy) {
+                            // Allocation failed, cleanup all previous allocations
+                            for (size_t j = 0; j < i; ++j) {
+                                if (out_result->segments[j].label) free(out_result->segments[j].label);
+                            }
+                            free(out_result->segments);
+                            out_result->segments = nullptr;
+                            out_result->segment_count = 0;
+                            if (out_result->beats) { free(out_result->beats); out_result->beats = nullptr; out_result->beat_count = 0; }
+                            if (out_result->downbeats) { free(out_result->downbeats); out_result->downbeats = nullptr; out_result->downbeat_count = 0; }
+                            return -1;
+                        }
                         memcpy(labelCopy, result.segments[i].label.c_str(), len);
                         labelCopy[len] = '\0';
                         out_result->segments[i].label = labelCopy;
@@ -882,6 +1266,13 @@ BEATSYNC_API int bs_ai_analyze_file(void* analyzer, const char* audio_path,
                     out_result->segments[i].confidence = result.segments[i].confidence;
                 }
                 out_result->segment_count = result.segments.size();
+            } else {
+                // Allocation failed, cleanup previous allocations
+                if (out_result->beats) { free(out_result->beats); out_result->beats = nullptr; out_result->beat_count = 0; }
+                if (out_result->downbeats) { free(out_result->downbeats); out_result->downbeats = nullptr; out_result->downbeat_count = 0; }
+                out_result->segments = nullptr;
+                out_result->segment_count = 0;
+                return -1;
             }
         }
 
@@ -985,9 +1376,12 @@ BEATSYNC_API int bs_ai_analyze_samples(void* analyzer,
             out_result->downbeat_count = result.downbeats.size();
         }
 
+
         out_result->bpm = result.bpm;
         out_result->duration = result.duration;
-
+        // Segments are not returned by bs_ai_analyze_samples (see bs_ai_analyze_file for segment support)
+        out_result->segments = nullptr;
+        out_result->segment_count = 0;
         return 0;
 
     } catch (const std::exception& e) {
@@ -1053,7 +1447,11 @@ BEATSYNC_API int bs_ai_analyze_quick(void* analyzer, const char* audio_path,
                 memcpy(out_result->beats, result.beats.data(), result.beats.size() * sizeof(double));
                 out_result->beat_count = result.beats.size();
             } else {
+                // Allocation failed: return error (no other allocations to clean up at this point)
+                out_result->beats = nullptr;
                 out_result->beat_count = 0;
+                s_aiLastError = "Memory allocation failed while copying beats";
+                return -1;
             }
         }
 
@@ -1063,13 +1461,16 @@ BEATSYNC_API int bs_ai_analyze_quick(void* analyzer, const char* audio_path,
                 memcpy(out_result->downbeats, result.downbeats.data(), result.downbeats.size() * sizeof(double));
                 out_result->downbeat_count = result.downbeats.size();
             } else {
-                // Free beats if previously allocated
+                // Allocation failed: free beats if previously allocated and return error
                 if (out_result->beats) {
                     free(out_result->beats);
                     out_result->beats = nullptr;
                     out_result->beat_count = 0;
                 }
+                out_result->downbeats = nullptr;
                 out_result->downbeat_count = 0;
+                s_aiLastError = "Memory allocation failed while copying downbeats";
+                return -1;
             }
         }
 
@@ -1159,6 +1560,273 @@ BEATSYNC_API const char* bs_ai_get_providers() {
     return s_aiProviders.c_str();
 #else
     return "";
+#endif
+}
+
+static thread_local std::string s_activeProvider;
+
+BEATSYNC_API int bs_ai_is_gpu_enabled(void* analyzer) {
+#ifdef USE_ONNX
+    if (!analyzer) return 0;
+    auto* musicAnalyzer = static_cast<BeatSync::OnnxMusicAnalyzer*>(analyzer);
+    // Access through the beat detector
+    const auto* beatDetector = musicAnalyzer->getBeatDetector();
+    if (!beatDetector) return 0;
+    return beatDetector->isGPUEnabled() ? 1 : 0;
+#else
+    (void)analyzer;
+    return 0;
+#endif
+}
+
+BEATSYNC_API const char* bs_ai_get_active_provider(void* analyzer) {
+#ifdef USE_ONNX
+    if (!analyzer) {
+        s_activeProvider = "None";
+        return s_activeProvider.c_str();
+    }
+    auto* musicAnalyzer = static_cast<BeatSync::OnnxMusicAnalyzer*>(analyzer);
+    const auto* beatDetector = musicAnalyzer->getBeatDetector();
+    if (!beatDetector) {
+        s_activeProvider = "None";
+        return s_activeProvider.c_str();
+    }
+    s_activeProvider = beatDetector->getActiveProvider();
+    return s_activeProvider.c_str();
+#else
+    (void)analyzer;
+    s_activeProvider = "None";
+    return s_activeProvider.c_str();
+#endif
+}
+
+// =============================================================================
+// AudioFlux Spectral Analysis Implementation
+// =============================================================================
+
+BEATSYNC_API int bs_audioflux_is_available() {
+#ifdef USE_AUDIOFLUX
+    try {
+        return AudioFluxBeatDetector::isAvailable() ? 1 : 0;
+    } catch (...) {
+        return 0;
+    }
+#else
+    return 0;
+#endif
+}
+
+BEATSYNC_API int bs_audioflux_analyze(const char* audio_path,
+                                       bs_ai_result_t* out_result,
+                                       bs_ai_progress_cb progress_cb, void* user_data) {
+#ifdef USE_AUDIOFLUX
+    if (!audio_path || !out_result) {
+        s_lastError = "Invalid parameters: null audio_path or out_result";
+        return -1;
+    }
+
+    // Initialize result
+    out_result->beats = nullptr;
+    out_result->beat_count = 0;
+    out_result->downbeats = nullptr;
+    out_result->downbeat_count = 0;
+    out_result->bpm = 0.0;
+    out_result->duration = 0.0;
+    out_result->segments = nullptr;
+    out_result->segment_count = 0;
+
+    try {
+        // Load audio file
+        BeatSync::AudioAnalyzer audioAnalyzer;
+        auto audioData = audioAnalyzer.loadAudioFile(audio_path);
+        if (audioData.samples.empty()) {
+            s_lastError = "Failed to load audio file: " + std::string(audio_path);
+            return -2;
+        }
+
+        // Create AudioFlux detector
+        AudioFluxBeatDetector detector;
+
+        // Create progress wrapper
+        auto progressWrapper = [progress_cb, user_data](float progress, const char* stage) -> bool {
+            if (progress_cb) {
+                // Convention: nonzero return means continue, zero means cancel (matches ONNX wrapper)
+                return progress_cb(progress, stage, "", user_data) != 0;
+            }
+            return true;
+        };
+
+        // Run detection
+        auto result = detector.detect(audioData.samples, audioData.sampleRate, progressWrapper);
+
+        if (!result.error.empty()) {
+            s_lastError = result.error;
+            return -3;
+        }
+
+        // Copy results
+        out_result->beat_count = result.beats.size();
+        if (out_result->beat_count > 0) {
+            out_result->beats = static_cast<double*>(malloc(out_result->beat_count * sizeof(double)));
+            if (!out_result->beats) {
+                s_lastError = "Failed to allocate memory for beats array";
+                out_result->beat_count = 0;
+                return -6;
+            }
+            std::memcpy(out_result->beats, result.beats.data(), out_result->beat_count * sizeof(double));
+        }
+
+        out_result->bpm = result.bpm;
+        out_result->duration = static_cast<double>(audioData.samples.size()) / audioData.sampleRate;
+
+        return 0;
+    } catch (const std::exception& e) {
+        s_lastError = std::string("AudioFlux analysis exception: ") + e.what();
+        return -4;
+    } catch (...) {
+        s_lastError = "AudioFlux analysis crashed with unknown exception";
+        return -5;
+    }
+#else
+    (void)audio_path;
+    (void)out_result;
+    (void)progress_cb;
+    (void)user_data;
+    s_lastError = "AudioFlux support not compiled in";
+    return -1;
+#endif
+}
+
+BEATSYNC_API int bs_audioflux_analyze_with_stems(const char* audio_path,
+                                                  const char* stem_model_path,
+                                                  bs_ai_result_t* out_result,
+                                                  bs_ai_progress_cb progress_cb, void* user_data) {
+#if defined(USE_AUDIOFLUX) && defined(USE_ONNX)
+    if (!audio_path || !out_result) {
+        s_lastError = "Invalid parameters: null audio_path or out_result";
+        return -1;
+    }
+
+    // Initialize result
+    out_result->beats = nullptr;
+    out_result->beat_count = 0;
+    out_result->downbeats = nullptr;
+    out_result->downbeat_count = 0;
+    out_result->bpm = 0.0;
+    out_result->duration = 0.0;
+    out_result->segments = nullptr;
+    out_result->segment_count = 0;
+
+    try {
+        // Load audio file
+        if (progress_cb) progress_cb(0.05f, "Loading audio...", "", user_data);
+
+        BeatSync::AudioAnalyzer audioAnalyzer;
+        auto audioData = audioAnalyzer.loadAudioFile(audio_path);
+        if (audioData.samples.empty()) {
+            s_lastError = "Failed to load audio file: " + std::string(audio_path);
+            return -2;
+        }
+
+        std::vector<float> drumsAudio;
+        int drumsSampleRate = audioData.sampleRate;
+
+        // If stem model path provided, use stem separation
+        if (stem_model_path && strlen(stem_model_path) > 0) {
+            if (progress_cb) progress_cb(0.1f, "Separating stems (extracting drums)...", "", user_data);
+
+            BeatSync::OnnxStemSeparator stemSeparator;
+            BeatSync::StemSeparatorConfig stemConfig;
+            stemConfig.useGPU = true;
+            stemConfig.sampleRate = 44100;
+
+            if (!stemSeparator.loadModel(stem_model_path, stemConfig)) {
+                std::cerr << "[StemsFlux] Failed to load stem model, falling back to full mix" << std::endl;
+                // Fall back to full mix
+                drumsAudio = audioData.samples;
+            } else {
+                // Create progress wrapper for stem separation
+                auto stemProgress = [progress_cb, user_data](float p, const std::string& msg) -> bool {
+                    if (progress_cb) {
+                        // Map stem progress (0-1) to overall progress (0.1-0.5)
+                        float overallProgress = 0.1f + p * 0.4f;
+                        return progress_cb(overallProgress, msg.c_str(), "", user_data) == 0;
+                    }
+                    return true;
+                };
+
+                // Separate and extract drums stem
+                auto stemResult = stemSeparator.separateMono(audioData.samples, audioData.sampleRate, stemProgress);
+                drumsAudio = stemResult.getMonoStem(BeatSync::StemType::Drums);
+                drumsSampleRate = stemResult.sampleRate;
+
+                std::cerr << "[StemsFlux] Extracted drums stem: " << drumsAudio.size() << " samples at " << drumsSampleRate << " Hz" << std::endl;
+            }
+        } else {
+            // No stem model, use full mix
+            drumsAudio = audioData.samples;
+        }
+
+        if (drumsAudio.empty()) {
+            s_lastError = "Failed to extract drums stem";
+            return -3;
+        }
+
+        // Now run AudioFlux on the drums stem
+        if (progress_cb) progress_cb(0.55f, "Running AudioFlux beat detection on drums...", "", user_data);
+
+        AudioFluxBeatDetector detector;
+
+        // Create progress wrapper for AudioFlux (maps 0-1 to 0.55-1.0)
+        auto fluxProgress = [progress_cb, user_data](float progress, const char* stage) -> bool {
+            if (progress_cb) {
+                float overallProgress = 0.55f + progress * 0.45f;
+                return progress_cb(overallProgress, stage, "", user_data) == 0;
+            }
+            return true;
+        };
+
+        // Run detection on drums stem
+        auto result = detector.detect(drumsAudio, drumsSampleRate, fluxProgress);
+
+        if (!result.error.empty()) {
+            s_lastError = result.error;
+            return -4;
+        }
+
+        // Copy results
+        out_result->beat_count = result.beats.size();
+        if (out_result->beat_count > 0) {
+            out_result->beats = static_cast<double*>(malloc(out_result->beat_count * sizeof(double)));
+            if (!out_result->beats) {
+                s_lastError = "Failed to allocate memory for beats array";
+                out_result->beat_count = 0;
+                return -6;
+            }
+            std::memcpy(out_result->beats, result.beats.data(), out_result->beat_count * sizeof(double));
+        }
+
+        out_result->bpm = result.bpm;
+        out_result->duration = static_cast<double>(audioData.samples.size()) / audioData.sampleRate;
+
+        std::cerr << "[StemsFlux] Analysis complete: " << result.beats.size() << " beats, " << result.bpm << " BPM" << std::endl;
+
+        return 0;
+    } catch (const std::exception& e) {
+        s_lastError = std::string("Stems+AudioFlux analysis exception: ") + e.what();
+        return -5;
+    } catch (...) {
+        s_lastError = "Stems+AudioFlux analysis crashed with unknown exception";
+        return -6;
+    }
+#else
+    (void)audio_path;
+    (void)stem_model_path;
+    (void)out_result;
+    (void)progress_cb;
+    (void)user_data;
+    s_lastError = "AudioFlux or ONNX support not compiled in";
+    return -1;
 #endif
 }
 

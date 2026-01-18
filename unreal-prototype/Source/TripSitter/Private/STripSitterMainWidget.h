@@ -11,6 +11,7 @@
 #include "Brushes/SlateDynamicImageBrush.h"
 #include "Async/AsyncWork.h"
 #include "BeatsyncProcessingTask.h"
+#include "SWaveformViewer.h"
 
 class SEditableTextBox;
 class SProgressBar;
@@ -18,7 +19,6 @@ class STextBlock;
 class SCheckBox;
 class SSlider;
 class SImage;
-class SWaveformViewer;
 class SEffectTimeline;
 template<typename T> class SComboBox;
 template<typename T> class SSpinBox;
@@ -66,6 +66,7 @@ enum class EStemEffect : uint8
 	ColorGrade = 4
 };
 
+
 // Stem configuration for effect mapping
 struct FStemConfig
 {
@@ -74,6 +75,9 @@ struct FStemConfig
 	TArray<double> BeatTimes;
 	bool bEnabled = false;
 };
+
+// Number of stems (should match EStemType::Count)
+constexpr int32 STEM_COUNT = static_cast<int32>(EStemType::Count);
 
 /**
  * TripSitter Main Widget - Slate implementation
@@ -153,7 +157,7 @@ private:
 	int32 TransitionType = 0;
 
 	// Stem configurations (Kick, Snare, HiHat, Synth)
-	FStemConfig StemConfigs[4];
+	FStemConfig StemConfigs[STEM_COUNT];
 	TArray<TSharedPtr<FString>> StemEffectOptions;
 
 	// Preview state

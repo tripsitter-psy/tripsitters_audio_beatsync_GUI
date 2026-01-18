@@ -16,6 +16,7 @@ namespace BeatSync {
 
 AudioAnalyzer::AudioAnalyzer()
     : m_sensitivity(0.5)
+    , m_bpmHint(0.0)
 {
 }
 
@@ -51,16 +52,37 @@ BeatGrid AudioAnalyzer::analyze(const std::string& audioFilePath) {
             return beatGrid;
         }
 
-        std::cout << "Detected " << beats.size() << " beats\n";
+        std::cout << "Detected " << beats.size() << " raw beats\n";
+
+        double bpm;
+
+        // If BPM hint is set, use it to generate evenly-spaced beats
+        if (m_bpmHint > 0.0) {
+            bpm = m_bpmHint;
+            double beatInterval = 60.0 / bpm;  // seconds between beats
+
+            // Use the first detected beat as the anchor point
+            double firstBeat = beats[0];
+
+            // Generate evenly-spaced beats from the first beat to the end of audio
+            std::vector<double> evenBeats;
+            for (double t = firstBeat; t < audio.duration; t += beatInterval) {
+                evenBeats.push_back(t);
+            }
+
+            beats = evenBeats;
+            std::cout << "Using BPM hint: " << bpm << " - generated " << beats.size() << " evenly-spaced beats\n";
+        } else {
+            // Estimate BPM from detected beats
+            bpm = estimateBPM(beats);
+            std::cout << "Auto-detected BPM: " << bpm << "\n";
+        }
+
+        std::cout << "Final beat count: " << beats.size() << " beats\n";
 
         // Set beats in grid
         beatGrid.setBeats(beats);
-
-        // Estimate and set BPM
-        double bpm = estimateBPM(beats);
         beatGrid.setBPM(bpm);
-
-        std::cout << "Estimated BPM: " << bpm << "\n";
         std::cout << "Audio duration: " << audio.duration << "s, Last beat: " << beatGrid.getDuration() << "s\n";
 
     } catch (const std::exception& e) {
@@ -72,6 +94,19 @@ BeatGrid AudioAnalyzer::analyze(const std::string& audioFilePath) {
 
 void AudioAnalyzer::setSensitivity(double sensitivity) {
     m_sensitivity = std::max(0.0, std::min(1.0, sensitivity));
+}
+
+void AudioAnalyzer::setBPMHint(double bpm) {
+    // Clamp to reasonable BPM range (0 = disabled, or 20-300 BPM)
+    if (bpm <= 0.0) {
+        m_bpmHint = 0.0;
+    } else {
+        m_bpmHint = std::max(20.0, std::min(300.0, bpm));
+    }
+}
+
+double AudioAnalyzer::getBPMHint() const {
+    return m_bpmHint;
 }
 
 std::string AudioAnalyzer::getLastError() const {
@@ -299,7 +334,10 @@ std::vector<double> AudioAnalyzer::detectBeats(const AudioData& audio) {
     double threshold = mean + (1.0 - m_sensitivity * 2.0) * stdDev;
 
     // Find peaks in energy envelope
-    const size_t minBeatGapFrames = 10;  // Minimum frames between beats (~300ms)
+    // For typical music (60-200 BPM), beats are 300-1000ms apart
+    // At 200 BPM, beat interval is 300ms. With hopSize=frameSize/2=15ms, that's 20 frames minimum.
+    // Using 18 frames (~270ms) gives some headroom for fast tempos while filtering sub-beats.
+    const size_t minBeatGapFrames = 18;  // Minimum frames between beats (~270ms, allows up to ~220 BPM)
     size_t lastBeatFrame = 0;
 
     for (size_t i = 1; i < smoothedEnergy.size() - 1; ++i) {
@@ -348,11 +386,22 @@ double AudioAnalyzer::estimateBPM(const std::vector<double>& beats) {
     double medianInterval = intervals[intervals.size() / 2];
 
     // Convert to BPM
+    double bpm = 0.0;
     if (medianInterval > 0.0) {
-        return 60.0 / medianInterval;
+        bpm = 60.0 / medianInterval;
     }
 
-    return 0.0;
+    // Normalize BPM to common range (70-180 BPM)
+    // Most music falls in this range. If we detect outside it,
+    // we likely detected half-beats or double-beats.
+    while (bpm > 180.0) {
+        bpm /= 2.0;  // Detected half-beats, halve the BPM
+    }
+    while (bpm > 0.0 && bpm < 70.0) {
+        bpm *= 2.0;  // Detected double-beats, double the BPM
+    }
+
+    return bpm;
 }
 
 std::vector<double> AudioAnalyzer::movingAverage(const std::vector<double>& data, size_t windowSize) {

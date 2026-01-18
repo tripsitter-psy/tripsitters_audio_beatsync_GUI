@@ -33,6 +33,21 @@ public:
     void setSensitivity(double sensitivity);
 
     /**
+     * @brief Set BPM hint for beat detection
+     * @param bpm The expected BPM (0 to disable hint and auto-detect)
+     *
+     * When set, the analyzer will use this BPM to generate evenly-spaced beats
+     * starting from the first detected beat onset. This is useful when the user
+     * knows the track's BPM and wants consistent beat spacing.
+     */
+    void setBPMHint(double bpm);
+
+    /**
+     * @brief Get the current BPM hint (0 if not set)
+     */
+    double getBPMHint() const;
+
+    /**
      * @brief Get last error message
      */
     std::string getLastError() const;
@@ -51,6 +66,7 @@ public:
 
 private:
     double m_sensitivity;
+    double m_bpmHint;  // 0 = auto-detect, >0 = use this BPM
     std::string m_lastError;
 
     /**

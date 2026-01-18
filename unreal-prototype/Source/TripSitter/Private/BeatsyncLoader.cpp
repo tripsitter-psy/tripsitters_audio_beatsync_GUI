@@ -14,6 +14,7 @@ struct bs_beatgrid_t {
 using bs_resolve_ffmpeg_path_t = const char* (*)();
 using bs_create_audio_analyzer_t = void* (*)();
 using bs_destroy_audio_analyzer_t = void (*)(void*);
+using bs_set_bpm_hint_t = void (*)(void*, double);
 using bs_analyze_audio_t = int (*)(void*, const char*, bs_beatgrid_t*);
 using bs_free_beatgrid_t = void (*)(bs_beatgrid_t*);
 using bs_create_video_writer_t = void* (*)();
@@ -109,6 +110,7 @@ struct FBeatsyncApi
     bs_resolve_ffmpeg_path_t resolve_ffmpeg = nullptr;
     bs_create_audio_analyzer_t create_analyzer = nullptr;
     bs_destroy_audio_analyzer_t destroy_analyzer = nullptr;
+    bs_set_bpm_hint_t set_bpm_hint = nullptr;
     bs_analyze_audio_t analyze_audio = nullptr;
     bs_free_beatgrid_t free_beatgrid = nullptr;
     bs_create_video_writer_t create_video_writer = nullptr;
@@ -236,6 +238,7 @@ bool FBeatsyncLoader::Initialize()
     GApi.resolve_ffmpeg = (bs_resolve_ffmpeg_path_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_resolve_ffmpeg_path"));
     GApi.create_analyzer = (bs_create_audio_analyzer_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_create_audio_analyzer"));
     GApi.destroy_analyzer = (bs_destroy_audio_analyzer_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_destroy_audio_analyzer"));
+    GApi.set_bpm_hint = (bs_set_bpm_hint_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_set_bpm_hint"));
     GApi.analyze_audio = (bs_analyze_audio_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_analyze_audio"));
     GApi.free_beatgrid = (bs_free_beatgrid_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_beatgrid"));
     GApi.create_video_writer = (bs_create_video_writer_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_create_video_writer"));
@@ -373,6 +376,13 @@ void FBeatsyncLoader::DestroyAnalyzer(void* Handle)
 {
     if (GApi.destroy_analyzer && Handle) {
         GApi.destroy_analyzer(Handle);
+    }
+}
+
+void FBeatsyncLoader::SetBPMHint(void* Analyzer, double BPM)
+{
+    if (GApi.set_bpm_hint && Analyzer) {
+        GApi.set_bpm_hint(Analyzer, BPM);
     }
 }
 
