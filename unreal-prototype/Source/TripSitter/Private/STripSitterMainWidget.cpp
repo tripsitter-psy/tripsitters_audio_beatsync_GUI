@@ -2067,6 +2067,14 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 		return FReply::Handled();
 	}
 
+	// Save user's BPM from spinbox BEFORE analysis - we'll use this as a hint
+	double UserRequestedBPM = 0.0;
+	if (BPMSpinBox.IsValid())
+	{
+		UserRequestedBPM = BPMSpinBox->GetValue();
+		UE_LOG(LogTemp, Log, TEXT("TripSitter: User BPM from spinbox before analysis: %.1f"), UserRequestedBPM);
+	}
+
 	// Check analysis mode and availability
 	bool bUseAI = (AnalysisMode == EAnalysisMode::AIBeat || AnalysisMode == EAnalysisMode::AIStems);
 	bool bUseAudioFlux = (AnalysisMode == EAnalysisMode::AudioFlux);
@@ -2332,16 +2340,36 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 
 	if (bSuccess && BeatGrid.Beats.Num() > 0)
 	{
+		// Store first beat time for BPM recalculation anchor (before potentially modifying beats)
+		OriginalFirstBeatTime = BeatGrid.Beats[0];
+
+		// If user had a valid BPM in the spinbox, regenerate beats at that BPM
+		// This allows "Analyze" to respect the user's requested tempo
+		if (UserRequestedBPM >= 20.0 && UserRequestedBPM <= 300.0)
+		{
+			double BeatInterval = 60.0 / UserRequestedBPM;
+			double FirstBeat = OriginalFirstBeatTime;
+			double Duration = BeatGrid.Duration > 0 ? BeatGrid.Duration :
+				(BeatGrid.Beats.Num() > 0 ? BeatGrid.Beats.Last() + BeatInterval : 300.0);
+
+			TArray<double> EvenBeats;
+			for (double t = FirstBeat; t < Duration; t += BeatInterval)
+			{
+				EvenBeats.Add(t);
+			}
+
+			BeatGrid.Beats = EvenBeats;
+			BeatGrid.BPM = UserRequestedBPM;
+			UE_LOG(LogTemp, Log, TEXT("TripSitter: Regenerated %d evenly-spaced beats at user-requested %.1f BPM"),
+				EvenBeats.Num(), UserRequestedBPM);
+		}
+
 		// Store results
 		bAudioAnalyzed = true;
 		DetectedBPM = BeatGrid.BPM;
 		AnalyzedBeatTimes = BeatGrid.Beats;
 
-		// Store first beat time for BPM recalculation anchor
-		OriginalFirstBeatTime = BeatGrid.Beats.Num() > 0 ? BeatGrid.Beats[0] : 0.0;
-
-		// Don't apply beats automatically - user clicks "Apply Beats" button
-		// This allows them to adjust BPM first if needed
+		// Update spinbox to show the BPM we're using
 		if (BPMSpinBox.IsValid())
 		{
 			BPMSpinBox->SetValue(DetectedBPM);

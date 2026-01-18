@@ -85,7 +85,7 @@ struct bs_ai_result_t {
     size_t downbeat_count;
     double bpm;
     double duration;
-    void* segments; // We don't use segments in UE yet
+    void* segments; // bs_segment_t* - not used in UE
     size_t segment_count;
 };
 
@@ -504,13 +504,14 @@ bool FBeatsyncLoader::CutVideoAtBeatsMulti(void* Handle, const TArray<FString>& 
         InputPtrs.Add(ConvertedStrings.Last().GetData());
     }
 
+    FTCHARToUTF8 OutputUtf8(*OutputVideo);
     int Result = GApi.video_cut_at_beats_multi(
         Handle,
         InputPtrs.GetData(),
         InputPtrs.Num(),
         BeatTimes.GetData(),
         BeatTimes.Num(),
-        TCHAR_TO_UTF8(*OutputVideo),
+        OutputUtf8.Get(),
         ClipDuration
     );
 
@@ -539,7 +540,14 @@ bool FBeatsyncLoader::ConcatenateVideos(const TArray<FString>& Inputs, const FSt
         InputPtrs.Add(ConvertedStrings.Last().GetData());
     }
 
-    int Result = GApi.video_concatenate(InputPtrs.GetData(), InputPtrs.Num(), TCHAR_TO_UTF8(*OutputVideo));
+    FTCHARToUTF8 UTF8Output(*OutputVideo);
+    TArray<FTCHARToUTF8> ConvertedInputs;
+    TArray<const char*> InputPtrsStable;
+    for (const FString& Input : Inputs) {
+        ConvertedInputs.Emplace(*Input);
+        InputPtrsStable.Add(ConvertedInputs.Last().Get());
+    }
+    int Result = GApi.video_concatenate(InputPtrsStable.GetData(), InputPtrsStable.Num(), UTF8Output.Get());
     return Result == 0;
 }
 
