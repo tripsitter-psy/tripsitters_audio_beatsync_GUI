@@ -30,13 +30,20 @@ extern "C" {
 // Run a command hidden (no console window) and capture output.
 // Returns exit code; output is appended to 'output'.
 static int runHiddenCommand(const std::string& cmdLine, std::string& output) {
+    if (cmdLine.empty()) {
+        output = "Error: empty command line";
+        return -1;
+    }
+
     SECURITY_ATTRIBUTES sa;
     sa.nLength = sizeof(sa);
     sa.bInheritHandle = TRUE;
     sa.lpSecurityDescriptor = NULL;
 
-    HANDLE hReadPipe, hWritePipe;
+    HANDLE hReadPipe = NULL, hWritePipe = NULL;
     if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) {
+        DWORD err = GetLastError();
+        output = "Error: CreatePipe failed with error " + std::to_string(err);
         return -1;
     }
     SetHandleInformation(hReadPipe, HANDLE_FLAG_INHERIT, 0);
@@ -50,55 +57,35 @@ static int runHiddenCommand(const std::string& cmdLine, std::string& output) {
 
     PROCESS_INFORMATION pi = {0};
 
-    // Parse out the executable path from the command line
-    // Command format is: "path\to\exe.exe" args... OR path\to\exe.exe args...
-    std::string exePath;
-    std::string args;
-    
-    if (!cmdLine.empty() && cmdLine[0] == '"') {
-        // Quoted executable path
-        size_t endQuote = cmdLine.find('"', 1);
-        if (endQuote != std::string::npos) {
-            exePath = cmdLine.substr(1, endQuote - 1);
-            args = cmdLine.substr(endQuote + 1);
-        }
-    } else {
-        // Unquoted - find first space
-        size_t space = cmdLine.find(' ');
-        if (space != std::string::npos) {
-            exePath = cmdLine.substr(0, space);
-            args = cmdLine.substr(space);
-        } else {
-            exePath = cmdLine;
-        }
-    }
-    
-    // Build command line: "exe" args (CreateProcess expects exe in quotes if it has spaces)
-    std::string fullCmdLine = "\"" + exePath + "\"" + args;
-    
-    // CreateProcess needs a mutable buffer
-    std::vector<char> cmdBuf(fullCmdLine.begin(), fullCmdLine.end());
+    // CreateProcess works best when we pass NULL for lpApplicationName
+    // and let it parse the command line itself. This handles quoted paths correctly.
+    // We need a mutable copy of the command line.
+    std::vector<char> cmdBuf(cmdLine.begin(), cmdLine.end());
     cmdBuf.push_back('\0');
 
-    // Use lpApplicationName to specify the executable directly
     BOOL ok = CreateProcessA(
-        exePath.c_str(),  // Application name - handles paths with spaces correctly
-        cmdBuf.data(),    // Command line
+        NULL,             // Let CreateProcess parse the executable from command line
+        cmdBuf.data(),    // Command line (must be mutable)
         NULL, NULL, TRUE,
         CREATE_NO_WINDOW,
         NULL, NULL,
         &si, &pi
     );
 
+    // Close write end of pipe immediately after CreateProcess
     CloseHandle(hWritePipe);
+    hWritePipe = NULL;
 
     if (!ok) {
+        DWORD err = GetLastError();
         CloseHandle(hReadPipe);
+        output = "Error: CreateProcess failed with error " + std::to_string(err) +
+                 " for command: " + cmdLine.substr(0, 200);
         return -1;
     }
 
-    // Read output
-    char buf[512];
+    // Read output in chunks
+    char buf[4096];
     DWORD bytesRead;
     while (ReadFile(hReadPipe, buf, sizeof(buf) - 1, &bytesRead, NULL) && bytesRead > 0) {
         buf[bytesRead] = '\0';
@@ -106,9 +93,17 @@ static int runHiddenCommand(const std::string& cmdLine, std::string& output) {
     }
     CloseHandle(hReadPipe);
 
-    WaitForSingleObject(pi.hProcess, INFINITE);
+    // Wait for process to complete (with timeout to prevent hangs)
+    DWORD waitResult = WaitForSingleObject(pi.hProcess, 300000);  // 5 minute timeout
+
     DWORD exitCode = 0;
-    GetExitCodeProcess(pi.hProcess, &exitCode);
+    if (waitResult == WAIT_TIMEOUT) {
+        TerminateProcess(pi.hProcess, 1);
+        exitCode = 1;
+        output += "\nError: Process timed out after 5 minutes";
+    } else {
+        GetExitCodeProcess(pi.hProcess, &exitCode);
+    }
 
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
@@ -130,16 +125,69 @@ namespace BeatSync {
 
 namespace {
 // Helper to get temp directory path with trailing slash
+// Uses Windows-native API to avoid std::filesystem exceptions that can crash the app
 std::string getTempDir() {
-    std::string tempDir = std::filesystem::temp_directory_path().string();
-    if (!tempDir.empty() && tempDir.back() != '/' && tempDir.back() != '\\') {
 #ifdef _WIN32
-        tempDir += '\\';
-#else
-        tempDir += '/';
-#endif
+    wchar_t tempPath[MAX_PATH + 1];
+    DWORD len = GetTempPathW(MAX_PATH + 1, tempPath);
+    if (len > 0 && len < MAX_PATH) {
+        char narrowPath[MAX_PATH + 1];
+        int result = WideCharToMultiByte(CP_UTF8, 0, tempPath, -1, narrowPath, MAX_PATH + 1, nullptr, nullptr);
+        if (result > 0) {
+            std::string tempDir(narrowPath);
+            if (!tempDir.empty() && tempDir.back() != '\\') {
+                tempDir += '\\';
+            }
+            return tempDir;
+        }
     }
-    return tempDir;
+    // Fallback to a safe default
+    return "C:\\Temp\\";
+#else
+    try {
+        std::string tempDir = std::filesystem::temp_directory_path().string();
+        if (!tempDir.empty() && tempDir.back() != '/') {
+            tempDir += '/';
+        }
+        return tempDir;
+    } catch (...) {
+        return "/tmp/";
+    }
+#endif
+}
+
+// Force release of any lingering FFmpeg CUDA contexts
+// This is necessary because repeated FFmpeg invocations can leak CUDA memory
+// The function runs nvidia-smi to query memory, which forces the driver to clean up
+// orphaned contexts from terminated FFmpeg processes
+void flushGpuMemory() {
+#ifdef _WIN32
+    // Sleep briefly to allow async CUDA cleanup from recent FFmpeg processes
+    Sleep(100);
+
+    // Running nvidia-smi query forces NVIDIA driver to clean up orphaned CUDA contexts
+    // This is a best-effort cleanup that helps prevent memory accumulation
+    STARTUPINFOW si = { sizeof(si) };
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = {0};
+
+    // nvidia-smi -q -d MEMORY queries memory state, which triggers driver cleanup
+    wchar_t cmdLine[] = L"nvidia-smi -q -d MEMORY";
+    if (CreateProcessW(nullptr, cmdLine, nullptr, nullptr, FALSE,
+                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        // Wait up to 2 seconds for query to complete
+        WaitForSingleObject(pi.hProcess, 2000);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    }
+
+    // Additional brief sleep to let cleanup propagate
+    Sleep(50);
+#else
+    // On Linux/macOS, brief sleep is the best we can do without root access
+    usleep(150000);  // 150ms
+#endif
 }
 
 // Lightweight logger to capture FFmpeg command, exit code, and recent output.
@@ -294,6 +342,16 @@ bool VideoWriter::extractSegments(const std::string& inputVideo,
                                   const std::string& outputVideo) {
     m_lastError.clear();
 
+    // Reset GPU segment counter at start of batch operation
+    resetSegmentCounter();
+
+    // Log GPU capabilities once on first call
+    static bool loggedGpuCaps = false;
+    if (!loggedGpuCaps) {
+        logGpuCapabilities();
+        loggedGpuCaps = true;
+    }
+
     if (segments.empty()) {
         m_lastError = "No segments to extract";
         return false;
@@ -419,7 +477,7 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
                                    double startTime,
                                    double duration,
                                    const std::string& outputVideo) {
-    std::cout << "Extracting segment: " << inputVideo << " @ " << startTime << "s for " << duration << "s -> " << outputVideo << "\n";
+    std::cout << "Extracting segment: " << inputVideo << " @ " << std::fixed << std::setprecision(6) << startTime << "s for " << duration << "s -> " << outputVideo << std::defaultfloat << "\n";
 
     // Use FFmpeg command-line for reliable segment extraction
     // Note: popen_compat() on Windows passes commands to cmd.exe, so we need proper quote escaping
@@ -428,14 +486,56 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
     // and pixel format to prevent freezing from mixed source formats
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideo << "\""
+    cmd << "\"" << ffmpegPath << "\"";
+
+    // GPU acceleration: Use CUDA hardware decoding if available
+    // IMPORTANT: Periodically force CPU mode to release GPU memory and prevent CUDA crashes
+    // Store in member variable so copySegmentPrecise fallback can use the same decision
+    m_allowGpuThisSegment = shouldUseGpuForSegment();
+    bool allowGpuThisSegment = m_allowGpuThisSegment;
+    bool useCuda = allowGpuThisSegment && hasCudaHwaccel();
+    bool useScaleCuda = useCuda && hasScaleCudaFilter();
+
+    if (useCuda) {
+        cmd << " -hwaccel cuda -hwaccel_device 0";
+        // Keep frames on GPU if using NVENC encoder and scale_cuda
+        if (useScaleCuda && probeEncoder("h264_nvenc")) {
+            cmd << " -hwaccel_output_format cuda";
+        }
+    }
+
+    // Use fixed-point notation for time values - FFmpeg doesn't accept scientific notation (e.g., 2e-05)
+    cmd << std::fixed << std::setprecision(6);
+    cmd << " -i \"" << inputVideo << "\""
         << " -ss " << startTime
-        << " -t " << duration
-        << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
-        << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
-        << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\""
-        << " " << getEncoderArgs("ultrafast")
-        << " -c:a aac -b:a 192k -ar 44100"
+        << " -t " << duration;
+    cmd << std::defaultfloat;  // Reset to default formatting
+
+    // Build filter chain: Use GPU filters when available, CPU fallback otherwise
+    if (useScaleCuda) {
+        // GPU-accelerated filter chain with scale_cuda
+        // Note: pad filter has no CUDA equivalent, so we need hwdownload->pad->hwupload
+        // Add setsar=1 for SAR consistency with CPU path
+        cmd << " -vf \"scale_cuda=" << m_outputWidth << ":" << m_outputHeight
+            << ":force_original_aspect_ratio=decrease,hwdownload,format=nv12"
+            << ",pad=" << m_outputWidth << ":" << m_outputHeight
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+    } else {
+        // CPU filter chain (original behavior)
+        cmd << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
+            << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+    }
+
+    // Use GPU encoder only if GPU is allowed for this segment
+    // When allowGpuThisSegment is false, force CPU encoder to release GPU memory
+    if (allowGpuThisSegment) {
+        cmd << " " << getEncoderArgs("ultrafast");
+    } else {
+        // Force CPU encoder (libx264) for GPU memory release
+        cmd << " -c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p";
+    }
+    cmd << " -c:a aac -b:a 192k -ar 44100"
         << " -video_track_timescale 90000"
         << " -avoid_negative_ts make_zero"
         << " -y \"" << outputVideo << "\"";
@@ -526,14 +626,54 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
     // FIX: Normalize ALL clips to same resolution, frame rate, and pixel format
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideo << "\""
+    cmd << "\"" << ffmpegPath << "\"";
+
+    // GPU acceleration: Use CUDA hardware decoding if available
+    // IMPORTANT: Periodically force CPU mode to release GPU memory and prevent CUDA crashes
+    // Note: copySegmentPrecise is only called as fallback from copySegmentFast, which already
+    // set m_allowGpuThisSegment via shouldUseGpuForSegment(). Use that explicit flag.
+    bool allowGpuThisSegment = m_allowGpuThisSegment;
+    bool useCuda = allowGpuThisSegment && hasCudaHwaccel();
+    bool useScaleCuda = useCuda && hasScaleCudaFilter();
+
+    if (useCuda) {
+        cmd << " -hwaccel cuda -hwaccel_device 0";
+        // Keep frames on GPU if using NVENC encoder and scale_cuda
+        if (useScaleCuda && probeEncoder("h264_nvenc")) {
+            cmd << " -hwaccel_output_format cuda";
+        }
+    }
+
+    // Use fixed-point notation for time values - FFmpeg doesn't accept scientific notation (e.g., 2e-05)
+    cmd << std::fixed << std::setprecision(6);
+    cmd << " -i \"" << inputVideo << "\""
         << " -ss " << startTime
-        << " -t " << duration
-        << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
-        << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
-        << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\""
-        << " " << getEncoderArgs("ultrafast")
-        << " -c:a aac -b:a 192k -ar 44100"
+        << " -t " << duration;
+    cmd << std::defaultfloat;  // Reset to default formatting
+
+    // Build filter chain: Use GPU filters when available, CPU fallback otherwise
+    if (useScaleCuda) {
+        // GPU-accelerated filter chain with scale_cuda
+        // Add setsar=1 for SAR consistency with CPU path
+        cmd << " -vf \"scale_cuda=" << m_outputWidth << ":" << m_outputHeight
+            << ":force_original_aspect_ratio=decrease,hwdownload,format=nv12"
+            << ",pad=" << m_outputWidth << ":" << m_outputHeight
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+    } else {
+        // CPU filter chain (original behavior)
+        cmd << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
+            << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+    }
+
+    // Use GPU encoder only if GPU is allowed for this segment
+    if (allowGpuThisSegment) {
+        cmd << " " << getEncoderArgs("ultrafast");
+    } else {
+        // Force CPU encoder (libx264) for GPU memory release
+        cmd << " -c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p";
+    }
+    cmd << " -c:a aac -b:a 192k -ar 44100"
         << " -video_track_timescale 90000"
         << " -avoid_negative_ts make_zero"
         << " -y \"" << outputVideo << "\"";
@@ -586,6 +726,145 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
     if (fileSize >= 0 && fileSize <= 1024) {
         std::string extra = "start=" + std::to_string(startTime) + ", dur=" + std::to_string(duration) + ", size=" + std::to_string(fileSize);
         appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentPrecise_small_file", cmd.str(), exitCode, ffmpegOutput, extra);
+    }
+
+    return true;
+}
+
+bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::string& outputVideo) {
+    std::cout << "Pre-normalizing video: " << inputVideo << " -> " << outputVideo << "\n";
+
+    std::string ffmpegPath = getFFmpegPath();
+    std::ostringstream cmd;
+    cmd << "\"" << ffmpegPath << "\"";
+
+    // NOTE: Deliberately NOT using CUDA for normalization to avoid GPU memory issues
+    // The whole point of normalization is to reduce GPU pressure during segment extraction
+    // Using CPU here is slower but prevents CUDA crashes when processing multiple videos
+
+    cmd << " -i \"" << inputVideo << "\"";
+
+    // CPU filter chain for maximum compatibility and stability
+    cmd << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
+        << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
+        << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+
+    // Use libx264 for encoding during normalization (CPU-based, stable)
+    // This avoids CUDA memory issues that occur when multiple videos are being normalized
+    cmd << " -c:v libx264 -preset fast -crf 18"
+        << " -c:a aac -b:a 192k -ar 44100"
+        << " -video_track_timescale 90000"
+        << " -y \"" << outputVideo << "\"";
+
+    std::string ffmpegOutput;
+    int exitCode;
+#ifdef _WIN32
+    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
+#else
+    std::string fullCmd = cmd.str() + " 2>&1";
+    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
+    if (!pipe) {
+        m_lastError = "Failed to execute FFmpeg for video normalization";
+        return false;
+    }
+    char buffer[256];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        ffmpegOutput += buffer;
+    }
+    exitCode = pclose_compat(pipe);
+#endif
+
+    // Log the normalization
+    appendFfmpegLog("beatsync_ffmpeg_normalize.log", "normalizeVideo", cmd.str(), exitCode, ffmpegOutput, "");
+
+    if (exitCode != 0) {
+        // Check if file was created anyway
+        FILE* test = fopen(outputVideo.c_str(), "rb");
+        if (test) {
+            fseek(test, 0, SEEK_END);
+            long fileSize = ftell(test);
+            fclose(test);
+            if (fileSize > 1024) {
+                std::cout << "  Normalization completed (non-zero exit but file OK: " << fileSize << " bytes)\n";
+                return true;
+            }
+        }
+        m_lastError = "Video normalization failed: " + ffmpegOutput.substr(0, 200);
+        return false;
+    }
+
+    std::cout << "  Normalization complete\n";
+    return true;
+}
+
+bool VideoWriter::normalizeVideos(const std::vector<std::string>& inputVideos,
+                                   std::vector<std::string>& normalizedPaths) {
+    normalizedPaths.clear();
+
+    std::cout << "[BeatSync] normalizeVideos called with " << inputVideos.size() << " videos\n";
+
+    if (inputVideos.empty()) {
+        return true;  // Nothing to normalize
+    }
+
+    std::string tempDir;
+    try {
+        tempDir = getTempDir();
+        std::cout << "[BeatSync] Using temp dir: " << tempDir << "\n";
+    } catch (const std::exception& e) {
+        m_lastError = std::string("Failed to get temp directory: ") + e.what();
+        std::cerr << "[BeatSync] " << m_lastError << "\n";
+        return false;
+    }
+
+    int index = 0;
+
+    for (const auto& video : inputVideos) {
+        std::cout << "[BeatSync] Processing video " << index << ": " << video << "\n";
+
+        // Generate a unique normalized filename in temp directory
+        // Use simple string manipulation instead of std::filesystem to avoid potential issues
+        std::string baseName;
+        try {
+            size_t lastSlash = video.find_last_of("/\\");
+            size_t lastDot = video.find_last_of('.');
+            if (lastSlash != std::string::npos) {
+                if (lastDot != std::string::npos && lastDot > lastSlash) {
+                    baseName = video.substr(lastSlash + 1, lastDot - lastSlash - 1);
+                } else {
+                    baseName = video.substr(lastSlash + 1);
+                }
+            } else {
+                if (lastDot != std::string::npos) {
+                    baseName = video.substr(0, lastDot);
+                } else {
+                    baseName = video;
+                }
+            }
+        } catch (...) {
+            baseName = "video";
+        }
+
+        std::string normalizedName = "beatsync_normalized_" + std::to_string(index++) + "_" +
+                                     baseName + ".mp4";
+        std::string normalizedPath = tempDir + normalizedName;
+        std::cout << "[BeatSync] Output path: " << normalizedPath << "\n";
+
+        if (!normalizeVideo(video, normalizedPath)) {
+            // Clean up any already-created normalized files
+            for (const auto& path : normalizedPaths) {
+                std::remove(path.c_str());
+            }
+            normalizedPaths.clear();
+            return false;
+        }
+
+        normalizedPaths.push_back(normalizedPath);
+
+        // Report progress
+        if (m_progressCallback) {
+            reportProgress(static_cast<double>(index) / inputVideos.size() * 0.1);  // 10% for normalization
+        }
     }
 
     return true;
@@ -701,148 +980,149 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
             }
 
             if (t) {
-                // Build a chained filter_complex for N inputs
-                std::string filterComplex = buildGlTransitionFilterComplex(inputVideos.size(), t->name, m_effects.transitionDuration);
+                // IMPORTANT: For very long videos with many beats (600+ segments),
+                // transitions are disabled to avoid command line length limits and memory issues.
+                // The Windows command line limit is ~8191 chars, and with 600 inputs at ~60 chars each,
+                // plus filter_complex, the command would exceed 50KB+ causing crashes.
+                const size_t MAX_TRANSITION_INPUTS = 100;  // Safe limit for transitions
+                if (inputVideos.size() > MAX_TRANSITION_INPUTS) {
+                    FILE* logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
+                    if (logf) {
+                        fprintf(logf, "WARNING: %zu inputs exceeds transition limit of %zu. Falling back to standard concat.\n",
+                                inputVideos.size(), MAX_TRANSITION_INPUTS);
+                        fclose(logf);
+                    }
+                    std::cerr << "[Beatsync] " << inputVideos.size() << " segments exceeds transition limit. Using standard concat.\n";
+                    // Fall through to standard concat below
+                } else {
+                    // Build a chained filter_complex for N inputs
+                    std::string filterComplex = buildGlTransitionFilterComplex(inputVideos.size(), t->name, m_effects.transitionDuration);
 
-                // Build ffmpeg command with all inputs
-                std::ostringstream cmd;
-                cmd << "\"" << ffmpegPath << "\"";
-                for (const auto &v : inputVideos) {
-                    cmd << " -i \"" << v << "\"";
-                }
+                    // Build ffmpeg command with all inputs
+                    std::ostringstream cmd;
+                    cmd << "\"" << ffmpegPath << "\"";
+                    for (const auto &v : inputVideos) {
+                        cmd << " -i \"" << v << "\"";
+                    }
 
-                // Build audio portion of filter_complex
-                // For each input, probe if it has audio; if not, use anullsrc as fallback
-                // This ensures [ainN] labels are always defined for the concat filter
-                std::ostringstream audioFilter;
-                for (size_t i = 0; i < inputVideos.size(); ++i) {
-                    // Probe input file for audio stream using libavformat
-                    bool hasAudio = false;
-                    AVFormatContext* probeCtx = nullptr;
-                    int openErr = avformat_open_input(&probeCtx, inputVideos[i].c_str(), nullptr, nullptr);
-                    if (openErr == 0) {
-                        int infoErr = avformat_find_stream_info(probeCtx, nullptr);
-                        if (infoErr >= 0) {
-                            for (unsigned int s = 0; s < probeCtx->nb_streams; ++s) {
-                                if (probeCtx->streams[s]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-                                    hasAudio = true;
-                                    break;
+                    // Build audio portion of filter_complex
+                    // For audio, we'll use a simpler approach: just use anullsrc to avoid probing hundreds of files
+                    // This is more reliable for long sequences and avoids memory pressure from libavformat probing
+                    std::ostringstream audioFilter;
+
+                    // Only probe first file to determine if source has audio
+                    bool sourceHasAudio = false;
+                    if (!inputVideos.empty()) {
+                        AVFormatContext* probeCtx = nullptr;
+                        int openErr = avformat_open_input(&probeCtx, inputVideos[0].c_str(), nullptr, nullptr);
+                        if (openErr == 0) {
+                            int infoErr = avformat_find_stream_info(probeCtx, nullptr);
+                            if (infoErr >= 0) {
+                                for (unsigned int s = 0; s < probeCtx->nb_streams; ++s) {
+                                    if (probeCtx->streams[s]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+                                        sourceHasAudio = true;
+                                        break;
+                                    }
                                 }
                             }
+                            avformat_close_input(&probeCtx);
+                        }
+                    }
+
+                    // If source has audio, concatenate audio from all inputs
+                    // Otherwise use a single anullsrc for the whole output (simpler and faster)
+                    if (sourceHasAudio) {
+                        for (size_t i = 0; i < inputVideos.size(); ++i) {
+                            audioFilter << "[" << i << ":a]asetpts=PTS-STARTPTS[ain" << i << "];";
+                        }
+                        for (size_t i = 0; i < inputVideos.size(); ++i) {
+                            audioFilter << "[ain" << i << "]";
+                        }
+                        audioFilter << "concat=n=" << inputVideos.size() << ":v=0:a=1[aout]";
+                    } else {
+                        // Use single anullsrc with -shortest flag to match video length
+                        constexpr double fallbackLargeDuration = 36000.0; // 10 hours max
+                        audioFilter << "anullsrc=channel_layout=stereo:sample_rate=44100:duration=" << fallbackLargeDuration << "[aout]";
+                    }
+
+                    // Combine video transitions and audio concat into full filter_complex
+                    std::string fullFilter = filterComplex + ";" + audioFilter.str();
+                    std::string finalVideoLabel = "[t" + std::to_string(inputVideos.size()-1) + "]";
+
+                    // Use filter_complex_script file if command is too long (Windows limit ~8191 chars)
+                    std::string filterScriptPath;
+                    bool useFilterScript = fullFilter.length() > 4000;  // Leave margin for rest of command
+
+                    if (useFilterScript) {
+                        filterScriptPath = getTempDir() + "beatsync_filter_complex.txt";
+                        FILE* scriptFile = fopen(filterScriptPath.c_str(), "w");
+                        if (scriptFile) {
+                            fprintf(scriptFile, "%s", fullFilter.c_str());
+                            fclose(scriptFile);
+                            cmd << " -filter_complex_script \"" << filterScriptPath << "\"";
                         } else {
-                            char errbuf[256];
-                            av_strerror(infoErr, errbuf, sizeof(errbuf));
-                            std::cerr << "[Beatsync] avformat_find_stream_info failed for '" << inputVideos[i] << "': " << errbuf << std::endl;
+                            // Fallback to inline (may fail if too long)
+                            cmd << " -filter_complex \"" << fullFilter << "\"";
+                            useFilterScript = false;
                         }
-                        avformat_close_input(&probeCtx);
                     } else {
-                        char errbuf[256];
-                        av_strerror(openErr, errbuf, sizeof(errbuf));
-                        std::cerr << "[Beatsync] avformat_open_input failed for '" << inputVideos[i] << "': " << errbuf << std::endl;
+                        cmd << " -filter_complex \"" << fullFilter << "\"";
                     }
 
-                    if (hasAudio) {
-                        audioFilter << "[" << i << ":a]asetpts=PTS-STARTPTS[ain" << i << "];";
-                    } else {
-                        // Use anullsrc with matching channel_layout/sample_rate
-                        audioFilter << "anullsrc=channel_layout=stereo:sample_rate=44100,asetpts=PTS-STARTPTS[ain" << i << "];";
+                    cmd << " -map \"" << finalVideoLabel << "\" -map \"[aout]\"";
+                    cmd << " " << getEncoderArgs("fast") << " -c:a aac -b:a 192k";
+                    if (!sourceHasAudio) {
+                        cmd << " -shortest";  // Trim anullsrc to video length
                     }
-                }
-                // Concatenate all audio streams
-                for (size_t i = 0; i < inputVideos.size(); ++i) {
-                    audioFilter << "[ain" << i << "]";
-                }
-                audioFilter << "concat=n=" << inputVideos.size() << ":v=0:a=1[aout]";
+                    cmd << " -y \"" << outputVideo << "\"";
 
-                // Combine video transitions and audio concat into full filter_complex
-                std::string fullFilter = filterComplex + ";" + audioFilter.str();
-                std::string finalVideoLabel = "[t" + std::to_string(inputVideos.size()-1) + "]";
-
-                cmd << " -filter_complex \"" << fullFilter << "\"";
-                cmd << " -map \"" << finalVideoLabel << "\" -map \"[aout]\"";
-
-                cmd << " " << getEncoderArgs("fast") << " -c:a aac -b:a 192k -y \"" << outputVideo << "\"";
-
-                // Execute the command
-                std::string ffmpegOutput;
-                int exitCode;
+                    // Execute the command
+                    std::string ffmpegOutput;
+                    int exitCode;
 #ifdef _WIN32
-                exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
+                    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
 #else
-                std::string fullCmd = cmd.str() + " 2>&1";
-                FILE* pipe = popen_compat(fullCmd.c_str(), "r");
-                if (!pipe) {
-                    m_lastError = "Failed to execute FFmpeg for transition";
-                    std::remove(listFile.c_str());
-                    return false;
-                }
-                char buffer[512];
-                while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-                    ffmpegOutput += buffer;
-                }
-                exitCode = pclose_compat(pipe);
+                    std::string fullCmd = cmd.str() + " 2>&1";
+                    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
+                    if (!pipe) {
+                        m_lastError = "Failed to execute FFmpeg for transition";
+                        std::remove(listFile.c_str());
+                        if (useFilterScript && !filterScriptPath.empty()) {
+                            std::remove(filterScriptPath.c_str());
+                        }
+                        return false;
+                    }
+                    char buffer[512];
+                    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+                        ffmpegOutput += buffer;
+                    }
+                    exitCode = pclose_compat(pipe);
 #endif
 
-                // Persist log
-                FILE* logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
-                if (logf) {
-                    fprintf(logf, "\n--- FFmpeg transition run (chained) ---\ncmd: %s\nexit: %d\noutput:\n%s\n", cmd.str().c_str(), exitCode, ffmpegOutput.c_str());
-                    fclose(logf);
-                }
-
-                // If audio concat failed (likely missing audio streams), try simpler approach
-                if (exitCode != 0 && ffmpegOutput.find("does not contain any stream") != std::string::npos) {
-                    // Retry with anullsrc fallback for all inputs
-                    std::ostringstream cmd2;
-                    cmd2 << "\"" << ffmpegPath << "\"";
-                    for (const auto &v : inputVideos) {
-                        cmd2 << " -i \"" << v << "\"";
+                    // Clean up filter script
+                    if (useFilterScript && !filterScriptPath.empty()) {
+                        std::remove(filterScriptPath.c_str());
                     }
 
-                    // Use anullsrc for audio - guaranteed to work
-                    std::ostringstream audioFilter2;
-                    audioFilter2 << "anullsrc=channel_layout=stereo:sample_rate=44100:duration=";
-                    // Use a conservatively large duration to avoid truncation
-                    constexpr double fallbackLargeDuration = 36000.0; // 10 hours
-                    audioFilter2 << fallbackLargeDuration << "[aout]";
-
-                    std::string fullFilter2 = filterComplex + ";" + audioFilter2.str();
-
-                    cmd2 << " -filter_complex \"" << fullFilter2 << "\"";
-                    cmd2 << " -map \"" << finalVideoLabel << "\" -map \"[aout]\"";
-                    cmd2 << " " << getEncoderArgs("fast") << " -c:a aac -b:a 192k -shortest -y \"" << outputVideo << "\"";
-
-                    std::string ffmpegOutput2;
-#ifdef _WIN32
-                    exitCode = runHiddenCommand(cmd2.str(), ffmpegOutput2);
-#else
-                    std::string fullCmd2 = cmd2.str() + " 2>&1";
-                    FILE* pipe2 = popen_compat(fullCmd2.c_str(), "r");
-                    if (pipe2) {
-                        char buffer2[512];
-                        while (fgets(buffer2, sizeof(buffer2), pipe2) != nullptr) {
-                            ffmpegOutput2 += buffer2;
-                        }
-                        exitCode = pclose_compat(pipe2);
-                    }
-#endif
-
-                    logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
+                    // Persist log
+                    FILE* logf = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
                     if (logf) {
-                        fprintf(logf, "\n--- FFmpeg transition run (anullsrc fallback) ---\ncmd: %s\nexit: %d\noutput:\n%s\n", cmd2.str().c_str(), exitCode, ffmpegOutput2.c_str());
+                        fprintf(logf, "\n--- FFmpeg transition run (chained) ---\n");
+                        fprintf(logf, "Using filter_complex_script: %s\n", useFilterScript ? "yes" : "no");
+                        fprintf(logf, "Filter length: %zu chars\n", fullFilter.length());
+                        fprintf(logf, "cmd: %s\nexit: %d\noutput:\n%s\n", cmd.str().c_str(), exitCode, ffmpegOutput.c_str());
                         fclose(logf);
-                        logf = nullptr;
                     }
-                }
 
-                std::remove(listFile.c_str());
+                    std::remove(listFile.c_str());
 
-                if (exitCode != 0) {
-                    m_lastError = "FFmpeg transition chain failed: " + ffmpegOutput.substr(0, 200);
-                    // Fall back to standard concat below
-                } else {
-                    return true;
-                }
+                    if (exitCode != 0) {
+                        m_lastError = "FFmpeg transition chain failed: " + ffmpegOutput.substr(0, 200);
+                        // Fall back to standard concat below
+                    } else {
+                        return true;
+                    }
+                }  // End of transition processing block
             }
         }
         // If we get here, transition attempt failed - fall back to normal concat
@@ -910,8 +1190,16 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 
     if (exitCode != 0 || suspicious) {
         // Attempt a safe re-encode fallback (slower but normalizes timestamps)
+        // Use GPU acceleration if available for faster re-encoding
         std::ostringstream reencodeCmd;
-        reencodeCmd << "\"" << ffmpegPath << "\" -fflags +genpts -f concat -safe 0 -i \"" << listFile
+        reencodeCmd << "\"" << ffmpegPath << "\"";
+
+        // Add CUDA hardware acceleration for decoding if available
+        if (hasCudaHwaccel()) {
+            reencodeCmd << " -hwaccel cuda -hwaccel_device 0";
+        }
+
+        reencodeCmd << " -fflags +genpts -f concat -safe 0 -i \"" << listFile
                     << "\" " << getEncoderArgs("ultrafast") << " -r " << m_outputFps
                     << " -c:a aac -b:a 192k -video_track_timescale 90000 -y \"" << outputVideo << "\"";
 
@@ -983,7 +1271,8 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
 
     cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideo << "\"";
     if (clipAudio) {
-        cmd << " -ss " << clipStart << " -t " << clipDur;
+        // Use fixed-point notation - FFmpeg doesn't accept scientific notation
+        cmd << std::fixed << std::setprecision(6) << " -ss " << clipStart << " -t " << clipDur << std::defaultfloat;
     }
     cmd << " -i \"" << audioFile << "\""
         << " -c:v copy -c:a aac -b:a 192k"
@@ -1047,60 +1336,53 @@ void VideoWriter::reportProgress(double progress) {
 
 // ==================== GPU Encoder Detection ====================
 
-// Cache all available encoders in a single FFmpeg call
+// Cache all available encoders in a single FFmpeg call (thread-safe init)
 static std::set<std::string> getAvailableEncoders(const std::string& ffmpegPath) {
     static std::set<std::string> cachedEncoders;
-    static bool cachePopulated = false;
+    static std::once_flag encodersOnce;
 
-    if (cachePopulated) return cachedEncoders;
-
-    std::string output;
-    std::string cmd = "\"" + ffmpegPath + "\" -hide_banner -encoders";
+    std::call_once(encodersOnce, [ffmpegPath]() {
+        std::string output;
+        std::string cmd = "\"" + ffmpegPath + "\" -hide_banner -encoders";
 
 #ifdef _WIN32
-    int rc = runHiddenCommand(cmd, output);
+        int rc = runHiddenCommand(cmd, output);
+        if (rc != 0) return;
 #else
-    std::string fullCmd = cmd + " 2>&1";
-    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
-    if (!pipe) {
-        cachePopulated = true;
-        return cachedEncoders;
-    }
-    char buffer[512];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        output += buffer;
-    }
-    int rc = pclose_compat(pipe);
+        std::string fullCmd = cmd + " 2>&1";
+        FILE* pipe = popen_compat(fullCmd.c_str(), "r");
+        if (!pipe) return; // leave cachedEncoders empty
+        char buffer[512];
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            output += buffer;
+        }
+        int rc = pclose_compat(pipe);
+        if (rc != 0) return;
 #endif
 
-    if (rc != 0) {
-        cachePopulated = true;
-        return cachedEncoders;
-    }
+        // Parse encoder list - format: " V..... h264_nvenc           NVIDIA NVENC H.264 encoder"
+        // Extract encoder names from lines starting with " V" (video encoders)
+        std::istringstream stream(output);
+        std::string line;
+        while (std::getline(stream, line)) {
+            // Skip header lines and non-video encoders
+            if (line.size() < 8 || line[0] != ' ' || line[1] != 'V') continue;
 
-    // Parse encoder list - format: " V..... h264_nvenc           NVIDIA NVENC H.264 encoder"
-    // Extract encoder names from lines starting with " V" (video encoders)
-    std::istringstream stream(output);
-    std::string line;
-    while (std::getline(stream, line)) {
-        // Skip header lines and non-video encoders
-        if (line.size() < 8 || line[0] != ' ' || line[1] != 'V') continue;
+            // Extract encoder name: starts after " V..... " (8 chars)
+            size_t nameStart = 8;
+            while (nameStart < line.size() && line[nameStart] == ' ') nameStart++;
+            if (nameStart >= line.size()) continue;
 
-        // Extract encoder name: starts after " V..... " (8 chars)
-        size_t nameStart = 8;
-        while (nameStart < line.size() && line[nameStart] == ' ') nameStart++;
-        if (nameStart >= line.size()) continue;
+            size_t nameEnd = line.find(' ', nameStart);
+            if (nameEnd == std::string::npos) nameEnd = line.size();
 
-        size_t nameEnd = line.find(' ', nameStart);
-        if (nameEnd == std::string::npos) nameEnd = line.size();
-
-        std::string encoderName = line.substr(nameStart, nameEnd - nameStart);
-        if (!encoderName.empty()) {
-            cachedEncoders.insert(encoderName);
+            std::string encoderName = line.substr(nameStart, nameEnd - nameStart);
+            if (!encoderName.empty()) {
+                cachedEncoders.insert(encoderName);
+            }
         }
-    }
+    });
 
-    cachePopulated = true;
     return cachedEncoders;
 }
 
@@ -1110,6 +1392,7 @@ bool VideoWriter::probeEncoder(const std::string& encoder) const {
 }
 
 GPUEncoderInfo VideoWriter::detectBestEncoder(const std::string& speedPreset) const {
+    std::lock_guard<std::recursive_mutex> lock(m_cacheMutex);
     // Return cached result if available
     if (m_encoderCacheValid) {
         // Adjust preset for cached encoder
@@ -1190,6 +1473,113 @@ std::string VideoWriter::getEncoderArgs(const std::string& speedPreset) const {
     }
 
     return args.str();
+}
+
+bool VideoWriter::hasCudaHwaccel() const {
+    std::lock_guard<std::recursive_mutex> lock(m_cacheMutex);
+    // Return cached result if available
+    if (m_cudaHwaccelCache >= 0) {
+        return m_cudaHwaccelCache == 1;
+    }
+
+    std::string ffmpegPath = getFFmpegPath();
+    std::string cmd = "\"" + ffmpegPath + "\" -hwaccels 2>&1";
+    std::string output;
+
+#ifdef _WIN32
+    int exitCode = runHiddenCommand(cmd, output);
+    (void)exitCode;
+#else
+    FILE* pipe = popen_compat(cmd.c_str(), "r");
+    if (pipe) {
+        char buffer[256];
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            output += buffer;
+        }
+        pclose_compat(pipe);
+    }
+#endif
+
+    m_cudaHwaccelCache = (output.find("cuda") != std::string::npos) ? 1 : 0;
+    if (m_cudaHwaccelCache == 1) {
+        std::cout << "[GPU] CUDA hardware acceleration available for decoding\n";
+    } else {
+        std::cout << "[GPU] CUDA hardware acceleration NOT available\n";
+    }
+    return m_cudaHwaccelCache == 1;
+}
+
+bool VideoWriter::hasScaleCudaFilter() const {
+    std::lock_guard<std::recursive_mutex> lock(m_cacheMutex);
+    // Return cached result if available
+    if (m_scaleCudaCache >= 0) {
+        return m_scaleCudaCache == 1;
+    }
+
+    std::string ffmpegPath = getFFmpegPath();
+    std::string cmd = "\"" + ffmpegPath + "\" -filters 2>&1";
+    std::string output;
+
+#ifdef _WIN32
+    int exitCode = runHiddenCommand(cmd, output);
+    (void)exitCode;
+#else
+    FILE* pipe = popen_compat(cmd.c_str(), "r");
+    if (pipe) {
+        char buffer[256];
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            output += buffer;
+        }
+        pclose_compat(pipe);
+    }
+#endif
+
+    m_scaleCudaCache = (output.find("scale_cuda") != std::string::npos) ? 1 : 0;
+    if (m_scaleCudaCache == 1) {
+        std::cout << "[GPU] scale_cuda filter available\n";
+    } else {
+        std::cout << "[GPU] scale_cuda filter NOT available (using CPU scaling)\n";
+    }
+    return m_scaleCudaCache == 1;
+}
+
+void VideoWriter::logGpuCapabilities() const {
+    std::cout << "[VideoWriter] GPU Capabilities:\n";
+    std::cout << "  - CUDA hwaccel: " << (hasCudaHwaccel() ? "YES" : "NO") << "\n";
+    std::cout << "  - scale_cuda filter: " << (hasScaleCudaFilter() ? "YES" : "NO") << "\n";
+
+    GPUEncoderInfo enc = detectBestEncoder("fast");
+    std::cout << "  - Encoder: " << enc.encoderName << " (Hardware: " << (enc.isHardware ? "YES" : "NO") << ")\n";
+    std::cout << "  - GPU reset interval: " << GPU_RESET_INTERVAL << " segments\n";
+}
+
+bool VideoWriter::shouldUseGpuForSegment() {
+    std::lock_guard<std::recursive_mutex> lock(m_cacheMutex);
+
+    // Increment counter
+    m_segmentsSinceGpuReset++;
+
+    // Every GPU_RESET_INTERVAL segments, flush GPU memory and force CPU mode
+    // This prevents CUDA memory accumulation during long processing jobs
+    if (m_segmentsSinceGpuReset >= GPU_RESET_INTERVAL) {
+        int triggeredSegment = m_segmentsSinceGpuReset;
+        m_segmentsSinceGpuReset = 0;
+        std::cout << "[GPU] Flushing GPU memory and forcing CPU mode for segment "
+                  << triggeredSegment << "\n";
+
+        // Flush GPU memory before continuing - this forces NVIDIA driver
+        // to clean up orphaned CUDA contexts from previous FFmpeg processes
+        flushGpuMemory();
+
+        return false;  // Don't use GPU for this segment
+    }
+
+    return true;  // Use GPU (if available)
+}
+
+void VideoWriter::resetSegmentCounter() {
+    std::lock_guard<std::recursive_mutex> lock(m_cacheMutex);
+    m_segmentsSinceGpuReset = 0;
 }
 
 // ==================== End GPU Encoder Detection ====================
@@ -1382,7 +1772,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
     }
 
     // If no effects enabled, just copy
-    if (filterChain.empty() && !m_effects.enableBeatFlash) {
+    if (filterChain.empty() && !m_effects.enableBeatFlash && !m_effects.enableBeatZoom) {
         // Simple copy
         std::string ffmpegPath = getFFmpegPath();
         std::ostringstream cmd;
@@ -1412,7 +1802,14 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
     // Apply effects with re-encoding
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideo << "\"";
+    cmd << "\"" << ffmpegPath << "\"";
+
+    // Add CUDA hardware acceleration for decoding if available
+    if (hasCudaHwaccel()) {
+        cmd << " -hwaccel cuda -hwaccel_device 0";
+    }
+
+    cmd << " -i \"" << inputVideo << "\"";
 
     // Build video filter
     std::string vf;
@@ -1420,61 +1817,85 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         vf = filterChain;
     }
 
-    // Beat zoom pulse effect - use actual beat times for accurate sync
-    if (m_effects.enableBeatZoom && !filteredBeats.empty()) {
-        std::ostringstream zoom;
-        double pulseDuration = 0.15;  // How long the zoom pulse lasts (decay time)
-        double zoomAmount = std::max(0.01, std::min(0.15, m_effects.zoomIntensity));  // Clamp 1%-15%
-        
-        // Build expression: 1 + zoomAmount * max(0, 1 - abs(t-beat)/pulseDuration) for each beat
-        // This creates a sharp pulse at each beat that decays linearly
-        std::ostringstream scaleExpr;
-        scaleExpr << "1";
-        for (size_t i = 0; i < filteredBeats.size(); ++i) {
-            double bt = filteredBeats[i];
-            // Add: + zoomAmount * max(0, 1 - abs(t - beatTime)/pulseDuration)
-            scaleExpr << "+" << zoomAmount << "*max(0,1-abs(t-" << bt << ")/" << pulseDuration << ")";
-        }
-        // Use scale filter with expression - scale up then crop back to original size
-        zoom << "scale=w=iw*(" << scaleExpr.str() << "):h=ih*(" << scaleExpr.str() << "),"
-             << "crop=" << m_outputWidth << ":" << m_outputHeight << ":exact=1";
-        
-        std::string zoomStr = zoom.str();
-        if (!zoomStr.empty()) {
+    // Beat effects using chained eq filters with limited beats per filter
+    // FFmpeg's expression parser has a limit on expression complexity (~50 terms max).
+    // We chain multiple eq filters, each handling a subset of beats.
+    static constexpr size_t BEATS_PER_FILTER = 30;  // Safe limit per expression
+
+    std::string sendcmdPath;  // Placeholder for cleanup compatibility
+
+    // Beat flash effect using chained eq filters
+    if (m_effects.enableBeatFlash && !filteredBeats.empty()) {
+        double flashDuration = 0.08;
+        double intensity = std::max(0.1, std::min(1.0, m_effects.flashIntensity));
+
+        // Split beats into chunks, each handled by a separate eq filter
+        for (size_t chunk = 0; chunk * BEATS_PER_FILTER < filteredBeats.size(); ++chunk) {
+            size_t startIdx = chunk * BEATS_PER_FILTER;
+            size_t endIdx = std::min(startIdx + BEATS_PER_FILTER, filteredBeats.size());
+
+            // Build enable expression for this chunk using between()
+            std::ostringstream enableExpr;
+            enableExpr << std::fixed << std::setprecision(6);
+            for (size_t i = startIdx; i < endIdx; ++i) {
+                if (i > startIdx) enableExpr << "+";
+                double bt = filteredBeats[i];
+                enableExpr << "between(t," << bt << "," << (bt + flashDuration) << ")";
+            }
+
+            // eq filter with brightness boost, enabled only during beat windows
+            std::ostringstream eqFilter;
+            eqFilter << "eq=brightness=" << intensity << ":enable='" << enableExpr.str() << "'";
+
             if (!vf.empty()) {
-                vf = vf + "," + zoomStr;
+                vf = vf + "," + eqFilter.str();
             } else {
-                vf = zoomStr;
+                vf = eqFilter.str();
             }
         }
     }
 
-    // Beat flash effect (white flash on beat intervals)
-    // Only apply if we have actual beat times - no BPM fallback (looks out of sync)
-    if (m_effects.enableBeatFlash && !filteredBeats.empty()) {
-        std::ostringstream flash;
-        double flashDuration = 0.08;  // Flash duration in seconds
-        double intensity = std::max(0.1, std::min(1.0, m_effects.flashIntensity));  // Clamp 0.1-1.0
-        
-        // Build enable expression using between() for each beat
-        // Format: between(t,beat1,beat1+dur)+between(t,beat2,beat2+dur)+...
-        std::ostringstream enableExpr;
-        for (size_t i = 0; i < filteredBeats.size(); ++i) {
-            double t = filteredBeats[i];
-            if (i > 0) enableExpr << "+";
-            enableExpr << "between(t," << t << "," << (t + flashDuration) << ")";
-        }
-        
-        flash << "split[main][flash];"
-              << "[flash]drawbox=c=white@" << intensity << ":t=fill,fade=t=out:st=0:d=" << flashDuration << "[fl];"
-              << "[main][fl]overlay=enable='" << enableExpr.str() << "'";
-        
-        std::string flashStr = flash.str();
-        if (!flashStr.empty()) {
+    // Beat zoom effect using chained scale filters
+    // Note: scale filter doesn't support time expressions, so we use setpts+trim approach
+    // Actually, for zoom we need a different approach - use crop+scale with enable
+    if (m_effects.enableBeatZoom && !filteredBeats.empty()) {
+        double zoomDuration = 0.15;
+        double zoomAmount = std::max(0.01, std::min(0.15, m_effects.zoomIntensity));
+        // Scale factor: 1.0 + zoomAmount means we scale up then crop back
+        double scaleFactor = 1.0 + zoomAmount;
+        int scaledW = static_cast<int>(m_outputWidth * scaleFactor);
+        int scaledH = static_cast<int>(m_outputHeight * scaleFactor);
+        int cropX = (scaledW - m_outputWidth) / 2;
+        int cropY = (scaledH - m_outputHeight) / 2;
+
+        // Split beats into chunks
+        for (size_t chunk = 0; chunk * BEATS_PER_FILTER < filteredBeats.size(); ++chunk) {
+            size_t startIdx = chunk * BEATS_PER_FILTER;
+            size_t endIdx = std::min(startIdx + BEATS_PER_FILTER, filteredBeats.size());
+
+            // Build enable expression for this chunk
+            std::ostringstream enableExpr;
+            enableExpr << std::fixed << std::setprecision(6);
+            for (size_t i = startIdx; i < endIdx; ++i) {
+                if (i > startIdx) enableExpr << "+";
+                double bt = filteredBeats[i];
+                enableExpr << "between(t," << bt << "," << (bt + zoomDuration) << ")";
+            }
+
+            // Use scale+crop combination with enable expression
+            // When enabled, scale up and crop to center; when disabled, pass through
+            std::ostringstream zoomFilter;
+            zoomFilter << "split[zoom_main" << chunk << "][zoom_in" << chunk << "];"
+                      << "[zoom_in" << chunk << "]scale=" << scaledW << ":" << scaledH
+                      << ",crop=" << m_outputWidth << ":" << m_outputHeight << ":" << cropX << ":" << cropY
+                      << "[zoom_scaled" << chunk << "];"
+                      << "[zoom_main" << chunk << "][zoom_scaled" << chunk << "]overlay=enable='" << enableExpr.str() << "'";
+
             if (!vf.empty()) {
-                vf = vf + "," + flashStr;
+                // Use semicolon separator for filter graph segments with labeled pads (split/overlay)
+                vf = vf + ";" + zoomFilter.str();
             } else {
-                vf = flashStr;
+                vf = zoomFilter.str();
             }
         }
     }
@@ -1491,14 +1912,14 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
             if (scriptFile) {
                 fprintf(scriptFile, "%s", vf.c_str());
                 fclose(scriptFile);
-                cmd << " -filter_script:v \"" << filterScriptPath << "\"";
+                cmd << " -filter_complex_script \"" << filterScriptPath << "\"";
             } else {
                 // Fallback to command line if file write fails
-                cmd << " -vf \"" << vf << "\"";
+                cmd << " -filter_complex \"" << vf << "\"";
                 useFilterScript = false;
             }
         } else {
-            cmd << " -vf \"" << vf << "\"";
+            cmd << " -filter_complex \"" << vf << "\"";
         }
     }
 
@@ -1526,9 +1947,12 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
     exitCode = pclose_compat(pipe);
 #endif
 
-    // Clean up filter script file
+    // Clean up temp files
     if (useFilterScript && !filterScriptPath.empty()) {
         std::remove(filterScriptPath.c_str());
+    }
+    if (!sendcmdPath.empty()) {
+        std::remove(sendcmdPath.c_str());
     }
 
     // Log the effects command output

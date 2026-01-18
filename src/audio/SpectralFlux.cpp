@@ -19,6 +19,8 @@ namespace BeatSync {
 
 // Helper: next power of two
 static int nextPow2(int v) {
+    // Defensive guard: return a sensible power-of-two for non-positive inputs
+    if (v <= 0) return 1;
     int p = 1;
     while (p < v) p <<= 1;
     return p;
@@ -63,6 +65,7 @@ static void applyHann(std::vector<double>& buf) {
 }
 
 static std::vector<double> gaussianSmooth(const std::vector<double>& in, double sigma) {
+    if (in.empty()) return {};
     if (sigma <= 0.0) return in;
     int radius = std::max(1, int(ceil(3 * sigma)));
     int len = 2 * radius + 1;
@@ -97,7 +100,8 @@ std::vector<double> detectBeatsFromWaveform(const std::vector<float>& samples, i
 
     int N = windowSize;
     int H = hopSize;
-    int numFrames = 1 + (int(std::max(0, (int)samples.size() - N)) / H);
+    int numSamples = static_cast<int>(samples.size());
+    int numFrames = (numSamples < N) ? 0 : 1 + (numSamples - N) / H;
     if (numFrames <= 0) return beats;
 
     // Compute magnitude spectrogram frames
@@ -105,6 +109,7 @@ std::vector<double> detectBeatsFromWaveform(const std::vector<float>& samples, i
     std::vector<double> flux(numFrames, 0.0);
 
     std::vector<std::complex<double>> buf(nextPow2(N));
+    std::vector<double> win(N);  // Pre-allocate Hann window buffer outside loop
 
     for (int f = 0; f < numFrames; ++f) {
         int offset = f * H;
@@ -114,8 +119,7 @@ std::vector<double> detectBeatsFromWaveform(const std::vector<float>& samples, i
             buf[i] = std::complex<double>(v, 0.0);
         }
         for (int i = N; i < (int)buf.size(); ++i) buf[i] = 0.0;
-        // Apply Hann
-        std::vector<double> win(N);
+        // Apply Hann (reuse pre-allocated win buffer)
         for (int i = 0; i < N; ++i) win[i] = buf[i].real();
         applyHann(win);
         for (int i = 0; i < N; ++i) buf[i] = std::complex<double>(win[i], 0.0);
@@ -157,16 +161,19 @@ std::vector<double> detectBeatsFromWaveform(const std::vector<float>& samples, i
 
     // Adaptive threshold: local mean * thresholdFactor using a ±3 sample window (smooth, localMean, thresholdFactor, peaks)
     std::vector<double> peaks;
+    const double minThreshold = 0.01; // prevent vanishing/negative thresholds
     for (size_t i = 1; i + 1 < smooth.size(); ++i) {
         if (smooth[i] > smooth[i-1] && smooth[i] >= smooth[i+1]) {
-            // compute local threshold using a small window
+            // compute local positive-mean to avoid negative/near-zero localMean
             int w = 3;
             int start = std::max<int>(0, int(i) - w);
             int end = std::min<int>(smooth.size()-1, int(i) + w);
-            double localMean = 0.0;
-            for (int j = start; j <= end; ++j) localMean += smooth[j];
-            localMean /= (end-start+1);
-            if (smooth[i] > localMean * thresholdFactor) peaks.push_back((double)i);
+            double localPosMean = 0.0;
+            for (int j = start; j <= end; ++j) localPosMean += std::max(0.0, smooth[j]);
+            localPosMean /= (end - start + 1);
+            double threshold = localPosMean * thresholdFactor;
+            if (threshold < minThreshold) threshold = minThreshold;
+            if (smooth[i] > threshold) peaks.push_back((double)i);
         }
     }
 

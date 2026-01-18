@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <mutex>
 
 // Forward declarations
 struct AVFormatContext;
@@ -18,9 +19,20 @@ namespace BeatSync {
  * @brief Information about a detected video encoder
  */
 struct GPUEncoderInfo {
-    std::string encoderName;   // e.g., "h264_nvenc", "libx264"
-    std::string preset;        // GPU-specific or libx264 preset
-    bool isHardware;           // true if using GPU acceleration
+    std::string encoderName = "";   // e.g., "h264_nvenc", "libx264"
+    std::string preset = "";        // GPU-specific or libx264 preset
+    bool isHardware = false;          // true if using GPU acceleration
+
+    // Equality comparison operators
+    bool operator==(const GPUEncoderInfo& other) const noexcept {
+        return encoderName == other.encoderName &&
+               preset == other.preset &&
+               isHardware == other.isHardware;
+    }
+
+    bool operator!=(const GPUEncoderInfo& other) const noexcept {
+        return !(*this == other);
+    }
 };
 
 
@@ -73,6 +85,10 @@ struct VideoSegment {
 
 /**
  * @brief Handles video cutting, concatenation, and export
+ *
+ * Note: Cache members are protected by an internal mutex; VideoWriter is not fully
+ * thread-safe for all operations — callers should synchronize when sharing instances
+ * across threads.
  */
 class VideoWriter {
 public:
@@ -179,6 +195,29 @@ public:
      */
     bool applyEffects(const std::string& inputVideo, const std::string& outputVideo);
 
+    /**
+     * @brief Pre-normalize a video to standard format for efficient segment extraction
+     *
+     * Converts video to target resolution, framerate, and codec once, so subsequent
+     * segment extractions can use fast stream copy instead of per-segment re-encoding.
+     * This reduces GPU memory pressure when processing many segments.
+     *
+     * @param inputVideo Path to source video
+     * @param outputVideo Path to normalized output (typically in temp directory)
+     * @return true if successful
+     */
+    bool normalizeVideo(const std::string& inputVideo, const std::string& outputVideo);
+
+    /**
+     * @brief Pre-normalize multiple videos and return paths to normalized versions
+     *
+     * @param inputVideos Vector of source video paths
+     * @param normalizedPaths Output vector of normalized video paths (in temp directory)
+     * @return true if all videos were normalized successfully
+     */
+    bool normalizeVideos(const std::vector<std::string>& inputVideos,
+                         std::vector<std::string>& normalizedPaths);
+
 private:
     // Allow test access to private methods
     friend class ::VideoWriterTestAccess;
@@ -249,9 +288,51 @@ private:
      */
     std::string getEncoderArgs(const std::string& speedPreset) const;
 
+    /**
+     * @brief Check if CUDA hardware acceleration is available for decoding
+     * @return true if CUDA hwaccel is supported by FFmpeg
+     */
+    bool hasCudaHwaccel() const;
+
+    /**
+     * @brief Check if scale_cuda filter is available for GPU scaling
+     * @return true if scale_cuda filter is supported by FFmpeg
+     */
+    bool hasScaleCudaFilter() const;
+
+    /**
+     * @brief Log GPU capabilities for diagnostics
+     */
+    void logGpuCapabilities() const;
+
     // Cached encoder info to avoid repeated probing
-    mutable GPUEncoderInfo m_cachedEncoder;
+    // Access to these mutable caches is protected by m_cacheMutex
+    mutable GPUEncoderInfo m_cachedEncoder = GPUEncoderInfo{};
     mutable bool m_encoderCacheValid = false;
+    mutable int m_cudaHwaccelCache = -1;  // -1 = not checked, 0 = no, 1 = yes
+    mutable int m_scaleCudaCache = -1;    // -1 = not checked, 0 = no, 1 = yes
+    mutable std::recursive_mutex m_cacheMutex;
+
+    // GPU memory management: Track segment extraction count
+    // Every N segments, we force CPU mode and flush GPU memory to prevent crashes
+    // Reduced from 50 to 20 to prevent CUDA memory accumulation on long jobs
+    mutable size_t m_segmentsSinceGpuReset = 0;
+    static constexpr size_t GPU_RESET_INTERVAL = 20;  // Force CPU+flush every 20 segments
+
+    // Explicit GPU decision flag: set by copySegmentFast, used by copySegmentPrecise as fallback
+    // This avoids inferring GPU state from m_segmentsSinceGpuReset counter
+    mutable bool m_allowGpuThisSegment = true;
+
+    /**
+     * @brief Check if we should use GPU for current segment
+     * Returns false every GPU_RESET_INTERVAL segments to allow GPU memory cleanup
+     */
+    bool shouldUseGpuForSegment();
+
+    /**
+     * @brief Reset segment counter (call at start of new batch operation)
+     */
+    void resetSegmentCounter();
 };
 
 } // namespace BeatSync

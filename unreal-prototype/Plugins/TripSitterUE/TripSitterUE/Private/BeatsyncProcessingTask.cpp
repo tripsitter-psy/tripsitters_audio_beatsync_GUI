@@ -1,14 +1,7 @@
-FBeatsyncProcessingTask::~FBeatsyncProcessingTask()
-{
-    // Clear the progress callback to avoid dangling references
-    if (Writer)
-    {
-        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
-    }
-}
 #include "BeatsyncProcessingTask.h"
 #include "Async/Async.h"
 #include "HAL/FileManager.h"
+#include "HAL/ThreadSafeBool.h"
 #include "Misc/Paths.h"
 #include <memory>
 
@@ -19,13 +12,27 @@ FBeatsyncProcessingTask::FBeatsyncProcessingTask(const FBeatsyncProcessingParams
     , OnProgress(InProgressDelegate)
     , OnComplete(InCompleteDelegate)
 {
+    ProgressGuard = MakeShared<FThreadSafeBool>(false);
+}
+
+FBeatsyncProcessingTask::~FBeatsyncProcessingTask()
+{
+    // Invalidate progress guard so any in-flight callbacks won't attempt to call back into this object
+    if (ProgressGuard) {
+        ProgressGuard->AtomicSet(true);
+    }
+
+    // Clear the progress callback and destroy the Writer to avoid leaks and dangling references
+    if (Writer)
+    {
+        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
+        FBeatsyncLoader::DestroyVideoWriter(Writer);
+        Writer = nullptr;
+    }
 }
 
 void FBeatsyncProcessingTask::ReportProgress(float Progress, const FString& Status)
 {
-    // Optionally add an event to the current backend span if available
-    // Note: This assumes StartSpan was called outside and a span handle is available via FBeatsyncLoader
-
     if (OnProgress.IsBound())
     {
         // Marshal to game thread for UI updates
@@ -49,22 +56,20 @@ void FBeatsyncProcessingTask::DoWork()
 {
     FBeatsyncProcessingResult Result;
 
-    // Create top-level span for the processing job
-    auto Span = FBeatsyncLoader::StartSpan(TEXT("BeatsyncProcessingTask"));
-
-    // Check if backend is initialized
+    // Check if backend is initialized FIRST (before creating span)
     if (!FBeatsyncLoader::IsInitialized())
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Backend not loaded");
-        if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
-        if (Span) FBeatsyncLoader::EndSpan(Span);
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
         return;
     }
+
+    // Create top-level span for the processing job (only after init check)
+    auto Span = FBeatsyncLoader::StartSpan(TEXT("BeatsyncProcessingTask"));
 
     // Step 1: Analyze audio
     ReportProgress(0.05f, TEXT("Analyzing audio..."));
@@ -143,8 +148,22 @@ void FBeatsyncProcessingTask::DoWork()
     }
     Result.BeatCount = FilteredBeats.Num();
 
+    // Validate FilteredBeats is not empty
+    if (FilteredBeats.Num() == 0)
+    {
+        Result.bSuccess = false;
+        Result.ErrorMessage = TEXT("No beats after filtering");
+        if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
+        if (Span) FBeatsyncLoader::EndSpan(Span);
+        auto LocalOnComplete = OnComplete;
+        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+            LocalOnComplete.ExecuteIfBound(Result);
+        });
+        return;
+    }
+
     // Step 3: Create video writer
-    auto Writer = FBeatsyncLoader::CreateVideoWriter();
+    Writer = FBeatsyncLoader::CreateVideoWriter();
     if (!Writer)
     {
         Result.bSuccess = false;
@@ -158,13 +177,20 @@ void FBeatsyncProcessingTask::DoWork()
         return;
     }
 
-    // Set up progress callback for video processing using a weak pointer to avoid dangling 'this'
-    TWeakPtr<FBeatsyncProcessingTask> WeakThis = AsShared();
-    FBeatsyncLoader::SetProgressCallback(Writer, [WeakThis](double Prog) {
-        if (auto Pinned = WeakThis.Pin()) {
-            if (!Pinned->bCancelRequested) {
-                Pinned->ReportProgress(0.2f + 0.5f * static_cast<float>(Prog), TEXT("Processing video..."));
-            }
+    // Set up progress callback for video processing using a weak guard to avoid calling into destroyed task
+    // Capture delegate by value to avoid dangling pointer to 'this'
+    TWeakPtr<FThreadSafeBool> weakGuard = ProgressGuard;
+    FOnBeatsyncProcessingProgress LocalOnProgress = OnProgress;
+    FBeatsyncLoader::SetProgressCallback(Writer, [weakGuard, LocalOnProgress](double Prog) {
+        TSharedPtr<FThreadSafeBool> guard = weakGuard.Pin();
+        if (!guard) return; // Guard is gone (task destroyed)
+        if (*guard) return; // invalidated or cancelled
+        if (LocalOnProgress.IsBound()) {
+            float Progress = 0.2f + 0.5f * static_cast<float>(Prog);
+            FString Status = TEXT("Processing video...");
+            AsyncTask(ENamedThreads::GameThread, [LocalOnProgress, Progress, Status]() {
+                LocalOnProgress.ExecuteIfBound(Progress, Status);
+            });
         }
     });
 
@@ -194,7 +220,9 @@ void FBeatsyncProcessingTask::DoWork()
         Result.bSuccess = false;
         Result.ErrorMessage = ErrorMsg.IsEmpty() ? TEXT("Failed to cut video") : ErrorMsg;
         if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
+        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
         FBeatsyncLoader::DestroyVideoWriter(Writer);
+        Writer = nullptr;
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
         TempVideoPath.Empty();
         if (Span) FBeatsyncLoader::EndSpan(Span);
@@ -208,7 +236,9 @@ void FBeatsyncProcessingTask::DoWork()
     if (bCancelRequested)
     {
         if (Span) FBeatsyncLoader::SpanAddEvent(Span, TEXT("cancelled-after-cut"));
+        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
         FBeatsyncLoader::DestroyVideoWriter(Writer);
+        Writer = nullptr;
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
         TempVideoPath.Empty();
         Result.bSuccess = false;
@@ -247,7 +277,9 @@ void FBeatsyncProcessingTask::DoWork()
 
     if (bCancelRequested)
     {
+        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
         FBeatsyncLoader::DestroyVideoWriter(Writer);
+        Writer = nullptr;
         IFileManager::Get().Delete(*CurrentVideoPath, false, true, true);
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
@@ -270,6 +302,14 @@ void FBeatsyncProcessingTask::DoWork()
         UE_LOG(LogTemp, Warning, TEXT("TripSitter: Audio muxing failed, using video-only output"));
         // Fall back to video-only output
         IFileManager::Get().Move(*Params.OutputPath, *CurrentVideoPath, true, true);
+        // Invalidate temp paths so later cleanup does not attempt to delete files that were moved
+        // If effects were applied, CurrentVideoPath == TempEffectsPath, so empty both
+        if (CurrentVideoPath == TempEffectsPath)
+        {
+            TempEffectsPath.Empty();
+        }
+        TempVideoPath.Empty();
+        CurrentVideoPath.Empty();
         bSuccess = true; // Consider it a partial success
         if (Span) FBeatsyncLoader::SpanAddEvent(Span, TEXT("audio-mux-failed"));
     }
@@ -279,9 +319,14 @@ void FBeatsyncProcessingTask::DoWork()
     {
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
     }
-    IFileManager::Get().Delete(*TempEffectsPath, false, true, true);
+    if (!TempEffectsPath.IsEmpty())
+    {
+        IFileManager::Get().Delete(*TempEffectsPath, false, true, true);
+    }
 
+    FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
     FBeatsyncLoader::DestroyVideoWriter(Writer);
+    Writer = nullptr;
 
     // Report completion
     Result.bSuccess = bSuccess;

@@ -1,6 +1,7 @@
 #include "tracing.h"
 #include <iostream>
 #include <cstdlib>
+#include <mutex>
 
 #if defined(BEATSYNC_ENABLE_TRACING)
 // If the OpenTelemetry SDK is available, include the headers and set up an OTLP exporter.
@@ -8,16 +9,19 @@
 // when the SDK is missing. The CMake detect above sets BEATSYNC_ENABLE_TRACING when the
 // package was found.
 
+
 #include <opentelemetry/sdk/trace/tracer_provider.h>
+#include <opentelemetry/sdk/resource/resource.h>
 #include <opentelemetry/trace/provider.h>
 #include <opentelemetry/exporters/otlp/otlp_grpc_exporter.h>
 #include <opentelemetry/sdk/trace/simple_processor.h>
+#include <opentelemetry/sdk/trace/noop_tracer_provider.h>
 
 namespace {
 using opentelemetry::nostd::shared_ptr;
-using opentelemetry::trace::TracerProvider;
 using sdktrace = opentelemetry::sdk::trace;
-static std::shared_ptr<opentelemetry::trace::TracerProvider> g_provider;
+static std::shared_ptr<sdktrace::TracerProvider> g_provider;
+static std::mutex g_providerMutex;  // Protects g_provider access
 }
 
 namespace BeatSync {
@@ -26,6 +30,8 @@ bool InitializeTracing(const std::string& serviceName) {
     const char* env = std::getenv("OTEL_EXPORTER_OTLP_ENDPOINT");
     // Use port 4317 for gRPC (OTLP/gRPC default), not 4318 (OTLP/HTTP)
     std::string endpoint = env ? env : "http://localhost:4317";
+
+    std::lock_guard<std::mutex> lock(g_providerMutex);
 
     try {
         // Create OTLP exporter (gRPC) with configured endpoint
@@ -49,6 +55,8 @@ bool InitializeTracing(const std::string& serviceName) {
 }
 
 void ShutdownTracing() {
+    std::lock_guard<std::mutex> lock(g_providerMutex);
+
     if (g_provider) {
         // Attempt to cast to SDK provider for Shutdown
         auto sdk_provider = std::dynamic_pointer_cast<opentelemetry::sdk::trace::TracerProvider>(g_provider);

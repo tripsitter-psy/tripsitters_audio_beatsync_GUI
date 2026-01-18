@@ -16,8 +16,17 @@ namespace {
 #include <algorithm>
 #include <numeric>
 #include <sstream>
+#include <iostream>
+#include <fstream>
+
+#include "utils/DebugLogger.h"
 
 namespace BeatSync {
+
+// Debug logging helper - writes to file since Windows GUI apps don't show stderr
+static void debugLog(const std::string& msg) {
+    DebugLogger::getInstance().log(msg);
+}
 
 struct OnnxMusicAnalyzer::Impl {
     MusicAnalyzerConfig config;
@@ -30,6 +39,12 @@ struct OnnxMusicAnalyzer::Impl {
     bool beatDetectorLoaded = false;
 
     bool initialize(const MusicAnalyzerConfig& cfg) {
+        // Reset state
+        stemSeparator = nullptr;
+        stemSeparatorLoaded = false;
+        beatDetector = nullptr;
+        beatDetectorLoaded = false;
+        lastError.clear();
         config = cfg;
 
         // Load stem separator if path provided and enabled
@@ -39,8 +54,9 @@ struct OnnxMusicAnalyzer::Impl {
                 stemSeparatorLoaded = true;
             } else {
                 lastError = "Failed to load stem separator: " + stemSeparator->getLastError();
-                // Continue without stem separation
+                stemSeparator = nullptr;
                 stemSeparatorLoaded = false;
+                // Continue without stem separation
             }
         }
 
@@ -51,10 +67,14 @@ struct OnnxMusicAnalyzer::Impl {
                 beatDetectorLoaded = true;
             } else {
                 lastError = "Failed to load beat detector: " + beatDetector->getLastError();
+                beatDetector = nullptr;
+                beatDetectorLoaded = false;
                 return false;
             }
         } else {
             lastError = "Beat model path is required";
+            beatDetector = nullptr;
+            beatDetectorLoaded = false;
             return false;
         }
 
@@ -83,36 +103,59 @@ struct OnnxMusicAnalyzer::Impl {
                                     bool useStemSep, MusicAnalysisProgress progress) {
         MusicAnalysisResult result;
         result.sampleRate = sampleRate;
-        result.duration = stereoSamples.size() / 2.0 / sampleRate;
+        // Explicit cast to double to preserve precision for very large buffers
+        result.duration = static_cast<double>(stereoSamples.size()) / 2.0 / static_cast<double>(sampleRate);
 
         // Progress stages
         float stemProgress = 0.0f;
         float beatProgress = 0.0f;
 
-        auto reportProgress = [&](const std::string& stage) {
-            if (progress) {
-                float total = useStemSep ? (stemProgress * 0.6f + beatProgress * 0.4f)
-                                         : beatProgress;
-                return progress(total, stage, "");
-            }
-            return true;
-        };
+        {
+            std::ostringstream oss;
+            oss << "[BeatSync] MusicAnalyzer pipeline: stereo samples=" << stereoSamples.size()
+                << " sampleRate=" << sampleRate << " duration=" << result.duration << "s"
+                << " useStemSep=" << useStemSep << " stemSeparatorLoaded=" << stemSeparatorLoaded;
+            debugLog(oss.str());
+        }
 
         // Stage 1: Stem Separation (if enabled and loaded)
         std::vector<float> audioForBeatDetection;
 
         if (useStemSep && stemSeparatorLoaded && stemSeparator) {
-            if (progress) progress(0.0f, "Stem Separation", "Separating audio into stems...");
+            bool shouldContinue = true;
+            if (progress) {
+                shouldContinue = progress(0.0f, "Stem Separation", "Separating audio into stems...");
+            }
+            if (!shouldContinue) {
+                lastError = "Stem separation cancelled by user.";
+                return result;
+            }
 
             auto stemCallback = [&](float p, const std::string& msg) {
                 stemProgress = p;
                 if (progress) {
-                    return progress(p * 0.6f, "Stem Separation", msg);
+                    bool cont = progress(p * 0.6f, "Stem Separation", msg);
+                    if (!cont) return false;
                 }
                 return true;
             };
 
             StemSeparationResult stemResult = stemSeparator->separate(stereoSamples, sampleRate, stemCallback);
+            if (lastError == "Stem separation cancelled by user.") {
+                return result;
+            }
+
+            // Debug: log stem sizes
+            {
+                std::ostringstream oss;
+                oss << "[BeatSync] Stem separation results:"
+                    << " drums=" << stemResult.stems[0].size()
+                    << " bass=" << stemResult.stems[1].size()
+                    << " other=" << stemResult.stems[2].size()
+                    << " vocals=" << stemResult.stems[3].size()
+                    << " sampleRate=" << stemResult.sampleRate;
+                debugLog(oss.str());
+            }
 
             if (!stemResult.stems[0].empty()) {
                 result.stemSeparationUsed = true;
@@ -120,13 +163,28 @@ struct OnnxMusicAnalyzer::Impl {
                 // Use drums stem for primary beat detection
                 if (config.useDrumsForBeats) {
                     audioForBeatDetection = stemResult.getMonoStem(StemType::Drums);
+
+                    // Debug: analyze drums audio statistics
+                    float drumsMin = 1e9f, drumsMax = -1e9f, drumsSum = 0.0f;
+                    for (float v : audioForBeatDetection) {
+                        drumsMin = std::min(drumsMin, v);
+                        drumsMax = std::max(drumsMax, v);
+                        drumsSum += std::abs(v);
+                    }
+                    {
+                        std::ostringstream oss;
+                        oss << "[BeatSync] Drums mono audio: samples=" << audioForBeatDetection.size()
+                            << " min=" << drumsMin << " max=" << drumsMax
+                            << " meanAbs=" << (drumsSum / audioForBeatDetection.size());
+                        debugLog(oss.str());
+                    }
                 } else {
                     // Use original audio
                     audioForBeatDetection = stereoToMono(stereoSamples);
                 }
 
                 // Optionally run beat detection on each stem
-                if (config.returnStems || config.combineAllStems) {
+                if (config.returnStems || config.analyzePerStemBeats) {
                     result.rawStemResult = std::move(stemResult);
                 }
             } else {
@@ -174,7 +232,7 @@ struct OnnxMusicAnalyzer::Impl {
         }
 
         // Stage 3: Optional per-stem beat analysis
-        if (config.combineAllStems && result.stemSeparationUsed && !result.rawStemResult.stems[0].empty()) {
+        if (config.analyzePerStemBeats && result.stemSeparationUsed && !result.rawStemResult.stems[0].empty()) {
             if (progress) progress(0.9f, "Per-Stem Analysis", "Analyzing individual stems...");
 
             // Run beat detection on each stem
@@ -185,25 +243,38 @@ struct OnnxMusicAnalyzer::Impl {
 
                     switch (static_cast<StemType>(s)) {
                         case StemType::Drums:
-                            result.stemBeats.drums = stemBeats.beats;
+                            result.stemBeats.drums = std::move(stemBeats.beats);
                             break;
                         case StemType::Bass:
-                            result.stemBeats.bass = stemBeats.beats;
+                            result.stemBeats.bass = std::move(stemBeats.beats);
                             break;
                         case StemType::Other:
-                            result.stemBeats.other = stemBeats.beats;
+                            result.stemBeats.other = std::move(stemBeats.beats);
                             break;
                         case StemType::Vocals:
-                            result.stemBeats.vocals = stemBeats.beats;
+                            result.stemBeats.vocals = std::move(stemBeats.beats);
                             break;
                         default:
                             break;
                     }
+
+                    // Clear temporary result to release memory immediately (prevents GPU memory accumulation)
+                    stemBeats.beatActivation.clear();
+                    stemBeats.beatActivation.shrink_to_fit();
+                    stemBeats.downbeatActivation.clear();
+                    stemBeats.downbeatActivation.shrink_to_fit();
                 }
+
+                // stemMono goes out of scope here, no manual cleanup needed
             }
         }
 
         if (progress) progress(1.0f, "Complete", "Analysis complete");
+
+        // Release GPU memory after analysis to prevent accumulation during long processing sessions
+        if (beatDetectorLoaded && beatDetector) {
+            beatDetector->releaseGPUMemory();
+        }
 
         return result;
     }
@@ -289,9 +360,27 @@ std::string OnnxMusicAnalyzer::getModelInfo() const {
     oss << "\n[Pipeline]\n";
     oss << "  Stem separation: " << (m_impl->config.useStemSeparation ? "Enabled" : "Disabled") << "\n";
     oss << "  Use drums for beats: " << (m_impl->config.useDrumsForBeats ? "Yes" : "No") << "\n";
-    oss << "  Combine all stems: " << (m_impl->config.combineAllStems ? "Yes" : "No") << "\n";
+    oss << "  Per-stem beat analysis: " << (m_impl->config.analyzePerStemBeats ? "Yes" : "No") << "\n";
 
     return oss.str();
+}
+
+const OnnxBeatDetector* OnnxMusicAnalyzer::getBeatDetector() const {
+    return m_impl->beatDetector.get();
+}
+
+bool OnnxMusicAnalyzer::isGPUEnabled() const {
+    if (m_impl->beatDetector && m_impl->beatDetectorLoaded) {
+        return m_impl->beatDetector->isGPUEnabled();
+    }
+    return false;
+}
+
+std::string OnnxMusicAnalyzer::getActiveProvider() const {
+    if (m_impl->beatDetector && m_impl->beatDetectorLoaded) {
+        return m_impl->beatDetector->getActiveProvider();
+    }
+    return "None";
 }
 
 } // namespace BeatSync

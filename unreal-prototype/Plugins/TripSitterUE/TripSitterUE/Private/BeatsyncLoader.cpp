@@ -6,8 +6,15 @@
 
 #include "beatsync_capi.h"
 
-// Static storage for callback data to prevent leaks
-static TMap<void*, TUniquePtr<FBeatsyncLoader::CallbackData>> GCallbackStorage;
+// Internal callback data structure
+struct FBeatsyncLoader::CallbackData
+{
+    FProgressCb Func;
+};
+
+// Static storage for callback data using shared ownership to prevent dangling pointers
+// The trampoline can hold a TSharedPtr copy to keep data alive during callback execution
+static TMap<void*, TSharedPtr<FBeatsyncLoader::CallbackData>> GCallbackStorage;
 static FCriticalSection GCallbackStorageMutex;
 
 // Function pointer types
@@ -183,7 +190,7 @@ FString FBeatsyncLoader::ResolveFFmpegPath()
 {
     if (!GApi.resolve_ffmpeg) return FString();
     const char* p = GApi.resolve_ffmpeg();
-    return p ? FString(p) : FString();
+    return p ? FString(UTF8_TO_TCHAR(p)) : FString();
 }
 
 void* FBeatsyncLoader::CreateAnalyzer()
@@ -196,6 +203,28 @@ void FBeatsyncLoader::DestroyAnalyzer(void* handle)
 {
     if (!GApi.destroy_analyzer) return;
     GApi.destroy_analyzer(handle);
+}
+
+void* FBeatsyncLoader::CreateVideoWriter()
+{
+    if (!GApi.create_writer) return nullptr;
+    return GApi.create_writer();
+}
+
+void FBeatsyncLoader::DestroyVideoWriter(void* writer)
+{
+    if (!writer) return;
+
+    // Remove any callback data for this writer
+    {
+        FScopeLock Lock(&GCallbackStorageMutex);
+        GCallbackStorage.Remove(writer);
+    }
+
+    if (GApi.destroy_writer)
+    {
+        GApi.destroy_writer(writer);
+    }
 }
 
 bool FBeatsyncLoader::AnalyzeAudio(void* handle, const FString& path, FBeatGrid& outGrid)
@@ -224,21 +253,31 @@ FString FBeatsyncLoader::GetVideoLastError(void* writer)
 {
     if (!GApi.video_get_last_error) return FString();
     const char* p = GApi.video_get_last_error(writer);
-    return p ? FString(p) : FString();
+    return p ? FString(UTF8_TO_TCHAR(p)) : FString();
 }
 
 void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
 {
     if (!GApi.video_set_progress) return;
 
-    // Trampoline lambda for progress callbacks - copies callback to local var under lock,
-    // then invokes outside lock to prevent deadlock
+    // Trampoline lambda for progress callbacks - validates the pointer is still in storage,
+    // copies callback to local var under lock, then invokes outside lock to prevent deadlock
     static auto trampoline = [](double progress, void* user_data) {
         FProgressCb LocalFunc;
         {
             FScopeLock Lock(&GCallbackStorageMutex);
             CallbackData* d = reinterpret_cast<CallbackData*>(user_data);
-            if (d && d->Func) {
+            // Validate the pointer is still present in storage to prevent dangling pointer access
+            bool bFound = false;
+            for (const auto& Pair : GCallbackStorage)
+            {
+                if (Pair.Value.Get() == d)
+                {
+                    bFound = true;
+                    break;
+                }
+            }
+            if (bFound && d && d->Func) {
                 LocalFunc = d->Func;  // Copy to avoid holding lock during callback
             }
         }  // Lock released here
@@ -257,10 +296,10 @@ void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
 
         if (cb)
         {
-            // Store the callback data
-            auto data = MakeUnique<CallbackData>();
+            // Store the callback data using shared ownership
+            auto data = MakeShared<CallbackData>();
             data->Func = cb;
-            GCallbackStorage.Add(writer, MoveTemp(data));
+            GCallbackStorage.Add(writer, data);
             userPtr = GCallbackStorage[writer].Get();
         }
     }  // Lock released here before DLL call
@@ -367,9 +406,25 @@ bool FBeatsyncLoader::ExtractFrame(const FString& videoPath, double timestamp, T
     int res = GApi.video_extract_frame(VideoPathAnsi.Get(), timestamp, &data, &w, &h);
     if (res != 0 || !data) return false;
 
-    int size = w * h * 3;
+    // Validate dimensions are positive and compute size using wider type to prevent overflow
+    if (w <= 0 || h <= 0)
+    {
+        if (GApi.free_frame_data) GApi.free_frame_data(data);
+        return false;
+    }
+
+    // Compute size with overflow check using uint64
+    const uint64 size64 = static_cast<uint64>(w) * static_cast<uint64>(h) * 3ULL;
+    if (size64 > static_cast<uint64>(MAX_int32))
+    {
+        UE_LOG(LogTemp, Error, TEXT("ExtractFrame: Frame size %llu exceeds INT32_MAX"), size64);
+        if (GApi.free_frame_data) GApi.free_frame_data(data);
+        return false;
+    }
+
+    const int32 size = static_cast<int32>(size64);
     outRgb24.SetNumUninitialized(size);
-    memcpy(outRgb24.GetData(), data, size);
+    FMemory::Memcpy(outRgb24.GetData(), data, size);
     outWidth = w;
     outHeight = h;
 

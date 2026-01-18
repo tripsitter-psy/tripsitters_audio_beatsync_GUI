@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <functional>
+#include <iostream>
 
 
 namespace BeatSync {
@@ -34,15 +35,15 @@ struct OnnxConfig {
     float fmax = 11000.0f;            ///< Maximum frequency for mel filterbank
 
     // Inference parameters
-    int batchSize = 1;                ///< Batch size for inference
-    bool useGPU = true;               ///< Use GPU acceleration if available (CUDA/DirectML)
+    // int batchSize = 1;             ///< [Deprecated] Batch size for inference (not implemented)
+    bool useGPU = true;               ///< Use GPU acceleration if available (CUDA; DirectML not supported)
     int gpuDeviceId = 0;              ///< GPU device ID
     int numThreads = 0;               ///< Number of threads (0 = auto)
 
     // Post-processing parameters
-    float beatThreshold = 0.5f;       ///< Threshold for beat activation
-    float downbeatThreshold = 0.5f;   ///< Threshold for downbeat activation
-    float minBeatInterval = 0.2f;     ///< Minimum time between beats (seconds)
+    float beatThreshold = 0.7f;       ///< Threshold for beat activation (higher = fewer beats detected)
+    float downbeatThreshold = 0.7f;   ///< Threshold for downbeat activation
+    float minBeatInterval = 0.27f;    ///< Minimum time between beats (seconds) - 0.27s = ~220 BPM max
 
     // For AllInOne model
     bool enableSegments = true;       ///< Enable segment boundary detection
@@ -121,22 +122,45 @@ public:
 
     /**
      * @brief Check if a model is loaded and ready
+     * @note This is the canonical check - call this before using other accessors
      */
     bool isLoaded() const { return m_impl != nullptr && isLoadedImpl(); }
 
+    /**
+     * @brief Get the loaded model type
+     * @note Returns default OnnxModelType if not loaded; call isLoaded() first
+     */
     OnnxModelType getModelType() const {
-        if (!m_impl) return OnnxModelType();
+        if (!m_impl) {
+            std::cerr << "[OnnxBeatDetector::getModelType] Warning: called on unloaded detector\n";
+            return OnnxModelType();
+        }
         return getModelTypeImpl();
     }
 
+    /**
+     * @brief Get the current configuration
+     * @note Returns default OnnxConfig if not loaded; call isLoaded() first
+     */
     const OnnxConfig& getConfig() const {
         static OnnxConfig defaultConfig;
-        if (!m_impl) return defaultConfig;
+        if (!m_impl) {
+            std::cerr << "[OnnxBeatDetector::getConfig] Warning: called on unloaded detector\n";
+            return defaultConfig;
+        }
         return getConfigImpl();
     }
 
+    /**
+     * @brief Set configuration parameters
+     * @note No-op if detector not loaded; call isLoaded() first
+     */
     void setConfig(const OnnxConfig& config) {
-        if (m_impl) setConfigImpl(config);
+        if (!m_impl) {
+            std::cerr << "[OnnxBeatDetector::setConfig] Warning: called on unloaded detector\n";
+            return;
+        }
+        setConfigImpl(config);
     }
 
     BeatGrid analyze(const std::vector<float>& samples, int sampleRate, ProgressCallback progress = nullptr) {
@@ -169,6 +193,31 @@ public:
     }
 
     /**
+     * @brief Check if GPU acceleration is enabled for this instance
+     */
+    bool isGPUEnabled() const {
+        if (!m_impl) return false;
+        return isGPUEnabledImpl();
+    }
+
+    /**
+     * @brief Get the active execution provider name (e.g., "CUDAExecutionProvider" or "CPUExecutionProvider")
+     */
+    std::string getActiveProvider() const {
+        if (!m_impl) return "None";
+        return getActiveProviderImpl();
+    }
+
+    /**
+     * @brief Release GPU memory pools to prevent memory exhaustion during long operations
+     *
+     * Call this between major processing phases (e.g., after analyzing each file)
+     * to ensure GPU memory is released back to the system. This recreates the
+     * ONNX session, so there is a performance cost (~100-500ms).
+     */
+    void releaseGPUMemory();
+
+    /**
      * @brief Check if ONNX Runtime is available
      */
     static bool isOnnxRuntimeAvailable();
@@ -190,6 +239,8 @@ private:
     void resetImpl();
     std::string getLastErrorImpl() const;
     std::string getModelInfoImpl() const;
+    bool isGPUEnabledImpl() const;
+    std::string getActiveProviderImpl() const;
 
     struct Impl;
     std::unique_ptr<Impl> m_impl;

@@ -20,7 +20,7 @@ jobs:
         run: |
           # Script exits 0 if GPU changes detected, 1 if no GPU changes
           # We capture the result in an output variable for clarity
-          if python3 tools/check_gpu_changes.py --base ${{ github.event.pull_request.base.ref }}; then
+          if python3 tools/check_gpu_changes.py --base "${{ github.event.pull_request.base.ref }}"; then
             echo "gpu_changes=true" >> $GITHUB_OUTPUT
           else
             echo "gpu_changes=false" >> $GITHUB_OUTPUT
@@ -37,7 +37,7 @@ jobs:
 
             Please add the **`test-cuda`** label so the gated CUDA integration workflow can run on a GPU-enabled self-hosted runner and validate GPU changes.
 
-            *How-to:* add the label in the PR sidebar or run `python tools/check_gpu_changes.py --base ${{ github.base_ref }}` to see which files triggered this.
+            *How-to:* add the label in the PR sidebar or run `python tools/check_gpu_changes.py --base "${{ github.base_ref }}"` to see which files triggered this.
 
             <!-- gpu-pr-check -->
           edit-mode: replace

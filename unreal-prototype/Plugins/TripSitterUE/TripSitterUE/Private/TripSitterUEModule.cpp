@@ -57,12 +57,24 @@ static void CallBackendInitTracing(const FString& ServiceName)
     void* Symbol = FPlatformProcess::GetDllExport(BeatsyncDllHandle, TEXT("bs_initialize_tracing"));
     if (!Symbol) {
         UE_LOG(LogTemp, Warning, TEXT("TripSitterUEModule: bs_initialize_tracing not found in backend"));
+        // Cleanup DLL handle to avoid leak
+        FPlatformProcess::FreeDllHandle(BeatsyncDllHandle);
+        BeatsyncDllHandle = nullptr;
         return;
     }
 
     bs_init_tracing_t Init = reinterpret_cast<bs_init_tracing_t>(Symbol);
-    FString UTF8 = ServiceName;
-    Init(TCHAR_TO_ANSI(*UTF8));
+    FTCHARToUTF8 UTF8ServiceName(*ServiceName);
+    int Result = Init(UTF8ServiceName.Get());
+    // C++ InitializeTracing returns 1 on success, 0 on failure
+    if (Result == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("TripSitterUEModule: bs_initialize_tracing failed with code %d for service '%s'"), Result, *ServiceName);
+        // Cleanup DLL handle on initialization failure
+        FPlatformProcess::FreeDllHandle(BeatsyncDllHandle);
+        BeatsyncDllHandle = nullptr;
+        return;
+    }
 }
 
 static void CallBackendShutdownTracing()
@@ -86,7 +98,7 @@ void FTripSitterUEModule::StartupModule()
     if (FModuleManager::Get().IsModuleLoaded("LevelEditor"))
     {
         FLevelEditorModule& LevelEditorModule = FModuleManager::LoadModuleChecked<FLevelEditorModule>("LevelEditor");
-        TSharedPtr<FExtender> MenuExtender = MakeShareable(new FExtender());
+        MenuExtender = MakeShareable(new FExtender());
         MenuExtender->AddMenuExtension(
             "WindowLayout",
             EExtensionHook::After,
@@ -99,6 +111,14 @@ void FTripSitterUEModule::StartupModule()
 
 void FTripSitterUEModule::ShutdownModule()
 {
+    // Remove menu extender to prevent crashes on shutdown/hot-reload
+    if (MenuExtender.IsValid() && FModuleManager::Get().IsModuleLoaded("LevelEditor"))
+    {
+        FLevelEditorModule& LevelEditorModule = FModuleManager::LoadModuleChecked<FLevelEditorModule>("LevelEditor");
+        LevelEditorModule.GetMenuExtensibilityManager()->RemoveExtender(MenuExtender);
+        MenuExtender.Reset();
+    }
+
     // Try to shutdown tracing
     CallBackendShutdownTracing();
 
