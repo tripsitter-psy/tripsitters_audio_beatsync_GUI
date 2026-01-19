@@ -2343,9 +2343,15 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 		// Store first beat time for BPM recalculation anchor (before potentially modifying beats)
 		OriginalFirstBeatTime = BeatGrid.Beats[0];
 
-		// If user had a valid BPM in the spinbox, regenerate beats at that BPM
-		// This allows "Analyze" to respect the user's requested tempo
-		if (UserRequestedBPM >= 20.0 && UserRequestedBPM <= 300.0)
+		// Only regenerate at user's BPM if:
+		// 1. This is a RE-analysis (we already had a detected BPM)
+		// 2. User changed the spinbox to a different value than what was detected
+		// 3. The new value is valid (20-300 BPM range)
+		bool bUserChangedBPM = bAudioAnalyzed &&
+			UserRequestedBPM >= 20.0 && UserRequestedBPM <= 300.0 &&
+			FMath::Abs(UserRequestedBPM - DetectedBPM) > 0.5;  // More than 0.5 BPM difference
+
+		if (bUserChangedBPM)
 		{
 			double BeatInterval = 60.0 / UserRequestedBPM;
 			double FirstBeat = OriginalFirstBeatTime;
@@ -2360,8 +2366,8 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 
 			BeatGrid.Beats = EvenBeats;
 			BeatGrid.BPM = UserRequestedBPM;
-			UE_LOG(LogTemp, Log, TEXT("TripSitter: Regenerated %d evenly-spaced beats at user-requested %.1f BPM"),
-				EvenBeats.Num(), UserRequestedBPM);
+			UE_LOG(LogTemp, Log, TEXT("TripSitter: Regenerated %d evenly-spaced beats at user-requested %.1f BPM (was %.1f)"),
+				EvenBeats.Num(), UserRequestedBPM, DetectedBPM);
 		}
 
 		// Store results

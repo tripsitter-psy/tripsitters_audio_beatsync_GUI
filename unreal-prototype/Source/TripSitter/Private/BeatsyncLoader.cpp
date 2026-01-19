@@ -522,27 +522,11 @@ bool FBeatsyncLoader::ConcatenateVideos(const TArray<FString>& Inputs, const FSt
 {
     if (!GApi.video_concatenate || Inputs.Num() == 0) return false;
 
-    // Convert FStrings to UTF8 and store them
-    // IMPORTANT: Reserve capacity upfront to prevent reallocation during the loop
-    // which would invalidate pointers stored in InputPtrs
-    TArray<TArray<char>> ConvertedStrings;
-    ConvertedStrings.Reserve(Inputs.Num());
-    TArray<const char*> InputPtrs;
-    InputPtrs.Reserve(Inputs.Num());
-
-    for (const FString& Input : Inputs) {
-        FTCHARToUTF8 Converter(*Input);
-        TArray<char> Utf8String;
-        int32 Len = FCStringAnsi::Strlen(Converter.Get()) + 1;
-        Utf8String.SetNum(Len);
-        FMemory::Memcpy(Utf8String.GetData(), Converter.Get(), Len);
-        ConvertedStrings.Add(MoveTemp(Utf8String));
-        InputPtrs.Add(ConvertedStrings.Last().GetData());
-    }
-
     FTCHARToUTF8 UTF8Output(*OutputVideo);
     TArray<FTCHARToUTF8> ConvertedInputs;
+    ConvertedInputs.Reserve(Inputs.Num());
     TArray<const char*> InputPtrsStable;
+    InputPtrsStable.Reserve(Inputs.Num());
     for (const FString& Input : Inputs) {
         ConvertedInputs.Emplace(*Input);
         InputPtrsStable.Add(ConvertedInputs.Last().Get());
