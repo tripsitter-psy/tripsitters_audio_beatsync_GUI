@@ -5,13 +5,45 @@
 #include "Misc/Paths.h"
 #include <memory>
 
+
 FBeatsyncProcessingTask::FBeatsyncProcessingTask(const FBeatsyncProcessingParams& InParams,
                                                   FOnBeatsyncProcessingProgress InProgressDelegate,
                                                   FOnBeatsyncProcessingComplete InCompleteDelegate)
     : Params(InParams)
     , OnProgress(InProgressDelegate)
     , OnComplete(InCompleteDelegate)
+    , SharedCancelFlag(MakeShared<FThreadSafeBool>(false))
 {
+}
+
+FBeatsyncProcessingTask::~FBeatsyncProcessingTask()
+{
+    // Signal cancellation to stop any in-progress work
+    if (SharedCancelFlag.IsValid())
+    {
+        SharedCancelFlag->AtomicSet(true);
+    }
+
+    // Wait for DoWork to complete (with timeout to prevent indefinite hangs)
+    constexpr double TimeoutSeconds = 10.0;
+    double StartTime = FPlatformTime::Seconds();
+    while (!bWorkCompleted && (FPlatformTime::Seconds() - StartTime) < TimeoutSeconds)
+    {
+        FPlatformProcess::Sleep(0.01f);
+    }
+
+    if (!bWorkCompleted)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("FBeatsyncProcessingTask: Destructor timed out waiting for DoWork to complete"));
+    }
+
+    // Clean up Writer if DoWork didn't complete normally (e.g., early exit or exception)
+    if (Writer)
+    {
+        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
+        FBeatsyncLoader::DestroyVideoWriter(Writer);
+        Writer = nullptr;
+    }
 }
 
 void FBeatsyncProcessingTask::ReportProgress(float Progress, const FString& Status)
@@ -42,27 +74,27 @@ void FBeatsyncProcessingTask::DoWork()
 {
     FBeatsyncProcessingResult Result;
 
-    // Create top-level span for the processing job
-    auto Span = FBeatsyncLoader::StartSpan(TEXT("BeatsyncProcessingTask"));
 
     // Check if backend is initialized
     if (!FBeatsyncLoader::IsInitialized())
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Backend not loaded");
-        if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
-        if (Span) FBeatsyncLoader::EndSpan(Span);
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        bWorkCompleted.AtomicSet(true);
         return;
     }
+
+    // Create top-level span for the processing job only if backend is initialized
+    auto Span = FBeatsyncLoader::StartSpan(TEXT("BeatsyncProcessingTask"));
 
     // Step 1: Analyze audio
     ReportProgress(0.05f, TEXT("Analyzing audio..."));
 
-    if (bCancelRequested)
+    if (SharedCancelFlag.IsValid() && *SharedCancelFlag)
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
@@ -75,6 +107,7 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        bWorkCompleted.AtomicSet(true);
         return;
     }
 
@@ -89,6 +122,7 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        bWorkCompleted.AtomicSet(true);
         return;
     }
 
@@ -106,6 +140,7 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        bWorkCompleted.AtomicSet(true);
         return;
     }
 
@@ -114,7 +149,7 @@ void FBeatsyncProcessingTask::DoWork()
 
     ReportProgress(0.2f, FString::Printf(TEXT("Found %d beats at %.1f BPM"), BeatGrid.Beats.Num(), BeatGrid.BPM));
 
-    if (bCancelRequested)
+    if (SharedCancelFlag.IsValid() && *SharedCancelFlag)
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
@@ -123,6 +158,7 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        bWorkCompleted.AtomicSet(true);
         return;
     }
 
@@ -134,10 +170,51 @@ void FBeatsyncProcessingTask::DoWork()
     {
         FilteredBeats.Add(BeatGrid.Beats[i]);
     }
+    
+    // Validate FilteredBeats - if empty, try to recover or fail gracefully
+    if (FilteredBeats.Num() == 0)
+    {
+        // Try reducing beat divisor to get at least one beat
+        if (ClampedBeatRate > 0)
+        {
+            ClampedBeatRate = 0; // Reset to no filtering
+            BeatDivisor = 1;
+            FilteredBeats.Reset();
+            for (int32 i = 0; i < BeatGrid.Beats.Num(); i += BeatDivisor)
+            {
+                FilteredBeats.Add(BeatGrid.Beats[i]);
+            }
+        }
+        
+        // If still empty, fallback to first beat or fail
+        if (FilteredBeats.Num() == 0)
+        {
+            if (BeatGrid.Beats.Num() > 0)
+            {
+                FilteredBeats.Add(BeatGrid.Beats[0]); // Use first beat as fallback
+            }
+            else
+            {
+                Result.bSuccess = false;
+                Result.ErrorMessage = TEXT("No beats detected in audio");
+                if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
+                if (Span) FBeatsyncLoader::EndSpan(Span);
+
+                // Marshal completion to game thread
+                auto LocalOnComplete = OnComplete;
+                AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+                    LocalOnComplete.ExecuteIfBound(Result);
+                });
+                bWorkCompleted.AtomicSet(true);
+                return;
+            }
+        }
+    }
+    
     Result.BeatCount = FilteredBeats.Num();
 
-    // Step 3: Create video writer
-    auto Writer = FBeatsyncLoader::CreateVideoWriter();
+    // Step 3: Create video writer (assign to member for destructor cleanup)
+    Writer = FBeatsyncLoader::CreateVideoWriter();
     if (!Writer)
     {
         Result.bSuccess = false;
@@ -148,24 +225,37 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        bWorkCompleted.AtomicSet(true);
         return;
     }
 
     // Set up progress callback for video processing
-    // Note: bCancelRequested is a member of this task object which outlives the callback
-    // since we destroy the Writer (and its callback) before task destruction
+    // Note: SharedCancelFlag is a shared member that reflects runtime cancellation state
     auto LocalOnProgress = OnProgress;
-    const FThreadSafeBool* CancelFlag = &bCancelRequested;
-    FBeatsyncLoader::SetProgressCallback(Writer, [LocalOnProgress, CancelFlag](double Prog) {
-        if (!(*CancelFlag)) {
-            LocalOnProgress.ExecuteIfBound(0.2f + 0.5f * static_cast<float>(Prog), TEXT("Processing video..."));
+    FBeatsyncLoader::SetProgressCallback(Writer, [LocalOnProgress, SharedCancelFlag = this->SharedCancelFlag](double Prog) {
+        if (!(*SharedCancelFlag)) {
+            float Progress = 0.2f + 0.5f * static_cast<float>(Prog);
+            FString Status = TEXT("Processing video...");
+            // Marshal to game thread for UI updates - Slate cannot be accessed from worker threads
+            AsyncTask(ENamedThreads::GameThread, [LocalOnProgress, Progress, Status]() {
+                LocalOnProgress.ExecuteIfBound(Progress, Status);
+            });
         }
     });
 
     // Step 4: Cut video at beats
     ReportProgress(0.25f, TEXT("Cutting video at beats..."));
 
-    double ClipDuration = FilteredBeats.Num() > 1 ? (FilteredBeats[1] - FilteredBeats[0]) : 1.0;
+    double ClipDuration;
+    if (FilteredBeats.Num() > 1) {
+        ClipDuration = FilteredBeats[1] - FilteredBeats[0];
+    } else if (BeatGrid.BPM > 0.0) {
+        // Use one beat duration when BPM is available
+        ClipDuration = 60.0 / BeatGrid.BPM;
+    } else {
+        // Fallback to default duration when no BPM info is available
+        ClipDuration = 1.0;
+    }
 
     // Create temp files in system temp directory (not next to output)
     FString TempDir = FPaths::Combine(FPlatformProcess::UserTempDir(), TEXT("TripSitter"));
@@ -198,6 +288,7 @@ void FBeatsyncProcessingTask::DoWork()
         Result.ErrorMessage = ErrorMsg.IsEmpty() ? TEXT("Failed to cut video") : ErrorMsg;
         if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
         FBeatsyncLoader::DestroyVideoWriter(Writer);
+        Writer = nullptr;
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
         TempVideoPath.Empty();
         if (Span) FBeatsyncLoader::EndSpan(Span);
@@ -205,13 +296,15 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        bWorkCompleted.AtomicSet(true);
         return;
     }
 
-    if (bCancelRequested)
+    if (SharedCancelFlag.IsValid() && *SharedCancelFlag)
     {
         if (Span) FBeatsyncLoader::SpanAddEvent(Span, TEXT("cancelled-after-cut"));
         FBeatsyncLoader::DestroyVideoWriter(Writer);
+        Writer = nullptr;
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
         TempVideoPath.Empty();
         Result.bSuccess = false;
@@ -221,6 +314,7 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        bWorkCompleted.AtomicSet(true);
         return;
     }
 
@@ -240,6 +334,7 @@ void FBeatsyncProcessingTask::DoWork()
         {
             IFileManager::Get().Delete(*CurrentVideoPath, false, true, true);
             CurrentVideoPath = TempEffectsPath;
+            TempEffectsPath.Empty();
         }
         else
         {
@@ -248,9 +343,10 @@ void FBeatsyncProcessingTask::DoWork()
         }
     }
 
-    if (bCancelRequested)
+    if (SharedCancelFlag.IsValid() && *SharedCancelFlag)
     {
         FBeatsyncLoader::DestroyVideoWriter(Writer);
+        Writer = nullptr;
         IFileManager::Get().Delete(*CurrentVideoPath, false, true, true);
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
@@ -259,6 +355,7 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        bWorkCompleted.AtomicSet(true);
         return;
     }
 
@@ -273,6 +370,9 @@ void FBeatsyncProcessingTask::DoWork()
         UE_LOG(LogTemp, Warning, TEXT("TripSitter: Audio muxing failed, using video-only output"));
         // Fall back to video-only output
         IFileManager::Get().Move(*Params.OutputPath, *CurrentVideoPath, true, true);
+        // Invalidate temp paths so later cleanup does not attempt to delete files that were moved
+        TempVideoPath.Empty();
+        CurrentVideoPath.Empty();
         bSuccess = true; // Consider it a partial success
         if (Span) FBeatsyncLoader::SpanAddEvent(Span, TEXT("audio-mux-failed"));
     }
@@ -285,9 +385,11 @@ void FBeatsyncProcessingTask::DoWork()
     if (!TempEffectsPath.IsEmpty())
     {
         IFileManager::Get().Delete(*TempEffectsPath, false, true, true);
+        TempEffectsPath.Empty();
     }
 
     FBeatsyncLoader::DestroyVideoWriter(Writer);
+    Writer = nullptr;  // Prevent double-destroy in destructor
 
     // Report completion
     Result.bSuccess = bSuccess;
@@ -305,4 +407,7 @@ void FBeatsyncProcessingTask::DoWork()
     AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
         LocalOnComplete.ExecuteIfBound(Result);
     });
+
+    // Signal completion for destructor synchronization
+    bWorkCompleted.AtomicSet(true);
 }

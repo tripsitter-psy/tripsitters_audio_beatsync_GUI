@@ -131,17 +131,22 @@ struct OnnxMusicAnalyzer::Impl {
                 return result;
             }
 
+            bool cancelled = false;
             auto stemCallback = [&](float p, const std::string& msg) {
                 stemProgress = p;
                 if (progress) {
                     bool cont = progress(p * 0.6f, "Stem Separation", msg);
-                    if (!cont) return false;
+                    if (!cont) {
+                        cancelled = true;
+                        return false;
+                    }
                 }
                 return true;
             };
 
             StemSeparationResult stemResult = stemSeparator->separate(stereoSamples, sampleRate, stemCallback);
-            if (lastError == "Stem separation cancelled by user.") {
+            if (cancelled) {
+                lastError = "Stem separation cancelled by user.";
                 return result;
             }
 
@@ -232,6 +237,7 @@ struct OnnxMusicAnalyzer::Impl {
         }
 
         // Stage 3: Optional per-stem beat analysis
+        // Note: result.rawStemResult is always populated if analyzePerStemBeats is enabled (see above)
         if (config.analyzePerStemBeats && result.stemSeparationUsed && !result.rawStemResult.stems[0].empty()) {
             if (progress) progress(0.9f, "Per-Stem Analysis", "Analyzing individual stems...");
 

@@ -68,27 +68,41 @@ if(BUILD_TESTS)
     set_tests_properties(backend_api PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
     # ONNX AI tests (runs if ONNX Runtime available)
-    add_executable(test_onnx_ai
-        catch_main.cpp
-        test_onnx_ai.cpp
-    )
-
-    target_include_directories(test_onnx_ai PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/backend)
-    target_link_libraries(test_onnx_ai PRIVATE Catch2::Catch2 beatsync_backend_static avformat avcodec avutil swresample swscale avfilter)
     if(USE_ONNX AND onnxruntime_FOUND)
-        target_link_libraries(test_onnx_ai PRIVATE onnxruntime::onnxruntime)
+        add_executable(test_onnx_ai
+            catch_main.cpp
+            test_onnx_ai.cpp
+            test_ai_cleanup.cpp
+        )
+
+        target_include_directories(test_onnx_ai PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/backend)
+        target_link_libraries(test_onnx_ai PRIVATE Catch2::Catch2 beatsync_backend_static avformat avcodec avutil swresample swscale avfilter onnxruntime::onnxruntime)
+
+        # Allow CI or user to override test paths
+        if(DEFINED TEST_AUDIO_FILE)
+            target_compile_definitions(test_onnx_ai PRIVATE TEST_AUDIO_FILE_OVERRIDE="${TEST_AUDIO_FILE}")
+        endif()
+        if(DEFINED TEST_MODEL_DIR)
+            target_compile_definitions(test_onnx_ai PRIVATE TEST_MODEL_DIR_OVERRIDE="${TEST_MODEL_DIR}")
+        endif()
+
+        add_test(NAME onnx_ai COMMAND test_onnx_ai)
+        set_tests_properties(onnx_ai PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        # Label this test for CUDA so CI can select it via ctest -L cuda
+        set_tests_properties(onnx_ai PROPERTIES LABELS "cuda")
     endif()
 
-    # Allow CI or user to override test paths
-    if(DEFINED TEST_AUDIO_FILE)
-        target_compile_definitions(test_onnx_ai PRIVATE TEST_AUDIO_FILE_OVERRIDE="${TEST_AUDIO_FILE}")
+    # AudioFlux test (if AudioFlux is available)
+    # Note: test_audioflux.cpp is a standalone test with its own main(), not a Catch2 test
+    if(USE_AUDIOFLUX)
+        add_executable(test_audioflux
+            test_audioflux.cpp
+        )
+        target_include_directories(test_audioflux PRIVATE ${CMAKE_SOURCE_DIR}/src ${AUDIOFLUX_ROOT}/include)
+        target_link_libraries(test_audioflux PRIVATE beatsync_backend_static avformat avcodec avutil swresample swscale avfilter)
+        add_test(NAME audioflux COMMAND test_audioflux)
+        set_tests_properties(audioflux PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     endif()
-    if(DEFINED TEST_MODEL_DIR)
-        target_compile_definitions(test_onnx_ai PRIVATE TEST_MODEL_DIR_OVERRIDE="${TEST_MODEL_DIR}")
-    endif()
-
-    add_test(NAME onnx_ai COMMAND test_onnx_ai)
-    set_tests_properties(onnx_ai PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endif()
 
 # GUI wallpaper tests removed - wxWidgets GUI has been deprecated and deleted

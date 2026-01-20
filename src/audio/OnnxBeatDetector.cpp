@@ -258,6 +258,7 @@ struct OnnxBeatDetector::Impl {
     OnnxConfig config;
     std::string lastError;
     std::string modelPath;
+    std::string activeProvider = "CPU";  // Tracks which EP the session is actually using
     bool loaded = false;
 
     // Input/output tensor info
@@ -299,9 +300,8 @@ struct OnnxBeatDetector::Impl {
             sessionOptions->SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
             // Try to use GPU if requested
+            activeProvider = "CPU";  // Default to CPU
             if (cfg.useGPU) {
-                bool gpuEnabled = false;
-
                 // Try CUDA first using the C API
                 try {
                     OrtCUDAProviderOptionsV2* cudaOptions = nullptr;
@@ -318,7 +318,7 @@ struct OnnxBeatDetector::Impl {
                             status = ortApi.SessionOptionsAppendExecutionProvider_CUDA_V2(
                                 static_cast<OrtSessionOptions*>(*sessionOptions), cudaOptions);
                             if (status == nullptr) {
-                                gpuEnabled = true;
+                                activeProvider = "CUDA";
                             } else {
                                 ortApi.ReleaseStatus(status);
                             }
@@ -330,12 +330,11 @@ struct OnnxBeatDetector::Impl {
                         ortApi.ReleaseStatus(status);
                     }
                 } catch (...) {
-                    // CUDA not available
+                    // CUDA not available, activeProvider remains "CPU"
                 }
 
                 // Note: DirectML fallback removed - requires separate directml.lib linking
                 // CUDA EP is the preferred GPU acceleration method
-                (void)gpuEnabled; // Suppress unused variable warning if CUDA not available
             }
 
             // Load model
@@ -756,17 +755,24 @@ std::vector<double> OnnxBeatDetector::processChunkImpl(const std::vector<float>&
     OnnxAnalysisResult result = m_impl->runInference(m_impl->streamBuffer,
                                                       m_impl->config.sampleRate, nullptr);
 
+    // Calculate overlap parameters before processing beats
+    double bufferDuration = m_impl->streamBuffer.size() / static_cast<double>(m_impl->config.sampleRate);
+    // Keep last ~100ms for overlap with next chunk
+    size_t overlapSamples = m_impl->config.sampleRate / 10;
+    double overlapDuration = overlapSamples / static_cast<double>(m_impl->config.sampleRate);
+    double cutoffTime = bufferDuration - overlapDuration;
+
     // Adjust beat times relative to stream position
+    // Only include beats before the overlap region to avoid duplicates
     std::vector<double> adjustedBeats;
     for (double beat : result.beats) {
-        adjustedBeats.push_back(beat + m_impl->streamTime);
+        if (beat < cutoffTime) {
+            adjustedBeats.push_back(beat + m_impl->streamTime);
+        }
     }
 
     // Update stream state
-    double bufferDuration = m_impl->streamBuffer.size() / static_cast<double>(m_impl->config.sampleRate);
     m_impl->streamTime += bufferDuration;
-    // Keep last ~100ms for overlap with next chunk
-    size_t overlapSamples = m_impl->config.sampleRate / 10;
     if (m_impl->streamBuffer.size() > overlapSamples) {
         m_impl->streamBuffer.erase(m_impl->streamBuffer.begin(), m_impl->streamBuffer.end() - overlapSamples);
         m_impl->streamTime -= overlapSamples / static_cast<double>(m_impl->config.sampleRate);
@@ -834,6 +840,35 @@ std::vector<std::string> OnnxBeatDetector::getAvailableProviders() {
     }
 #endif
     return providers;
+}
+
+bool OnnxBeatDetector::isGPUEnabledImpl() const {
+#ifdef USE_ONNX
+    // Check the actual provider configured for this session (not build-time available providers)
+    if (m_impl && m_impl->loaded) {
+        return m_impl->activeProvider == "CUDA" || m_impl->activeProvider == "TensorRT";
+    }
+#endif
+    return false;
+}
+
+std::string OnnxBeatDetector::getActiveProviderImpl() const {
+#ifdef USE_ONNX
+    if (m_impl && m_impl->loaded) {
+        return m_impl->activeProvider;
+    }
+#endif
+    return "None";
+}
+
+void OnnxBeatDetector::releaseGPUMemory() {
+#ifdef USE_ONNX
+    // Reset the session to release GPU memory
+    if (m_impl && m_impl->session) {
+        m_impl->session.reset();
+        m_impl->loaded = false;
+    }
+#endif
 }
 
 void ensureOnnxBeatDetectorIsLinked() {

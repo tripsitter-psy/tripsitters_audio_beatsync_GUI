@@ -22,7 +22,7 @@ def main():
                         help="Path to pre-trained weights (.pt or .pth file)")
     parser.add_argument("--mode", type=int, default=1, choices=[1, 2, 3],
                         help="BeatNet mode: 1=offline, 2=online, 3=streaming")
-    parser.add_argument("--opset", type=int, default=14, help="ONNX opset version (minimum 18)")
+    parser.add_argument("--opset", type=int, default=18, help="ONNX opset version (minimum 18)")
     parser.add_argument("--verify", action="store_true", help="Verify exported model with ONNX Runtime")
     args = parser.parse_args()
 
@@ -58,6 +58,30 @@ def main():
             # BeatNet expects mode as int: 1=offline, 2=online, 3=streaming
             beatnet = BeatNet(args.mode)
             model = beatnet.model
+
+            # If user provided weights, attempt to load them into BeatNet
+            if args.weights:
+                print(f"Loading provided weights into BeatNet from: {args.weights}")
+                try:
+                    # Prefer weights_only=True to avoid pickle code execution when supported
+                    try:
+                        state_dict = torch.load(args.weights, map_location='cpu', weights_only=True)
+                    except TypeError:
+                        # Older PyTorch versions don't support weights_only
+                        state_dict = torch.load(args.weights, map_location='cpu')
+
+                    if 'state_dict' in state_dict:
+                        state_dict = state_dict['state_dict']
+                    elif 'model_state_dict' in state_dict:
+                        state_dict = state_dict['model_state_dict']
+                    elif 'model' in state_dict:
+                        state_dict = state_dict['model']
+
+                    model.load_state_dict(state_dict, strict=False)
+                    print("  Weights loaded successfully into BeatNet!")
+                except Exception as e:
+                    print(f"  WARNING: Could not load BeatNet weights: {e}")
+
             model.eval()
 
             # BeatNet processes mel spectrograms with shape:
@@ -83,17 +107,35 @@ def main():
             if args.opset < 18:
                 print(f"WARNING: --opset {args.opset} is less than the minimum supported opset 18. Using opset_version=18.", file=sys.stderr)
                 used_opset = 18
+            
+            # Check if dynamo parameter is supported (PyTorch >= 2.5)
+            import torch
+            import inspect
+            dynamo_supported = False
+            try:
+                sig = inspect.signature(torch.onnx.export)
+                dynamo_supported = 'dynamo' in sig.parameters
+            except (ValueError, TypeError, AttributeError):
+                # Fall back to conservative False if signature inspection fails
+                dynamo_supported = False
+            
+            export_kwargs = {
+                'export_params': True,
+                'opset_version': used_opset,
+                'do_constant_folding': True,
+                'input_names': ['mel_spectrogram'],
+                'output_names': ['beat_activation', 'downbeat_activation'],
+                'dynamic_axes': dynamic_axes,
+            }
+            
+            if dynamo_supported:
+                export_kwargs['dynamo'] = False  # Use legacy TorchScript exporter
+            
             torch.onnx.export(
                 model,
                 dummy_input,
                 args.out,
-                export_params=True,
-                opset_version=used_opset,
-                do_constant_folding=True,
-                input_names=['mel_spectrogram'],
-                output_names=['beat_activation', 'downbeat_activation'],
-                dynamic_axes=dynamic_axes,
-                dynamo=False  # Use legacy TorchScript exporter
+                **export_kwargs
             )
 
         except Exception as e:
@@ -101,7 +143,7 @@ def main():
             print("Falling back to standalone model architecture...")
             USE_BEATNET = False
 
-    if not USE_BEATNET or args.weights:
+    if not USE_BEATNET:
         # Create a BeatNet-compatible architecture from scratch
         # This matches the architecture described in the ISMIR 2021 paper
         print("Creating BeatNet-compatible CRNN architecture...")
@@ -204,7 +246,12 @@ def main():
         if args.weights:
             print(f"Loading weights from: {args.weights}")
             try:
-                state_dict = torch.load(args.weights, map_location='cpu')
+                # Prefer weights_only=True (PyTorch 2.6+) to avoid pickle code execution during load
+                try:
+                    state_dict = torch.load(args.weights, map_location='cpu', weights_only=True)
+                except TypeError:
+                    state_dict = torch.load(args.weights, map_location='cpu')
+
                 # Handle different checkpoint formats
                 if 'state_dict' in state_dict:
                     state_dict = state_dict['state_dict']
@@ -253,17 +300,33 @@ def main():
         if args.opset < 18:
             print(f"WARNING: --opset {args.opset} is less than the minimum supported opset 18. Using opset_version=18.", file=sys.stderr)
             used_opset = 18
+        
+        # Check if dynamo parameter is supported (PyTorch >= 2.5)
+        import inspect
+        dynamo_supported = False
+        try:
+            sig = inspect.signature(torch.onnx.export)
+            dynamo_supported = 'dynamo' in sig.parameters
+        except (ValueError, TypeError, AttributeError):
+            dynamo_supported = False
+
+        export_kwargs = {
+            'export_params': True,
+            'opset_version': used_opset,
+            'do_constant_folding': True,
+            'input_names': ['mel_spectrogram'],
+            'output_names': ['beat_activation', 'downbeat_activation'],
+            'dynamic_axes': dynamic_axes,
+        }
+        
+        if dynamo_supported:
+            export_kwargs['dynamo'] = False  # Use legacy TorchScript exporter
+        
         torch.onnx.export(
             model,
             dummy_input,
             args.out,
-            export_params=True,
-            opset_version=used_opset,
-            do_constant_folding=True,
-            input_names=['mel_spectrogram'],
-            output_names=['beat_activation', 'downbeat_activation'],
-            dynamic_axes=dynamic_axes,
-            dynamo=False  # Use legacy TorchScript exporter
+            **export_kwargs
         )
 
     print(f"Saved ONNX model to: {args.out}")

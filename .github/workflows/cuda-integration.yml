@@ -52,9 +52,9 @@ jobs:
           Write-Host "::notice::No NVIDIA GPU detected on runner - CUDA integration steps will be skipped. Use a self-hosted runner with label 'gpu' to run these tests."
       - name: Setup vcpkg
         if: steps.check_gpu.outputs.has_gpu == 'true'
-        run: |
-          git clone https://github.com/microsoft/vcpkg.git
-          .\vcpkg\bootstrap-vcpkg.bat
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '25b458671af03578e6a34edd8f0d1ac85e084df4' # Must match vcpkg.json builtin-baseline
 
       - name: Install dependencies (with CUDA ONNX Runtime)
         if: steps.check_gpu.outputs.has_gpu == 'true'

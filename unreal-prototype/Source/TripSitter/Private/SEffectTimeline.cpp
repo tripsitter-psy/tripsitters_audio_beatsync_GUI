@@ -23,7 +23,8 @@ void SEffectTimeline::SetEffectRegions(const TArray<FEffectRegion>* InRegions)
 void SEffectTimeline::SetTimeParameters(double InDuration, float InZoomLevel, double InScrollPosition)
 {
 	Duration = InDuration;
-	ZoomLevel = InZoomLevel;
+	// Clamp ZoomLevel to a safe minimum to prevent division by zero
+	ZoomLevel = FMath::Max(InZoomLevel, 0.001f);
 	ScrollPosition = InScrollPosition;
 	Invalidate(EInvalidateWidget::Paint);
 }
@@ -48,7 +49,7 @@ FVector2D SEffectTimeline::ComputeDesiredSize(float LayoutScaleMultiplier) const
 
 void SEffectTimeline::GetVisibleTimeRange(double& OutStart, double& OutEnd) const
 {
-	if (Duration <= 0)
+	if (Duration <= 0 || ZoomLevel <= 0)
 	{
 		OutStart = 0.0;
 		OutEnd = 0.0;
@@ -157,75 +158,33 @@ void SEffectTimeline::ShowContextMenu(const FGeometry& MyGeometry, const FPointe
 		// Context menu to add new effect regions
 		MenuBuilder.BeginSection("AddEffect", FText::FromString(TEXT("Add Effect")));
 
-		// Vignette
-		MenuBuilder.AddMenuEntry(
-			FText::FromString(TEXT("Vignette")),
-			FText::FromString(TEXT("Add vignette effect")),
-			FSlateIcon(),
-			FUIAction(FExecuteAction::CreateLambda([this]()
-			{
-				if (OnAddRegion.IsBound())
-				{
-					OnAddRegion.Execute(TEXT("Vignette"), ContextMenuTime);
-				}
-			}))
-		);
+		// Data-driven effect menu entries
+		static const struct {
+			const TCHAR* Name;
+			const TCHAR* Tooltip;
+		} EffectEntries[] = {
+			{ TEXT("Vignette"), TEXT("Add vignette effect") },
+			{ TEXT("Beat Flash"), TEXT("Add beat flash effect") },
+			{ TEXT("Beat Zoom"), TEXT("Add beat zoom effect") },
+			{ TEXT("Color Grade"), TEXT("Add color grading effect") },
+			{ TEXT("Transition"), TEXT("Add transition effect") }
+		};
 
-		// Beat Flash
-		MenuBuilder.AddMenuEntry(
-			FText::FromString(TEXT("Beat Flash")),
-			FText::FromString(TEXT("Add beat flash effect")),
-			FSlateIcon(),
-			FUIAction(FExecuteAction::CreateLambda([this]()
-			{
-				if (OnAddRegion.IsBound())
+		for (const auto& Entry : EffectEntries)
+		{
+			MenuBuilder.AddMenuEntry(
+				FText::FromString(Entry.Name),
+				FText::FromString(Entry.Tooltip),
+				FSlateIcon(),
+				FUIAction(FExecuteAction::CreateLambda([this, EffectName = FString(Entry.Name)]()
 				{
-					OnAddRegion.Execute(TEXT("Beat Flash"), ContextMenuTime);
-				}
-			}))
-		);
-
-		// Beat Zoom
-		MenuBuilder.AddMenuEntry(
-			FText::FromString(TEXT("Beat Zoom")),
-			FText::FromString(TEXT("Add beat zoom effect")),
-			FSlateIcon(),
-			FUIAction(FExecuteAction::CreateLambda([this]()
-			{
-				if (OnAddRegion.IsBound())
-				{
-					OnAddRegion.Execute(TEXT("Beat Zoom"), ContextMenuTime);
-				}
-			}))
-		);
-
-		// Color Grade
-		MenuBuilder.AddMenuEntry(
-			FText::FromString(TEXT("Color Grade")),
-			FText::FromString(TEXT("Add color grading effect")),
-			FSlateIcon(),
-			FUIAction(FExecuteAction::CreateLambda([this]()
-			{
-				if (OnAddRegion.IsBound())
-				{
-					OnAddRegion.Execute(TEXT("Color Grade"), ContextMenuTime);
-				}
-			}))
-		);
-
-		// Transition
-		MenuBuilder.AddMenuEntry(
-			FText::FromString(TEXT("Transition")),
-			FText::FromString(TEXT("Add transition effect")),
-			FSlateIcon(),
-			FUIAction(FExecuteAction::CreateLambda([this]()
-			{
-				if (OnAddRegion.IsBound())
-				{
-					OnAddRegion.Execute(TEXT("Transition"), ContextMenuTime);
-				}
-			}))
-		);
+					if (OnAddRegion.IsBound())
+					{
+						OnAddRegion.Execute(EffectName, ContextMenuTime);
+					}
+				}))
+			);
+		}
 
 		MenuBuilder.EndSection();
 	}
@@ -505,7 +464,7 @@ int32 SEffectTimeline::OnPaint(const FPaintArgs& Args, const FGeometry& Allotted
 	{
 		const float RegionTop = 4.0f;
 		const float RegionHeight = Height - 8.0f;
-
+		int MaxLayer = LayerId;
 		for (int32 i = 0; i < EffectRegions->Num(); ++i)
 		{
 			const FEffectRegion& Region = (*EffectRegions)[i];
@@ -542,6 +501,7 @@ int32 SEffectTimeline::OnPaint(const FPaintArgs& Args, const FGeometry& Allotted
 				DrawEffects,
 				RegionColor
 			);
+			MaxLayer = FMath::Max(MaxLayer, LayerId);
 
 			// Region name
 			if (RegEndPx - RegStartPx > 40)
@@ -558,6 +518,7 @@ int32 SEffectTimeline::OnPaint(const FPaintArgs& Args, const FGeometry& Allotted
 					DrawEffects,
 					FLinearColor::White
 				);
+				MaxLayer = FMath::Max(MaxLayer, LayerId + 1);
 			}
 
 			// Handles
@@ -575,6 +536,7 @@ int32 SEffectTimeline::OnPaint(const FPaintArgs& Args, const FGeometry& Allotted
 				DrawEffects,
 				HandleColor
 			);
+			MaxLayer = FMath::Max(MaxLayer, LayerId + 2);
 
 			// End handle
 			FSlateDrawElement::MakeBox(
@@ -588,9 +550,10 @@ int32 SEffectTimeline::OnPaint(const FPaintArgs& Args, const FGeometry& Allotted
 				DrawEffects,
 				HandleColor
 			);
+			MaxLayer = FMath::Max(MaxLayer, LayerId + 2);
 		}
+		LayerId = MaxLayer + 1;
 	}
-	LayerId += 3;
 
 	// Draw border
 	TArray<FVector2D> BorderPoints;

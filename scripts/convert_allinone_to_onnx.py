@@ -56,8 +56,6 @@ def main():
         USE_ALLIN1 = False
 
 
-    if not getattr(args, 'out', None):
-        raise ValueError("output path --out must be provided")
     out_path = os.path.abspath(args.out)
     os.makedirs(os.path.dirname(out_path) if os.path.dirname(out_path) else ".", exist_ok=True)
 
@@ -123,12 +121,13 @@ def main():
 
         class NeighborhoodAttention1D(nn.Module):
             """Simplified 1D neighborhood attention for temporal modeling."""
-            def __init__(self, dim, num_heads=4, kernel_size=7):
+            def __init__(self, dim, num_heads=4, kernel_size=7, dilation=1):
                 super().__init__()
                 self.num_heads = num_heads
                 self.head_dim = dim // num_heads
                 self.scale = self.head_dim ** -0.5
                 self.kernel_size = kernel_size
+                self.dilation = dilation
 
                 self.qkv = nn.Linear(dim, dim * 3)
                 self.proj = nn.Linear(dim, dim)
@@ -136,17 +135,50 @@ def main():
             def forward(self, x):
                 # x: (batch, time, dim)
                 B, T, C = x.shape
+                # Project to Q, K, V
+                qkv = self.qkv(x)  # (B, T, 3 * C)
+                q, k, v = torch.chunk(qkv, 3, dim=-1)
+                # Reshape for multi-head
+                q = q.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)  # (B, num_heads, T, head_dim)
+                k = k.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+                v = v.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
 
-                qkv = self.qkv(x).reshape(B, T, 3, self.num_heads, self.head_dim)
-                qkv = qkv.permute(2, 0, 3, 1, 4)  # (3, B, heads, T, head_dim)
-                q, k, v = qkv[0], qkv[1], qkv[2]
+                # Compute attention scores with local window
+                attn_scores = torch.zeros(B, self.num_heads, T, self.kernel_size, device=x.device)
+                half_window = self.kernel_size // 2
+                # NOTE: This per-timestep loop creates a large ONNX graph for long sequences.
+                # For production, consider a vectorized implementation or fixed-length inputs.
+                for t in range(T):
+                    # Get window indices
+                    start = max(0, t - half_window * self.dilation)
+                    end = min(T, t + half_window * self.dilation + 1)
+                    window_idx = torch.arange(start, end, self.dilation, device=x.device)
+                    q_t = q[:, :, t, :]  # (B, num_heads, head_dim)
+                    k_window = k[:, :, window_idx, :]  # (B, num_heads, window, head_dim)
+                    # Dot product attention
+                    attn = torch.einsum('bnh,bnwh->bnw', q_t, k_window) * self.scale
+                    # Pad to kernel_size
+                    pad = self.kernel_size - attn.shape[-1]
+                    if pad > 0:
+                        attn = torch.nn.functional.pad(attn, (0, pad))
+                    attn_scores[:, :, t, :] = attn
 
-                # Standard attention (simplified from neighborhood attention)
-                attn = (q @ k.transpose(-2, -1)) * self.scale
-                attn = attn.softmax(dim=-1)
-                x = (attn @ v).transpose(1, 2).reshape(B, T, C)
+                attn_probs = torch.softmax(attn_scores, dim=-1)
 
-                return self.proj(x)
+                # Aggregate weighted values
+                out = torch.zeros(B, self.num_heads, T, self.head_dim, device=x.device)
+                for t in range(T):
+                    start = max(0, t - half_window * self.dilation)
+                    end = min(T, t + half_window * self.dilation + 1)
+                    window_idx = torch.arange(start, end, self.dilation, device=x.device)
+                    v_window = v[:, :, window_idx, :]  # (B, num_heads, window, head_dim)
+                    attn = attn_probs[:, :, t, :v_window.shape[2]].unsqueeze(-1)
+                    out[:, :, t, :] = torch.sum(attn * v_window, dim=2)
+
+                # Merge heads and project out
+                out = out.transpose(1, 2).reshape(B, T, C)
+                out = self.proj(out)
+                return out
 
         class AllInOneEncoder(nn.Module):
             """
@@ -199,7 +231,7 @@ def main():
                 self.temporal_blocks = nn.ModuleList([
                     nn.Sequential(
                         nn.LayerNorm(embed_dim),
-                        NeighborhoodAttention1D(embed_dim, num_heads=4),
+                        NeighborhoodAttention1D(embed_dim, num_heads=4, dilation=1),
                         nn.Dropout(0.1),
                     ) for _ in range(4)
                 ])
@@ -251,10 +283,10 @@ def main():
 
                 # Tempo head (outputs tempo class logits, 30-300 BPM in 1 BPM bins)
                 self.tempo_head = nn.Sequential(
-                    nn.LayerNorm(embed_dim),
                     nn.AdaptiveAvgPool1d(1),  # Global pooling
                 )
                 self.tempo_classifier = nn.Linear(embed_dim, 271)  # 30-300 BPM
+                self.tempo_norm = nn.LayerNorm(embed_dim)
 
             def forward(self, x):
                 # x: (batch, n_sources, n_mels, time)
@@ -290,6 +322,7 @@ def main():
                 # Tempo estimation
                 tempo_feat = x.permute(0, 2, 1)  # (batch, embed_dim, time)
                 tempo_feat = self.tempo_head(tempo_feat).squeeze(-1)  # (batch, embed_dim)
+                tempo_feat = self.tempo_norm(tempo_feat)  # Normalize over embed_dim: (batch, embed_dim)
                 tempo_logits = self.tempo_classifier(tempo_feat)  # (batch, 271)
 
                 return beat_act, downbeat_act, segment_act, segment_labels, tempo_logits
@@ -381,7 +414,7 @@ def main():
     print("\nModel expects:")
     print("  - Input: 4-source spectrograms (drums, bass, other, vocals)")
     print("  - Each source: 128 mel bands")
-    print("  - Sample rate: 22050 Hz (standard for Demucs)")
+    print("  - Sample rate: 44100 Hz (standard for Demucs)")
     print("  - Frame rate: 100 FPS (hop_length=220)")
     print("\nNote: For best results, use with Demucs source separation.")
     print("      Without separation, duplicate the mono spectrogram across 4 channels.")

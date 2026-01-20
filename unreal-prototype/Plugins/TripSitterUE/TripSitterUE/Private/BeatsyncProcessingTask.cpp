@@ -95,8 +95,10 @@ void FBeatsyncProcessingTask::DoWork()
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Failed to create analyzer");
-        if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
-        if (Span) FBeatsyncLoader::EndSpan(Span);
+        if (Span) {
+            FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
+            FBeatsyncLoader::EndSpan(Span);
+        }
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
@@ -126,11 +128,17 @@ void FBeatsyncProcessingTask::DoWork()
 
     ReportProgress(0.2f, FString::Printf(TEXT("Found %d beats at %.1f BPM"), BeatGrid.Beats.Num(), BeatGrid.BPM));
 
+    // Check for cancellation before video processing starts
+    // Note: No temp files exist yet at this point, so no cleanup needed
     if (bCancelRequested)
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
-        if (Span) { FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage); FBeatsyncLoader::EndSpan(Span); }
+        if (Span) {
+            FBeatsyncLoader::SpanAddEvent(Span, TEXT("cancelled-before-video"));
+            FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
+            FBeatsyncLoader::EndSpan(Span);
+        }
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
@@ -200,8 +208,8 @@ void FBeatsyncProcessingTask::DoWork()
     double ClipDuration = FilteredBeats.Num() > 1 ? (FilteredBeats[1] - FilteredBeats[0]) : 1.0;
 
     // Create temp file for video-only output
-    FString TempVideoPath = Params.OutputPath + TEXT(".temp_video.mp4");
-    FString TempEffectsPath = Params.OutputPath + TEXT(".temp_effects.mp4");
+    TempVideoPath = Params.OutputPath + TEXT(".temp_video.mp4");
+    TempEffectsPath = Params.OutputPath + TEXT(".temp_effects.mp4");
 
     // Cut video
     if (Params.bIsMultiClip && Params.VideoPaths.Num() > 1)
@@ -267,6 +275,7 @@ void FBeatsyncProcessingTask::DoWork()
         {
             IFileManager::Get().Delete(*CurrentVideoPath, false, true, true);
             CurrentVideoPath = TempEffectsPath;
+            TempEffectsPath.Empty();  // Clear to prevent double deletion
         }
         else
         {
