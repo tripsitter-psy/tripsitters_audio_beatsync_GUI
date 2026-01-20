@@ -2,7 +2,6 @@
 #include "Modules/ModuleManager.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformProcess.h"
-#include "Misc/OutputDeviceNull.h"
 
 IMPLEMENT_MODULE(FTripSitterUEModule, TripSitterUE)
 
@@ -34,6 +33,8 @@ static FString GetBeatsyncDllPath()
         DllPath = FPaths::Combine(Relative, TEXT("unreal-prototype"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("lib"), Subdir, Filename);
         if (!FPaths::FileExists(DllPath)) {
             UE_LOG(LogTemp, Warning, TEXT("Beatsync DLL not found. Checked project-relative and engine-relative paths. Last attempted: %s (Relative base: %s). FPaths::FileExists returned false."), *DllPath, *Relative);
+            // Indicate failure explicitly by returning empty string
+            return FString();
         }
     }
 
@@ -42,12 +43,23 @@ static FString GetBeatsyncDllPath()
 
 static void CallBackendInitTracing(const FString& ServiceName)
 {
+    // Guard against multiple initialization - early return if already loaded
+    if (BeatsyncDllHandle) {
+        UE_LOG(LogTemp, Log, TEXT("TripSitterUEModule: Tracing already initialized, skipping."));
+        return;
+    }
+
     // Attempt to locate the backend shared library (same logic as BeatsyncLoader)
     FString DllPath = GetBeatsyncDllPath();
 
+    if (DllPath.IsEmpty()) {
+        UE_LOG(LogTemp, Warning, TEXT("TripSitterUEModule: Beatsync DLL not found, skipping tracing init."));
+        return;
+    }
+
     BeatsyncDllHandle = FPlatformProcess::GetDllHandle(*DllPath);
     if (!BeatsyncDllHandle) {
-        UE_LOG(LogTemp, Warning, TEXT("TripSitterUEModule: Unable to find beatsync backend DLL at %s"), *DllPath);
+        UE_LOG(LogTemp, Warning, TEXT("TripSitterUEModule: Unable to load beatsync backend DLL at %s"), *DllPath);
         return;
     }
 
@@ -75,7 +87,10 @@ static void CallBackendShutdownTracing()
     if (!BeatsyncDllHandle) return;
 
     void* Symbol = FPlatformProcess::GetDllExport(BeatsyncDllHandle, TEXT("bs_shutdown_tracing"));
-    if (!Symbol) return;
+    if (!Symbol) {
+        UE_LOG(LogTemp, Warning, TEXT("bs_shutdown_tracing symbol not found in Beatsync DLL"));
+        return;
+    }
 
     bs_shutdown_tracing_t Shutdown = reinterpret_cast<bs_shutdown_tracing_t>(Symbol);
     Shutdown();

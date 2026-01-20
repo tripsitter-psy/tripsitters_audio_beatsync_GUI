@@ -7,6 +7,8 @@
 #include <cstring>
 #include <filesystem>
 #include <vector>
+#include <thread>
+#include <chrono>
 
 // Backend C API header
 #include "backend/beatsync_capi.h"
@@ -51,6 +53,64 @@ TEST_CASE("AI providers query", "[backend][ai][onnx]") {
     const char* providers = bs_ai_get_providers();
     REQUIRE(providers != nullptr);
     INFO("Available providers: " << providers);
+}
+
+TEST_CASE("AI GPU status with null analyzer", "[backend][ai][gpu]") {
+    REQUIRE(bs_ai_is_gpu_enabled(nullptr) == 0);
+
+    const char* provider = bs_ai_get_active_provider(nullptr);
+    REQUIRE(provider != nullptr);
+    REQUIRE(std::string(provider) == "None");
+}
+
+TEST_CASE("AI GPU status with valid analyzer", "[backend][ai][gpu]") {
+    // Check if we have a model to test with
+    std::string model_dir = get_test_model_dir();
+    // Try multiple possible model filenames
+    std::filesystem::path beatnet_path;
+    std::vector<std::string> model_names = {"beatnet_float32.onnx", "beatnet.onnx", "beatnet_real.onnx"};
+    for (const auto& name : model_names) {
+        std::filesystem::path candidate = std::filesystem::path(model_dir) / name;
+        if (std::filesystem::exists(candidate)) {
+            beatnet_path = candidate;
+            break;
+        }
+    }
+
+    if (beatnet_path.empty() || !std::filesystem::exists(beatnet_path)) {
+        WARN("Skipping GPU test - no suitable model found in: " << model_dir);
+        SUCCEED("Skipped - model not found");
+        return;
+    }
+    INFO("Using model: " << beatnet_path.string());
+
+    bs_ai_config_t config = {};
+    std::string beatnet_str = beatnet_path.string();
+    config.beat_model_path = beatnet_str.c_str();
+    config.use_gpu = 1;  // Request GPU
+    config.gpu_device_id = 0;
+    config.use_stem_separation = 0;
+
+    void* analyzer = bs_create_ai_analyzer(&config);
+    // keep beatnet_str alive until after analyzer creation so the c_str() remains valid
+    (void)beatnet_str;
+
+    if (analyzer) {
+        int gpu_enabled = bs_ai_is_gpu_enabled(analyzer);
+        const char* provider = bs_ai_get_active_provider(analyzer);
+
+        INFO("GPU enabled: " << (gpu_enabled ? "YES" : "NO"));
+        INFO("Active provider: " << (provider ? provider : "null"));
+
+        // Check stderr output for detailed diagnostics
+        if (!gpu_enabled) {
+            WARN("GPU was requested but not enabled - check stderr for diagnostics");
+        }
+
+        bs_destroy_ai_analyzer(analyzer);
+    } else {
+        WARN("Failed to create analyzer - model may not exist or be valid");
+    }
 }
 
 // ==================== AI Analyzer Creation Tests ====================
@@ -121,7 +181,8 @@ TEST_CASE("AI analyze file null handling", "[backend][ai][null]") {
     bs_ai_result_t result = {};
 
     // Null analyzer
-    REQUIRE(bs_ai_analyze_file(nullptr, get_test_audio_file().c_str(), &result, nullptr, nullptr) == -1);
+    std::string audio_path = get_test_audio_file();
+    REQUIRE(bs_ai_analyze_file(nullptr, audio_path.c_str(), &result, nullptr, nullptr) == -1);
 
     // Null audio path
     bs_ai_config_t config = {};
@@ -130,7 +191,7 @@ TEST_CASE("AI analyze file null handling", "[backend][ai][null]") {
     REQUIRE(bs_ai_analyze_file(nullptr, nullptr, &result, nullptr, nullptr) == -1);
 
     // Null result
-    REQUIRE(bs_ai_analyze_file(nullptr, get_test_audio_file().c_str(), nullptr, nullptr, nullptr) == -1);
+    REQUIRE(bs_ai_analyze_file(nullptr, audio_path.c_str(), nullptr, nullptr, nullptr) == -1);
 }
 
 TEST_CASE("AI analyze samples null handling", "[backend][ai][null]") {
@@ -153,14 +214,15 @@ TEST_CASE("AI analyze samples null handling", "[backend][ai][null]") {
 TEST_CASE("AI analyze quick null handling", "[backend][ai][null]") {
     bs_ai_result_t result = {};
 
+    std::string audio = get_test_audio_file();
     // Null analyzer
-    REQUIRE(bs_ai_analyze_quick(nullptr, get_test_audio_file().c_str(), &result, nullptr, nullptr) == -1);
+    REQUIRE(bs_ai_analyze_quick(nullptr, audio.c_str(), &result, nullptr, nullptr) == -1);
 
     // Null audio path
     REQUIRE(bs_ai_analyze_quick(nullptr, nullptr, &result, nullptr, nullptr) == -1);
 
     // Null result
-    REQUIRE(bs_ai_analyze_quick(nullptr, get_test_audio_file().c_str(), nullptr, nullptr, nullptr) == -1);
+    REQUIRE(bs_ai_analyze_quick(nullptr, audio.c_str(), nullptr, nullptr, nullptr) == -1);
 }
 
 // ==================== AI Error and Info Functions ====================
@@ -324,7 +386,8 @@ TEST_CASE("AI full pipeline integration", "[backend][ai][integration]") {
     AIProgressState progressState;
     bs_ai_result_t result = {};
 
-    int ret = bs_ai_analyze_file(analyzer, get_test_audio_file().c_str(), &result, ai_progress_callback, &progressState);
+    std::string audioPath = get_test_audio_file();
+    int ret = bs_ai_analyze_file(analyzer, audioPath.c_str(), &result, ai_progress_callback, &progressState);
 
     INFO("Analysis returned: " << ret);
     INFO("Progress callback calls: " << progressState.call_count);
@@ -355,4 +418,73 @@ TEST_CASE("AI full pipeline integration", "[backend][ai][integration]") {
 
     REQUIRE(result.beats == nullptr);
     REQUIRE(result.beat_count == 0);
+}
+
+TEST_CASE("AI GPU stress create/destroy (optional)", "[backend][ai][gpu][stress]") {
+    // Enable by setting environment variable BS_GPU_STRESS=1
+    const char* stress_env = std::getenv("BS_GPU_STRESS");
+    if (!stress_env || !*stress_env) {
+        SKIP("GPU stress test skipped; set BS_GPU_STRESS=1 to enable");
+    }
+
+    if (!bs_ai_is_available()) {
+        WARN("ONNX Runtime not available, skipping GPU stress");
+        SKIP("ONNX Runtime not available");
+    }
+
+    // Find a model
+    std::string model_dir = get_test_model_dir();
+    std::filesystem::path beatnet_path;
+    std::vector<std::string> model_names = {"beatnet_float32.onnx", "beatnet.onnx", "beatnet_real.onnx"};
+    for (const auto& name : model_names) {
+        std::filesystem::path candidate = std::filesystem::path(model_dir) / name;
+        if (std::filesystem::exists(candidate)) {
+            beatnet_path = candidate;
+            break;
+        }
+    }
+
+    if (beatnet_path.empty() || !std::filesystem::exists(beatnet_path)) {
+        WARN("Skipping GPU stress - no suitable model found in: " << model_dir);
+        SKIP("No suitable model");
+    }
+
+    // Need a reasonably long audio file to exercise GPU work
+    std::string audio = get_test_audio_file();
+    if (!std::filesystem::exists(audio)) {
+        WARN("Skipping GPU stress - no audio file at: " << audio);
+        SKIP("No test audio available");
+    }
+
+    bs_ai_config_t config = {};
+    std::string beatnet_str = beatnet_path.string();
+    config.beat_model_path = beatnet_str.c_str();
+    config.use_gpu = 1;
+    config.gpu_device_id = 0;
+    config.use_stem_separation = 1; // exercise separator if available
+
+    const int iterations = 20;
+    for (int i = 0; i < iterations; ++i) {
+        INFO("Iteration " << i);
+        void* analyzer = bs_create_ai_analyzer(&config);
+        if (!analyzer) {
+            WARN("Analyzer creation failed: " << bs_ai_get_last_error(nullptr));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        int gpu_enabled = bs_ai_is_gpu_enabled(analyzer);
+        const char* provider = bs_ai_get_active_provider(analyzer);
+        INFO("GPU enabled: " << (gpu_enabled ? "YES" : "NO") << " active provider=" << (provider ? provider : "null"));
+
+        bs_ai_result_t result = {};
+        int ret = bs_ai_analyze_file(analyzer, audio.c_str(), &result, nullptr, nullptr);
+        INFO("Analysis returned: " << ret);
+        bs_free_ai_result(&result);
+        bs_destroy_ai_analyzer(analyzer);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+
+    SUCCEED("GPU stress loop completed without crashing");
 }
