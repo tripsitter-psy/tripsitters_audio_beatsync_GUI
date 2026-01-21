@@ -33,6 +33,13 @@ bool InitializeTracing(const std::string& serviceName) {
 
     std::lock_guard<std::mutex> lock(g_providerMutex);
 
+    // Check if already initialized (only check our module-level pointer, not GetTracerProvider()
+    // which always returns a non-null NoopTracerProvider by default)
+    if (g_provider) {
+        std::clog << "BeatSync: Tracing already initialized, skipping re-initialization.\n";
+        return true;
+    }
+
     try {
         // Create OTLP exporter (gRPC) with configured endpoint
         opentelemetry::exporters::otlp::OtlpGrpcExporterOptions options;

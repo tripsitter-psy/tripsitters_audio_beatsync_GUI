@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Portable way to get number of CPU cores (works on Linux and macOS)
+if command -v nproc &>/dev/null; then
+    NUM_JOBS=$(nproc)
+elif command -v sysctl &>/dev/null && sysctl -n hw.ncpu &>/dev/null; then
+    NUM_JOBS=$(sysctl -n hw.ncpu)
+else
+    NUM_JOBS=1
+fi
+
 OUT_VIDEO="build/tmp/out_gpu_test.mp4"
 AUDIO="build/tmp/gpu_stress.wav"
 DURATION=${1:-600}
@@ -35,7 +44,7 @@ done
 if [ -z "$BEATSYNC" ]; then
   echo "beatsync executable not found in expected locations; building..."
   cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_ONNX=ON
-  cmake --build build --config Release -j $(nproc) --target beatsync
+  cmake --build build --config Release -j "$NUM_JOBS" --target beatsync
   for c in "${CANDIDATES[@]}"; do
     if [ -x "$c" ]; then
       BEATSYNC="$c"

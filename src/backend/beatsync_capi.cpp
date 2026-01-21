@@ -518,8 +518,10 @@ BEATSYNC_API int bs_video_cut_at_beats(void* writer, const char* inputVideo,
     TRACE_FUNC();
 
     // File-based logging for diagnostics - SINGLE VIDEO PATH
+    // Declare outside #ifdef so references compile in all builds
     std::string logPath;
     FILE* logFile = nullptr;
+#ifdef ENABLE_BS_DEBUG_LOG
 #ifdef _WIN32
     wchar_t tempPath[MAX_PATH + 1];
     if (GetTempPathW(MAX_PATH + 1, tempPath) > 0) {
@@ -538,6 +540,7 @@ BEATSYNC_API int bs_video_cut_at_beats(void* writer, const char* inputVideo,
             fflush(logFile);
         }
     }
+#endif
 
     if (!writer || !inputVideo || !beatTimes || !outputVideo || count == 0) {
         if (logFile) {
@@ -1986,9 +1989,19 @@ BEATSYNC_API int bs_audioflux_analyze(const char* audio_path,
 
         return 0;
     } catch (const std::exception& e) {
+        if (out_result && out_result->beats) {
+            free(out_result->beats);
+            out_result->beats = nullptr;
+            out_result->beat_count = 0;
+        }
         s_lastError = std::string("AudioFlux analysis exception: ") + e.what();
         return -4;
     } catch (...) {
+        if (out_result && out_result->beats) {
+            free(out_result->beats);
+            out_result->beats = nullptr;
+            out_result->beat_count = 0;
+        }
         s_lastError = "AudioFlux analysis crashed with unknown exception";
         return -5;
     }
