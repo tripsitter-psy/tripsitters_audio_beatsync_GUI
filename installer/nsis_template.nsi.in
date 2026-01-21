@@ -70,8 +70,10 @@ Section "MTV TripSitter" SecMain
     ; These are optional - Flux mode falls back to Energy mode if missing
     IfFileExists "@AUDIOFLUX_DLL_DIR@\audioflux.dll" 0 skip_audioflux
         File /nonfatal "@AUDIOFLUX_DLL_DIR@\audioflux.dll"
-        File /nonfatal "@AUDIOFLUX_FFTW_DLL@"
     skip_audioflux:
+    IfFileExists "@AUDIOFLUX_FFTW_DLL@" 0 skip_audioflux_fftw
+        File /nonfatal "@AUDIOFLUX_FFTW_DLL@"
+    skip_audioflux_fftw:
 
     ; Install ONNX models for AI beat detection
     SetOutPath "$INSTDIR\models"
