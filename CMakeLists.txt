@@ -342,14 +342,13 @@ if(USE_AUDIOFLUX AND EXISTS "${AUDIOFLUX_LIBRARY}")
         target_include_directories(beatsync_backend_shared PRIVATE "${AUDIOFLUX_INCLUDE_DIR}")
         target_link_libraries(beatsync_backend_shared PRIVATE "${AUDIOFLUX_LIBRARY}")
         # Copy AudioFlux DLLs to output directory (Windows only)
-        if(WIN32)
-            get_filename_component(AUDIOFLUX_LIB_DIR "${AUDIOFLUX_LIBRARY}" DIRECTORY)
-            set(AUDIOFLUX_DLL "${AUDIOFLUX_LIB_DIR}/audioflux.dll")
-            set(AUDIOFLUX_FFTW_DLL "${AUDIOFLUX_ROOT}/python/audioflux/lib/libfftw3f-3.dll")
-            if(EXISTS "${AUDIOFLUX_DLL}" AND EXISTS "${AUDIOFLUX_FFTW_DLL}")
+        # Use cache variables AUDIOFLUX_DLL_DIR and AUDIOFLUX_FFTW_DLL for consistency with installer
+        if(WIN32 AND AUDIOFLUX_DLL_DIR)
+            set(AUDIOFLUX_DLL_PATH "${AUDIOFLUX_DLL_DIR}/audioflux.dll")
+            if(EXISTS "${AUDIOFLUX_DLL_PATH}" AND EXISTS "${AUDIOFLUX_FFTW_DLL}")
                 add_custom_command(TARGET beatsync_backend_shared POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${AUDIOFLUX_DLL}"
+                        "${AUDIOFLUX_DLL_PATH}"
                         "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         "${AUDIOFLUX_FFTW_DLL}"
@@ -357,7 +356,7 @@ if(USE_AUDIOFLUX AND EXISTS "${AUDIOFLUX_LIBRARY}")
                     COMMENT "Copying AudioFlux DLLs"
                 )
             else()
-                message(WARNING "AudioFlux DLLs not found: ${AUDIOFLUX_DLL} or ${AUDIOFLUX_FFTW_DLL}")
+                message(WARNING "AudioFlux DLLs not found: ${AUDIOFLUX_DLL_PATH} or ${AUDIOFLUX_FFTW_DLL}")
             endif()
         endif()
     endif()

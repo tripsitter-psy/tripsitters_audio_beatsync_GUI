@@ -63,7 +63,7 @@ Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "${U
 
 - Train/integrate ONNX beat detection models
 - End-to-end testing with real media
-- NSIS installer packaging
+- ~~NSIS installer packaging~~ — Template added (`installer/nsis_template.nsi.in`); finalize and test installer generation
 
 ## vcpkg Configuration
 

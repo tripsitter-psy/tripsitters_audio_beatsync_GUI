@@ -23,6 +23,7 @@ jobs:
     # Gated: only run when manually dispatched or when PR has label 'test-cuda'
     if: |
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'test-cuda'))
 
     steps:
@@ -84,13 +85,32 @@ jobs:
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_long_video_test.ps1 -OutputVideo build/tmp/out_gpu_test.mp4 -Audio build/tmp/gpu_stress.wav -DurationSeconds 600
 
+      - name: Upload artifacts (Windows)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: long-video-test-artifacts-windows
+          path: |
+            build/tmp/out_gpu_test.mp4
+            build/gpu_log.csv
+            build/long_video_stdout.log
+            build/long_video_stderr.log
+
+      - name: Summarize (Windows)
+        if: always()
+        shell: bash
+        run: |
+          echo "## Long Video Test (Windows)" >> $GITHUB_STEP_SUMMARY
+          echo "Artifacts uploaded: long-video-test-artifacts-windows" >> $GITHUB_STEP_SUMMARY
+
   long-video-linux:
     name: Long Video End-to-End (Linux)
     runs-on: [self-hosted, linux, gpu]
     timeout-minutes: 180
     if: |
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'test-cuda'))
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'test-cuda')) ||
+      github.event_name == 'schedule'
     steps:
       - uses: actions/checkout@v4
 
@@ -123,7 +143,10 @@ jobs:
       - name: Configure and build (Linux)
         if: steps.check_gpu_linux.outputs.has_gpu == 'true'
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_ONNX=ON
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_ONNX=ON \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
           cmake --build build -j $(nproc)
 
       - name: Generate long audio (Linux)
@@ -147,21 +170,10 @@ jobs:
             build/long_video_stdout.log
             build/long_video_stderr.log
 
-      - name: Upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: long-video-test-artifacts
-          path: |
-            build/tmp/out_gpu_test.mp4
-            build/gpu_log.csv
-            build/long_video_stdout.log
-            build/long_video_stderr.log
-
-      - name: Summarize
+      - name: Summarize (Linux)
         if: always()
         shell: bash
         run: |
-          echo "## Long Video Test" >> $GITHUB_STEP_SUMMARY
-          echo "Artifacts uploaded: long-video-test-artifacts" >> $GITHUB_STEP_SUMMARY
-          echo "Note: This workflow is gated — trigger manually or add the 'test-cuda' label to PRs." >> $GITHUB_STEP_SUMMARY
+          echo "## Long Video Test (Linux)" >> $GITHUB_STEP_SUMMARY
+          echo "Artifacts uploaded: long-video-test-artifacts-linux" >> $GITHUB_STEP_SUMMARY
+          echo "Note: This workflow is gated - trigger manually, on schedule, or add the 'test-cuda' label to PRs." >> $GITHUB_STEP_SUMMARY
