@@ -1,17 +1,43 @@
 {
+  "$comment": "TensorRT feature requires TENSORRT_HOME env var or overlay triplet (see triplets/x64-windows.cmake)",
   "name": "beatsynceditor",
   "version": "1.0.0",
   "dependencies": [
-    {
-      "name": "ffmpeg",
-      "default-features": false,
-      "features": ["avcodec", "avformat", "swresample", "swscale", "avfilter"]
-    },
-    {
-      "name": "onnxruntime",
-      "default-features": false,
-      "platform": "windows"
-    }
+    { "name": "libsamplerate" }
   ],
+  "features": {
+    "cpu": {
+      "description": "CPU-only dependencies (default)",
+      "dependencies": [
+        {
+          "name": "ffmpeg",
+          "default-features": false,
+          "features": ["avcodec", "avformat", "swresample", "swscale", "avfilter"]
+        },
+        {
+          "name": "onnxruntime",
+          "default-features": false,
+          "platform": "windows"
+        }
+      ]
+    },
+    "gpu": {
+      "description": "GPU acceleration dependencies (optional)",
+      "dependencies": [
+        {
+          "name": "ffmpeg",
+          "default-features": false,
+          "features": ["avcodec", "avformat", "swresample", "swscale", "avfilter", "nvcodec"]
+        },
+        {
+          "name": "onnxruntime",
+          "default-features": false,
+          "features": ["cuda", "tensorrt"],
+          "platform": "windows"
+        }
+      ]
+    }
+  },
+  "default-features": ["cpu"],
   "builtin-baseline": "25b458671af03578e6a34edd8f0d1ac85e084df4"
 }

@@ -63,8 +63,9 @@ void FBeatsyncProcessingTask::DoWork()
         return;
     }
 
-        // Step 1: Get beat times (either from pre-analyzed UI markers or by analyzing audio)
-        if (IsCancelled())
+
+    // Step 1: Get beat times (either from pre-analyzed UI markers or by analyzing audio)
+    if (IsCancelled())
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
@@ -85,10 +86,25 @@ void FBeatsyncProcessingTask::DoWork()
         ReportProgress(0.05f, TEXT("Using edited beat markers..."));
         BeatGrid.Beats = Params.PreAnalyzedBeatTimes;
         BeatGrid.BPM = Params.PreAnalyzedBPM > 0 ? Params.PreAnalyzedBPM : 120.0;
-        BeatGrid.Duration = Params.AudioEnd > 0 ? (Params.AudioEnd - Params.AudioStart) : 0.0;
+
+        // Compute duration: use AudioEnd if set, otherwise compute from last beat + some buffer
+        if (Params.AudioEnd > 0)
+        {
+            BeatGrid.Duration = Params.AudioEnd - Params.AudioStart;
+        }
+        else if (Params.PreAnalyzedBeatTimes.Num() > 0)
+        {
+            // Use last beat time + 1 second as duration estimate
+            BeatGrid.Duration = Params.PreAnalyzedBeatTimes.Last() + 1.0;
+        }
+        else
+        {
+            BeatGrid.Duration = 0.0;
+        }
+
         bSuccess = true;
-        UE_LOG(LogTemp, Log, TEXT("TripSitter: Using %d user-edited beat markers at %.1f BPM"),
-            BeatGrid.Beats.Num(), BeatGrid.BPM);
+        UE_LOG(LogTemp, Log, TEXT("TripSitter: Using %d user-edited beat markers at %.1f BPM, duration=%.2f"),
+            BeatGrid.Beats.Num(), BeatGrid.BPM, BeatGrid.Duration);
     }
     else
     {
@@ -101,12 +117,12 @@ void FBeatsyncProcessingTask::DoWork()
     {
         // Use analysis mode from UI params
         bool bUseAI = (Params.AnalysisMode == EAnalysisModeParam::AIBeat || Params.AnalysisMode == EAnalysisModeParam::AIStems);
-        bool bUseStemSeparation = (Params.AnalysisMode == EAnalysisModeParam::AIStems);
+        bool bEnableStemSeparation = (Params.AnalysisMode == EAnalysisModeParam::AIStems);
 
         // Try AI analyzer if requested and available
         if (bUseAI && FBeatsyncLoader::IsAIAvailable())
         {
-            FString ModeStr = bUseStemSeparation ? TEXT("AI + Stems") : TEXT("AI Beat");
+            FString ModeStr = bEnableStemSeparation ? TEXT("AI + Stems") : TEXT("AI Beat");
             ReportProgress(0.05f, FString::Printf(TEXT("Analyzing audio with %s (GPU)..."), *ModeStr));
             UE_LOG(LogTemp, Log, TEXT("TripSitter: Using %s analyzer (providers: %s)"), *ModeStr, *FBeatsyncLoader::GetAIProviders());
 
@@ -123,7 +139,7 @@ void FBeatsyncProcessingTask::DoWork()
 
             // Get path to stem separation model (demucs) if using AI+Stems mode
             FString StemModelPath;
-            if (bUseStemSeparation)
+            if (bEnableStemSeparation)
             {
                 StemModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("demucs.onnx"));
                 if (!FPaths::FileExists(StemModelPath))
@@ -138,30 +154,36 @@ void FBeatsyncProcessingTask::DoWork()
             {
                 FAIConfig AIConfig;
                 AIConfig.BeatModelPath = ModelPath;
-                AIConfig.bUseGPU = true;  // Enable CUDA
-                AIConfig.bUseStemSeparation = bUseStemSeparation;
-                AIConfig.bUseDrumsForBeats = true;
+                AIConfig.bEnableGPU = true;  // Enable CUDA
+                AIConfig.bEnableStemSeparation = bEnableStemSeparation;
+                AIConfig.bEnableDrumsForBeats = true;
                 AIConfig.BeatThreshold = 0.66f;
                 AIConfig.DownbeatThreshold = 0.66f;
 
                 // Set stem model path if using stem separation
-                if (bUseStemSeparation && FPaths::FileExists(StemModelPath))
+                if (bEnableStemSeparation && FPaths::FileExists(StemModelPath))
                 {
                     AIConfig.StemModelPath = StemModelPath;
                     UE_LOG(LogTemp, Log, TEXT("TripSitter: Using stem separation model: %s"), *StemModelPath);
                 }
-                else if (bUseStemSeparation)
+                else if (bEnableStemSeparation)
                 {
                     UE_LOG(LogTemp, Warning, TEXT("TripSitter: Stem model not found at %s, stem separation disabled"), *StemModelPath);
-                    AIConfig.bUseStemSeparation = false;
+                    AIConfig.bEnableStemSeparation = false;
                 }
 
                 void* AIAnalyzer = FBeatsyncLoader::CreateAIAnalyzer(AIConfig);
                 if (AIAnalyzer)
                 {
+                    // RAII guard to ensure AI analyzer is always destroyed
+                    ON_SCOPE_EXIT
+                    {
+                        FBeatsyncLoader::DestroyAIAnalyzer(AIAnalyzer);
+                    };
+
                     FAIResult AIResult;
                     // Use full analysis with stem separation, or quick mode without
-                    if (AIConfig.bUseStemSeparation)
+                    if (AIConfig.bEnableStemSeparation)
                     {
                         bSuccess = FBeatsyncLoader::AIAnalyzeFile(AIAnalyzer, Params.AudioPath, AIResult);
                     }
@@ -183,8 +205,6 @@ void FBeatsyncProcessingTask::DoWork()
                         UE_LOG(LogTemp, Warning, TEXT("TripSitter: %s analysis failed: %s, falling back to spectral flux"), *ModeStr, *AIError);
                         bSuccess = false;
                     }
-
-                    FBeatsyncLoader::DestroyAIAnalyzer(AIAnalyzer);
                 }
                 else
                 {
@@ -253,31 +273,75 @@ void FBeatsyncProcessingTask::DoWork()
     int32 ClampedBeatRate = FMath::Clamp(Params.BeatRate, 0, 3); // Clamp to safe range to prevent overflow
     int32 BeatDivisor = 1 << ClampedBeatRate; // 1, 2, 4, 8
 
+    // Check if we're using pre-analyzed (user-selected) beat markers
+    // If so, the beats are already the exact ones the user wants - skip range filtering
+    bool bUsingPreAnalyzedBeats = (Params.PreAnalyzedBeatTimes.Num() > 0);
+
     double SelectionStart = Params.AudioStart;
     double SelectionEnd = Params.AudioEnd > 0 ? Params.AudioEnd : BeatGrid.Duration;
 
-    int32 BeatIndex = 0;
-    for (int32 i = 0; i < BeatGrid.Beats.Num(); ++i)
+    // DIAGNOSTIC: Log beat filtering params
     {
-        double BeatTime = BeatGrid.Beats[i];
+        FString DiagPath = FPaths::Combine(FPlatformMisc::GetEnvironmentVariable(TEXT("TEMP")), TEXT("beatsync_ue_beatfilter.log"));
+        FString DiagContent;
+        DiagContent += FString::Printf(TEXT("=== BEAT FILTER DIAGNOSTIC ===\n"));
+        DiagContent += FString::Printf(TEXT("bUsingPreAnalyzedBeats: %d\n"), bUsingPreAnalyzedBeats ? 1 : 0);
+        DiagContent += FString::Printf(TEXT("Params.PreAnalyzedBeatTimes.Num(): %d\n"), Params.PreAnalyzedBeatTimes.Num());
+        DiagContent += FString::Printf(TEXT("Params.AudioStart: %.6f\n"), Params.AudioStart);
+        DiagContent += FString::Printf(TEXT("Params.AudioEnd: %.6f\n"), Params.AudioEnd);
+        DiagContent += FString::Printf(TEXT("BeatGrid.Duration: %.6f\n"), BeatGrid.Duration);
+        DiagContent += FString::Printf(TEXT("SelectionStart: %.6f\n"), SelectionStart);
+        DiagContent += FString::Printf(TEXT("SelectionEnd: %.6f\n"), SelectionEnd);
+        DiagContent += FString::Printf(TEXT("BeatGrid.Beats.Num(): %d\n"), BeatGrid.Beats.Num());
+        DiagContent += FString::Printf(TEXT("BeatDivisor: %d\n"), BeatDivisor);
+        if (BeatGrid.Beats.Num() > 0) {
+            DiagContent += FString::Printf(TEXT("First beat: %.6f\n"), BeatGrid.Beats[0]);
+            DiagContent += FString::Printf(TEXT("Last beat: %.6f\n"), BeatGrid.Beats.Last());
+        }
+        FFileHelper::SaveStringToFile(DiagContent, *DiagPath);
+    }
 
-        // Skip beats outside selection range
-        if (BeatTime < SelectionStart)
+    if (bUsingPreAnalyzedBeats)
+    {
+        // User-selected beat markers are already exactly what we want
+        // Just apply beat divisor (every beat, every 2nd, etc.) - no range filtering
+        // The beat times are already relative to the audio selection start
+        for (int32 i = 0; i < BeatGrid.Beats.Num(); ++i)
         {
-            continue;
+            if ((i % BeatDivisor) == 0)
+            {
+                FilteredBeats.Add(BeatGrid.Beats[i]);
+            }
         }
-        if (BeatTime > SelectionEnd)
+        UE_LOG(LogTemp, Log, TEXT("TripSitter: Using %d pre-analyzed beats directly (divisor %d -> %d filtered)"),
+            BeatGrid.Beats.Num(), BeatDivisor, FilteredBeats.Num());
+    }
+    else
+    {
+        // Standard analysis - apply range filtering
+        int32 BeatIndex = 0;
+        for (int32 i = 0; i < BeatGrid.Beats.Num(); ++i)
         {
-            break; // All remaining beats are past the selection
-        }
+            double BeatTime = BeatGrid.Beats[i];
 
-        // Apply beat divisor (every beat, every 2nd, etc.)
-        if ((BeatIndex % BeatDivisor) == 0)
-        {
-            // Offset beat time relative to selection start for the output video
-            FilteredBeats.Add(BeatTime - SelectionStart);
+            // Skip beats outside selection range
+            if (BeatTime < SelectionStart)
+            {
+                continue;
+            }
+            if (BeatTime > SelectionEnd)
+            {
+                break; // All remaining beats are past the selection
+            }
+
+            // Apply beat divisor (every beat, every 2nd, etc.)
+            if ((BeatIndex % BeatDivisor) == 0)
+            {
+                // Offset beat time relative to selection start for the output video
+                FilteredBeats.Add(BeatTime - SelectionStart);
+            }
+            BeatIndex++;
         }
-        BeatIndex++;
     }
 
     UE_LOG(LogTemp, Log, TEXT("TripSitter: Selection range %.2f - %.2f, filtered %d beats to %d"),
@@ -343,13 +407,20 @@ void FBeatsyncProcessingTask::DoWork()
         ReportProgress(0.22f, TEXT("Normalizing videos..."));
         UE_LOG(LogTemp, Log, TEXT("TripSitter: Normalizing %d source videos"), Params.VideoPaths.Num());
 
+        UE_LOG(LogTemp, Warning, TEXT("TripSitter: DIAG - About to call NormalizeVideos with %d videos"), Params.VideoPaths.Num());
         if (FBeatsyncLoader::NormalizeVideos(Writer, Params.VideoPaths, NormalizedVideos))
         {
+            UE_LOG(LogTemp, Warning, TEXT("TripSitter: DIAG - NormalizeVideos returned TRUE, NormalizedVideos.Num()=%d"), NormalizedVideos.Num());
             if (NormalizedVideos.Num() == Params.VideoPaths.Num())
             {
                 VideosToProcess = NormalizedVideos;
                 bUsingNormalized = true;
-                UE_LOG(LogTemp, Log, TEXT("TripSitter: Using %d normalized videos"), NormalizedVideos.Num());
+                UE_LOG(LogTemp, Warning, TEXT("TripSitter: Using %d normalized videos"), NormalizedVideos.Num());
+                // Log first few paths for debugging
+                for (int32 i = 0; i < FMath::Min(3, NormalizedVideos.Num()); ++i)
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("TripSitter: DIAG - NormalizedVideos[%d] = %s"), i, *NormalizedVideos[i]);
+                }
             }
             else
             {
@@ -360,7 +431,7 @@ void FBeatsyncProcessingTask::DoWork()
         }
         else
         {
-            UE_LOG(LogTemp, Warning, TEXT("TripSitter: Video normalization failed, using original videos"));
+            UE_LOG(LogTemp, Warning, TEXT("TripSitter: DIAG - NormalizeVideos returned FALSE"));
             VideosToProcess = Params.VideoPaths;
         }
     }
@@ -373,15 +444,48 @@ void FBeatsyncProcessingTask::DoWork()
     // Cut video at beats
     ReportProgress(0.25f, TEXT("Cutting video at beats..."));
 
+    // File-based diagnostic - this MUST run
+    {
+        FString DiagPath = FPaths::Combine(FPlatformMisc::GetEnvironmentVariable(TEXT("TEMP")), TEXT("beatsync_ue_precut.log"));
+        FString DiagContent;
+        DiagContent += FString::Printf(TEXT("=== PRE-CUT DIAGNOSTIC ===\n"));
+        DiagContent += FString::Printf(TEXT("bIsMultiClip: %d\n"), Params.bIsMultiClip ? 1 : 0);
+        DiagContent += FString::Printf(TEXT("VideosToProcess.Num(): %d\n"), VideosToProcess.Num());
+        DiagContent += FString::Printf(TEXT("FilteredBeats.Num(): %d\n"), FilteredBeats.Num());
+        DiagContent += FString::Printf(TEXT("ClipDuration: %.6f\n"), ClipDuration);
+        DiagContent += FString::Printf(TEXT("TempVideoPath: %s\n"), *TempVideoPath);
+        DiagContent += FString::Printf(TEXT("Will take multi path: %s\n"), (Params.bIsMultiClip && VideosToProcess.Num() > 1) ? TEXT("YES") : TEXT("NO"));
+        if (VideosToProcess.Num() > 0) {
+            DiagContent += FString::Printf(TEXT("First video: %s\n"), *VideosToProcess[0]);
+        }
+        FFileHelper::SaveStringToFile(DiagContent, *DiagPath);
+    }
+
+    // DIAGNOSTIC: Log the exact code path being taken
+    UE_LOG(LogTemp, Warning, TEXT("TripSitter: CUT DIAGNOSTIC - bIsMultiClip=%d, VideosToProcess.Num()=%d, FilteredBeats.Num()=%d, ClipDuration=%.6f"),
+        Params.bIsMultiClip ? 1 : 0, VideosToProcess.Num(), FilteredBeats.Num(), ClipDuration);
+    UE_LOG(LogTemp, Warning, TEXT("TripSitter: CUT DIAGNOSTIC - TempVideoPath=%s"), *TempVideoPath);
+
     if (Params.bIsMultiClip && VideosToProcess.Num() > 1)
     {
-        UE_LOG(LogTemp, Log, TEXT("TripSitter: Processing %d videos"), VideosToProcess.Num());
+        UE_LOG(LogTemp, Warning, TEXT("TripSitter: TAKING MULTI-VIDEO PATH with %d videos"), VideosToProcess.Num());
+        // Log first video path to verify it exists
+        if (VideosToProcess.Num() > 0)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("TripSitter: DIAG - First video path: %s"), *VideosToProcess[0]);
+            // Check if file exists
+            bool bExists = FPaths::FileExists(VideosToProcess[0]);
+            UE_LOG(LogTemp, Warning, TEXT("TripSitter: DIAG - First video exists: %s"), bExists ? TEXT("YES") : TEXT("NO"));
+        }
         bSuccess = FBeatsyncLoader::CutVideoAtBeatsMulti(Writer, VideosToProcess, FilteredBeats, TempVideoPath, ClipDuration);
+        UE_LOG(LogTemp, Warning, TEXT("TripSitter: CutVideoAtBeatsMulti returned %s"), bSuccess ? TEXT("SUCCESS") : TEXT("FAILURE"));
     }
     else
     {
         FString SingleVideo = VideosToProcess.Num() > 0 ? VideosToProcess[0] : Params.VideoPath;
+        UE_LOG(LogTemp, Warning, TEXT("TripSitter: TAKING SINGLE-VIDEO PATH with video=%s"), *SingleVideo);
         bSuccess = FBeatsyncLoader::CutVideoAtBeats(Writer, SingleVideo, FilteredBeats, TempVideoPath, ClipDuration);
+        UE_LOG(LogTemp, Warning, TEXT("TripSitter: CutVideoAtBeats returned %s"), bSuccess ? TEXT("SUCCESS") : TEXT("FAILURE"));
     }
 
     if (!bSuccess)

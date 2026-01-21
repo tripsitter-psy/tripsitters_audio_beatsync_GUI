@@ -1,22 +1,29 @@
+
+cmake_minimum_required(VERSION 3.15)
 # Copyright years for installer and metadata
 set(PROJECT_COPYRIGHT_YEARS "2024-2026")
 
 
-cmake_minimum_required(VERSION 3.15)
-
-
 project(TripSitterBeatSync)
 
-# Configure NSIS installer template
+# Version configuration - can be overridden with -DBEATSYNC_VERSION=...
+set(BEATSYNC_VERSION "1.0.0" CACHE STRING "BeatSync library version")
+add_definitions(-DBEATSYNC_VERSION="${BEATSYNC_VERSION}")
+
+# TensorRT DLL directory for installer (optional - for RTX GPU acceleration)
+# Set via TENSORRT_HOME env var or -DTENSORRT_DLL_DIR=...
+if(DEFINED ENV{TENSORRT_HOME})
+    set(TENSORRT_DLL_DIR "$ENV{TENSORRT_HOME}/lib" CACHE PATH "TensorRT DLL directory")
+else()
+    set(TENSORRT_DLL_DIR "C:/TensorRT-10.9.0.34/lib" CACHE PATH "TensorRT DLL directory")
+endif()
+
+# Configure NSIS installer template (run after BEATSYNC_VERSION is set so substitutions work)
 configure_file(
     installer/nsis_template.nsi.in
     installer/nsis_template.nsi
     @ONLY
 )
-
-# Version configuration - can be overridden with -DBEATSYNC_VERSION=...
-set(BEATSYNC_VERSION "1.0.0" CACHE STRING "BeatSync library version")
-add_definitions(-DBEATSYNC_VERSION="${BEATSYNC_VERSION}")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -46,6 +53,7 @@ set(CORE_SOURCES
     src/video/VideoProcessor.cpp
     src/video/VideoWriter.cpp
     src/backend/tracing.cpp
+    src/utils/DebugLogger.cpp
 )
 
 # Backend library target (wrap core sources into a reusable library and expose a C API)
@@ -82,6 +90,7 @@ if(BEATSYNC_BUILD_SHARED AND (WIN32 OR APPLE OR UNIX))
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/Mac"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:beatsync_backend_shared>" "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/Mac/"
     )
+
 endif()
 # Optional feature sources (always compiled as stubs; actual libs wired via flags)
 set(OPTIONAL_SOURCES)
@@ -99,13 +108,14 @@ if(BEATSYNC_ENABLE_TRACING)
     endif()
 endif()
 
-# ...existing code...
-
-
-# ...existing code...
-
 # Link OpenTelemetry libraries to beatsync after target creation
 # (moved to after beatsync target definition)
+if(BEATSYNC_ENABLE_TRACING AND opentelemetry-cpp_FOUND)
+    target_link_libraries(beatsync_backend_static PRIVATE opentelemetry-cpp::opentelemetry-cpp)
+    if(TARGET beatsync_backend_shared)
+        target_link_libraries(beatsync_backend_shared PRIVATE opentelemetry-cpp::opentelemetry-cpp)
+    endif()
+endif()
 
 # BeatNet and Demucs/StemSeparator are now always compiled for AI analysis modes
 # These are called via Python scripts and don't need external libraries
@@ -133,9 +143,139 @@ if(USE_ONNX)
             src/audio/OnnxMusicAnalyzer.cpp
         )
         add_definitions(-DUSE_ONNX)
+
+        # Copy ONNX Runtime provider DLLs for GPU support (Windows only)
+        if(BEATSYNC_BUILD_SHARED AND WIN32)
+            # Use vcpkg-provided variables for portability, fallback to default path
+            if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+                set(VCPKG_BIN_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+            else()
+                set(VCPKG_BIN_DIR "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/bin")
+            endif()
+            # Check for ONNX Runtime provider DLLs and add copy commands conditionally
+            set(ONNX_COPY_COMMANDS "")
+            
+            if(EXISTS "${VCPKG_BIN_DIR}/onnxruntime_providers_shared.dll")
+                list(APPEND ONNX_COPY_COMMANDS
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${VCPKG_BIN_DIR}/onnxruntime_providers_shared.dll"
+                        "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${VCPKG_BIN_DIR}/onnxruntime_providers_shared.dll"
+                        "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
+                )
+                message(STATUS "ONNX Runtime shared provider DLL found - will copy to output")
+            else()
+                message(WARNING "onnxruntime_providers_shared.dll not found at ${VCPKG_BIN_DIR} - some ONNX features may not work")
+            endif()
+            
+            if(EXISTS "${VCPKG_BIN_DIR}/onnxruntime_providers_cuda.dll")
+                list(APPEND ONNX_COPY_COMMANDS
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${VCPKG_BIN_DIR}/onnxruntime_providers_cuda.dll"
+                        "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${VCPKG_BIN_DIR}/onnxruntime_providers_cuda.dll"
+                        "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
+                )
+                message(STATUS "ONNX Runtime CUDA provider DLL found - GPU acceleration available")
+            else()
+                message(WARNING "onnxruntime_providers_cuda.dll not found at ${VCPKG_BIN_DIR} - GPU acceleration will not be available")
+            endif()
+            
+            if(ONNX_COPY_COMMANDS)
+                add_custom_command(TARGET beatsync_backend_shared POST_BUILD
+                    ${ONNX_COPY_COMMANDS}
+                    COMMENT "Copying ONNX Runtime GPU provider DLLs"
+                )
+            endif()
+
+            # Copy TensorRT DLLs for RTX acceleration (optional - skip if not found)
+            if(EXISTS "${TENSORRT_DLL_DIR}/nvinfer_10.dll")
+                add_custom_command(TARGET beatsync_backend_shared POST_BUILD
+                    # Copy to ThirdParty for Unreal
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${TENSORRT_DLL_DIR}/nvinfer_10.dll"
+                        "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${TENSORRT_DLL_DIR}/nvinfer_lean_10.dll"
+                        "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${TENSORRT_DLL_DIR}/nvinfer_plugin_10.dll"
+                        "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${TENSORRT_DLL_DIR}/nvinfer_dispatch_10.dll"
+                        "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${TENSORRT_DLL_DIR}/nvonnxparser_10.dll"
+                        "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64/"
+                    # Copy to build output directory for direct testing
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${TENSORRT_DLL_DIR}/nvinfer_10.dll"
+                        "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${TENSORRT_DLL_DIR}/nvinfer_lean_10.dll"
+                        "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${TENSORRT_DLL_DIR}/nvinfer_plugin_10.dll"
+                        "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${TENSORRT_DLL_DIR}/nvinfer_dispatch_10.dll"
+                        "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${TENSORRT_DLL_DIR}/nvonnxparser_10.dll"
+                        "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
+                    COMMENT "Copying TensorRT DLLs for RTX acceleration"
+                )
+            else()
+                message(STATUS "TensorRT DLLs not found at ${TENSORRT_DLL_DIR} - TensorRT acceleration disabled")
+            endif()
+        endif()
     else()
         message(WARNING "ONNX Runtime not found. Install with: vcpkg install onnxruntime-gpu")
     endif()
+endif()
+
+# AudioFlux support for signal processing-based beat detection (no Python, no GPU needed)
+# This provides reliable spectral flux onset detection as an alternative to neural networks
+option(USE_AUDIOFLUX "Enable AudioFlux for spectral analysis" ON)
+set(AUDIOFLUX_ROOT "" CACHE PATH "AudioFlux installation directory (optional, overrides autodetect)")
+if(USE_AUDIOFLUX)
+    # Try to find AudioFlux include dir
+    find_path(AUDIOFLUX_INCLUDE_DIR flux_base.h
+        PATHS
+            "${AUDIOFLUX_ROOT}/include"
+            /usr/local/include
+            /usr/include
+            $ENV{AUDIOFLUX_ROOT}/include
+        DOC "AudioFlux include directory"
+    )
+    # Try to find AudioFlux library
+    find_library(AUDIOFLUX_LIBRARY audioflux
+        PATHS
+            "${AUDIOFLUX_ROOT}/build/windowBuild/Release"
+            "${AUDIOFLUX_ROOT}/lib"
+            /usr/local/lib
+            /usr/lib
+            $ENV{AUDIOFLUX_ROOT}/lib
+        DOC "AudioFlux library"
+    )
+    if(AUDIOFLUX_INCLUDE_DIR AND AUDIOFLUX_LIBRARY)
+        message(STATUS "AudioFlux found: ${AUDIOFLUX_INCLUDE_DIR}, ${AUDIOFLUX_LIBRARY} - enabling spectral analysis")
+        list(APPEND OPTIONAL_SOURCES
+            src/audio/AudioFluxBeatDetector.cpp
+        )
+        add_definitions(-DUSE_AUDIOFLUX)
+    else()
+        message(WARNING "AudioFlux not found (include: ${AUDIOFLUX_INCLUDE_DIR}, lib: ${AUDIOFLUX_LIBRARY}). Spectral analysis disabled.")
+    endif()
+endif()
+
+# Bandlimited resampler support (libsamplerate)
+find_package(SampleRate CONFIG QUIET)
+if(SampleRate_FOUND)
+    message(STATUS "libsamplerate found - enabling high-quality resampling")
+    add_definitions(-DUSE_LIBSAMPLERATE)
 endif()
 
 if(USE_ESSENTIA)
@@ -170,6 +310,46 @@ if(USE_ONNX AND onnxruntime_FOUND)
     target_link_libraries(beatsync_backend_static PRIVATE onnxruntime::onnxruntime)
     if(TARGET beatsync_backend_shared)
         target_link_libraries(beatsync_backend_shared PRIVATE onnxruntime::onnxruntime)
+    endif()
+endif()
+
+# AudioFlux linking (signal processing-based beat detection)
+if(USE_AUDIOFLUX AND EXISTS "${AUDIOFLUX_LIBRARY}")
+    target_include_directories(beatsync PRIVATE "${AUDIOFLUX_INCLUDE_DIR}")
+    target_include_directories(beatsync_backend_static PRIVATE "${AUDIOFLUX_INCLUDE_DIR}")
+    target_link_libraries(beatsync PRIVATE "${AUDIOFLUX_LIBRARY}")
+    target_link_libraries(beatsync_backend_static PRIVATE "${AUDIOFLUX_LIBRARY}")
+    if(TARGET beatsync_backend_shared)
+        target_include_directories(beatsync_backend_shared PRIVATE "${AUDIOFLUX_INCLUDE_DIR}")
+        target_link_libraries(beatsync_backend_shared PRIVATE "${AUDIOFLUX_LIBRARY}")
+        # Copy AudioFlux DLLs to output directory (Windows only)
+        if(WIN32)
+            get_filename_component(AUDIOFLUX_LIB_DIR "${AUDIOFLUX_LIBRARY}" DIRECTORY)
+            set(AUDIOFLUX_DLL "${AUDIOFLUX_LIB_DIR}/audioflux.dll")
+            set(AUDIOFLUX_FFTW_DLL "${AUDIOFLUX_ROOT}/python/audioflux/lib/libfftw3f-3.dll")
+            if(EXISTS "${AUDIOFLUX_DLL}" AND EXISTS "${AUDIOFLUX_FFTW_DLL}")
+                add_custom_command(TARGET beatsync_backend_shared POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${AUDIOFLUX_DLL}"
+                        "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${AUDIOFLUX_FFTW_DLL}"
+                        "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
+                    COMMENT "Copying AudioFlux DLLs"
+                )
+            else()
+                message(WARNING "AudioFlux DLLs not found: ${AUDIOFLUX_DLL} or ${AUDIOFLUX_FFTW_DLL}")
+            endif()
+        endif()
+    endif()
+endif()
+
+# libsamplerate linking (high-quality resampling)
+if(SampleRate_FOUND)
+    target_link_libraries(beatsync PRIVATE SampleRate::samplerate)
+    target_link_libraries(beatsync_backend_static PRIVATE SampleRate::samplerate)
+    if(TARGET beatsync_backend_shared)
+        target_link_libraries(beatsync_backend_shared PRIVATE SampleRate::samplerate)
     endif()
 endif()
 

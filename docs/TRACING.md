@@ -6,7 +6,12 @@ This repository includes optional OpenTelemetry tracing support for the backend 
 
 1. Install OpenTelemetry C++ SDK (recommended via vcpkg):
    - vcpkg install opentelemetry-cpp
-   - If using vcpkg toolchain, configure CMake with -DBEATSYNC_ENABLE_TRACING=ON and point CMake to your vcpkg toolchain.
+     - Example for Windows: `vcpkg install opentelemetry-cpp:x64-windows`
+     - Example for Linux: `vcpkg install opentelemetry-cpp:x64-linux`
+      - Example for macOS (Intel): `vcpkg install opentelemetry-cpp:x64-osx`
+      - Example for macOS (Apple Silicon): `vcpkg install opentelemetry-cpp:arm64-osx`
+   - By default, vcpkg uses the triplet set by your environment or toolchain file. You can override the triplet by appending `:<triplet>` to the package name, or by setting the `VCPKG_DEFAULT_TRIPLET` environment variable.
+   - If using vcpkg toolchain, configure CMake with `-DBEATSYNC_ENABLE_TRACING=ON` and ensure you use the matching vcpkg toolchain and triplet for your platform.
 
 2. Start a local OTLP collector + Jaeger (for viewing traces):
    - From project root:
@@ -37,8 +42,8 @@ This repository includes optional OpenTelemetry tracing support for the backend 
 - `src/backend/tracing.h/.cpp` - tracing init/shutdown helpers
 - Uses the project tracing API in `src/tracing/Tracing.h` - prefer `TRACE_FUNC()`/`TRACE_SCOPE(name)` and `::BeatSync::tracing::Span`.
 - `src/backend/beatsync_capi.h/.cpp` - added `bs_initialize_tracing`, `bs_shutdown_tracing`, and lightweight span helpers for C API callers
-- `unreal-prototype/Plugins/TripSitterUE/TripSitterUE/Public/BeatsyncLoader.h` and `Private/BeatsyncLoader.cpp` - added wrappers for span helpers and tracing related exports
-- `unreal-prototype/Plugins/TripSitterUE/TripSitterUE/Private/TripSitterUEModule.*` - calls backend tracing init/shutdown on module startup/shutdown
+- `unreal-prototype/Plugins/TripSitterUE/Public/BeatsyncLoader.h` and `unreal-prototype/Plugins/TripSitterUE/Private/BeatsyncLoader.cpp` - added wrappers for span helpers and tracing related exports
+- `unreal-prototype/Plugins/TripSitterUE/Private/TripSitterUEModule.*` - calls backend tracing init/shutdown on module startup/shutdown
 - `tools/tracing/docker-compose.yml` and helper scripts - start OTLP collector + Jaeger
 
 ## Future Work

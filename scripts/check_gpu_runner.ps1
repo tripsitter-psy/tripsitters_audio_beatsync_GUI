@@ -26,21 +26,60 @@ if (Get-Command 'nvidia-smi' -ErrorAction SilentlyContinue) {
     Write-Warning "nvidia-smi not found. Make sure NVIDIA driver is installed and nvidia-smi is on PATH."
 }
 
+
 if (Get-Command docker -ErrorAction SilentlyContinue) {
-    Write-Host "Docker found — testing container GPU access..."
+    Write-Host "Docker found: testing container GPU access..."
     # Timeout after 120s to avoid indefinite hangs
-    $job = Start-Job { docker run --rm --gpus all $using:CudaImage nvidia-smi }
+    $job = Start-Job {
+        try {
+            $tempFile = [System.IO.Path]::GetTempFileName()
+            $args = @("run", "--rm", "--gpus", "all", $using:CudaImage, "nvidia-smi")
+            $process = Start-Process -FilePath "docker" -ArgumentList $args -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempFile
+            $output = Get-Content $tempFile -Raw
+            Remove-Item $tempFile -ErrorAction SilentlyContinue
+            return @{ ExitCode = $process.ExitCode; Output = $output }
+        } catch {
+            return @{ ExitCode = 1; Output = $_.Exception.Message }
+        }
+    }
     $completed = Wait-Job $job -Timeout 120
+    $dockerGpuResult = @{ ExitCode = 1; Output = "" } # Default to failure
+    $dockerGpuExitCode = 1
     if ($completed) {
-        Receive-Job $job | Out-Host
-        $LASTEXITCODE = $job.State -eq 'Completed' ? 0 : 1
+        $dockerGpuResult = Receive-Job $job
+        $dockerGpuExitCode = $dockerGpuResult.ExitCode
+        if ($job.State -eq 'Completed' -and $dockerGpuResult.ExitCode -eq 0) {
+            Write-Host "Docker GPU test succeeded (exit code 0)."
+            Write-Host $dockerGpuResult.Output
+        } else {
+            Write-Host "Docker GPU test output:" -ForegroundColor Yellow
+            Write-Host $dockerGpuResult.Output
+            # Run again to show output for debugging
+            try {
+                $debugJob = Start-Job -ScriptBlock { param($img) docker run --rm --gpus all $img nvidia-smi 2>&1 } -ArgumentList $CudaImage
+                $debugCompleted = Wait-Job $debugJob -Timeout 30
+                if ($debugCompleted) {
+                    $debugOutput = Receive-Job $debugJob
+                    if ($debugOutput) {
+                        Write-Host $debugOutput
+                    }
+                } else {
+                    Stop-Job $debugJob
+                    Write-Host "Docker debug run timed out after 30 seconds." -ForegroundColor Red
+                }
+                Remove-Job $debugJob -Force
+            } catch {
+                Write-Host "Failed to get Docker output for debugging: $_" -ForegroundColor Red
+            }
+        }
     } else {
         Stop-Job $job
+        $dockerGpuExitCode = 1
         Write-Warning "Docker GPU test timed out after 120 seconds."
     }
     Remove-Job $job -Force
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning "Docker GPU test failed with exit code $LASTEXITCODE. Docker may not be configured for GPUs (nvidia container toolkit)."
+    if ($dockerGpuExitCode -ne 0) {
+        Write-Warning "Docker GPU test failed (exit code $dockerGpuExitCode). Docker may not be configured for GPUs (nvidia container toolkit)."
     }
 } else {
     Write-Host "Docker not found — skipping Docker GPU test."

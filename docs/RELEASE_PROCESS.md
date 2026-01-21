@@ -120,10 +120,10 @@ cmake --build build --config Release
 cd build && cpack -C Release -G NSIS
 
 # Install silently
-.\MTVTripSitter-0.1.0-Windows-AMD64.exe /S
+.\MTVTripSitter-v0.2.0-Windows-AMD64.exe /S
 
 # Verify
-Test-Path "$env:ProgramFiles\MTV TripSitter\bin\TripSitter.exe"
+Test-Path "$env:ProgramFiles\MTV TripSitter\bin\beatsync.exe"
 
 # Uninstall
 & "$env:ProgramFiles\MTV TripSitter\Uninstall.exe" /S

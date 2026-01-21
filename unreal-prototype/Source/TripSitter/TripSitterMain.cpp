@@ -1,11 +1,11 @@
 // TripSitter - Program Entry Point
 #include "CoreMinimal.h"
 #include "RequiredProgramMainCPPInclude.h"
-#include "TripSitterApplication.h"
 #include "Framework/Application/SlateApplication.h"
 #include "StandaloneRenderer.h"
 #include "Stats/StatsSystem.h"
 #include "Private/STripSitterMainWidget.h"
+#include "Private/BeatsyncLoader.h"
 
 IMPLEMENT_APPLICATION(TripSitter, "TripSitter");
 
@@ -14,7 +14,13 @@ int RunTripSitter(const TCHAR* CommandLine)
     FTaskTagScope TaskTagScope(ETaskTag::EGameThread);
 
     // Initialize the engine
-    GEngineLoop.PreInit(CommandLine);
+    int32 PreInitResult = GEngineLoop.PreInit(CommandLine);
+    if (PreInitResult != 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("GEngineLoop.PreInit failed with code %d"), PreInitResult);
+        FPlatformMisc::RequestExit(true);
+        return PreInitResult;
+    }
 
     // Make sure all UObject classes are registered and default properties have been initialized
     ProcessNewlyLoadedUObjects();
@@ -25,6 +31,12 @@ int RunTripSitter(const TCHAR* CommandLine)
     // Initialize Slate as standalone application
     FSlateApplication::InitializeAsStandaloneApplication(GetStandardStandaloneRenderer());
     FSlateApplication::InitHighDPI(true);
+
+    // Initialize the beatsync backend DLL
+    if (!FBeatsyncLoader::Initialize())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Failed to initialize beatsync backend. Beat sync features will be disabled."));
+    }
 
     // Create main window
     TSharedRef<SWindow> MainWindow = SNew(SWindow)
@@ -58,6 +70,7 @@ int RunTripSitter(const TCHAR* CommandLine)
     }
 
     // Cleanup
+    FBeatsyncLoader::Shutdown();
     FCoreDelegates::OnExit.Broadcast();
     FSlateApplication::Shutdown();
     FModuleManager::Get().UnloadModulesAtShutdown();

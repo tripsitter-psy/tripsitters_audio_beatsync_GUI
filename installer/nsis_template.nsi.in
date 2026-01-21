@@ -37,7 +37,7 @@ VIAddVersionKey "LegalCopyright" "@PROJECT_COPYRIGHT_YEARS@ MTV"
 !insertmacro MUI_PAGE_LICENSE "@CPACK_RESOURCE_FILE_LICENSE@"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_FINISHPAGE_RUN "$INSTDIR\bin\TripSitter.exe"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\bin\beatsync.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "Launch MTV TripSitter"
 !insertmacro MUI_PAGE_FINISH
 
@@ -55,6 +55,17 @@ Section "MTV TripSitter" SecMain
     ; Install all files (CPack populates this)
     @CPACK_NSIS_FULL_INSTALL@
 
+    ; Install TensorRT runtime DLLs for RTX GPU acceleration (if available)
+    ; These are optional - app falls back to CUDA EP on GTX cards or if missing
+    SetOutPath "$INSTDIR\bin"
+    IfFileExists "@TENSORRT_DLL_DIR@\nvinfer_10.dll" 0 skip_tensorrt
+        File /nonfatal "@TENSORRT_DLL_DIR@\nvinfer_10.dll"
+        File /nonfatal "@TENSORRT_DLL_DIR@\nvinfer_lean_10.dll"
+        File /nonfatal "@TENSORRT_DLL_DIR@\nvinfer_plugin_10.dll"
+        File /nonfatal "@TENSORRT_DLL_DIR@\nvinfer_dispatch_10.dll"
+        File /nonfatal "@TENSORRT_DLL_DIR@\nvonnxparser_10.dll"
+    skip_tensorrt:
+
     ; Create uninstaller
     WriteUninstaller "$INSTDIR\Uninstall.exe"
 
@@ -64,7 +75,7 @@ Section "MTV TripSitter" SecMain
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
         "UninstallString" "$INSTDIR\Uninstall.exe"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
-        "DisplayIcon" "$INSTDIR\bin\TripSitter.exe"
+        "DisplayIcon" "$INSTDIR\bin\beatsync.exe"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
         "Publisher" "@CPACK_PACKAGE_VENDOR@"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
@@ -86,13 +97,13 @@ SectionEnd
 ; Start Menu shortcuts section
 Section "Start Menu Shortcuts" SecStartMenu
     CreateDirectory "$SMPROGRAMS\@CPACK_NSIS_DISPLAY_NAME@"
-    CreateShortCut "$SMPROGRAMS\@CPACK_NSIS_DISPLAY_NAME@\@CPACK_NSIS_DISPLAY_NAME@.lnk" "$INSTDIR\bin\TripSitter.exe"
+    CreateShortCut "$SMPROGRAMS\@CPACK_NSIS_DISPLAY_NAME@\@CPACK_NSIS_DISPLAY_NAME@.lnk" "$INSTDIR\bin\beatsync.exe"
     CreateShortCut "$SMPROGRAMS\@CPACK_NSIS_DISPLAY_NAME@\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
 SectionEnd
 
 ; Desktop shortcut section (optional)
 Section "Desktop Shortcut" SecDesktop
-    CreateShortCut "$DESKTOP\@CPACK_NSIS_DISPLAY_NAME@.lnk" "$INSTDIR\bin\TripSitter.exe"
+    CreateShortCut "$DESKTOP\@CPACK_NSIS_DISPLAY_NAME@.lnk" "$INSTDIR\bin\beatsync.exe"
 SectionEnd
 
 ; Uninstaller section
@@ -104,6 +115,12 @@ Section "Uninstall"
     ; Remove Desktop shortcut
     Delete "$DESKTOP\@CPACK_NSIS_DISPLAY_NAME@.lnk"
 
+    ; Remove TensorRT DLLs (if installed)
+    Delete "$INSTDIR\bin\nvinfer_10.dll"
+    Delete "$INSTDIR\bin\nvinfer_lean_10.dll"
+    Delete "$INSTDIR\bin\nvinfer_plugin_10.dll"
+    Delete "$INSTDIR\bin\nvinfer_dispatch_10.dll"
+    Delete "$INSTDIR\bin\nvonnxparser_10.dll"
 
     ; Remove files (CPack populates this)
     @CPACK_NSIS_DELETE_FILES@
@@ -120,13 +137,17 @@ Section "Uninstall"
     IfDirExists "$INSTDIR\config" 0 +2
         RMDir /r "$INSTDIR\config"
 
-    ; Remove per-user data
-    IfDirExists "$APPDATA\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_NAME@" 0 +2
+    ; Remove per-user data (prompt before deletion)
+    IfDirExists "$APPDATA\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_NAME@" 0 skip_user_remove
+        MessageBox MB_YESNO|MB_ICONQUESTION "Remove user data under $APPDATA\\@CPACK_PACKAGE_VENDOR@\\@CPACK_PACKAGE_NAME@?\nThis will permanently delete logs and configuration files." IDNO skip_user_remove
         RMDir /r "$APPDATA\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_NAME@"
+    skip_user_remove:
 
-    ; Remove per-machine data
-    IfDirExists "$PROGRAMDATA\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_NAME@" 0 +2
+    ; Remove per-machine data (prompt before deletion)
+    IfDirExists "$PROGRAMDATA\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_NAME@" 0 skip_machine_remove
+        MessageBox MB_YESNO|MB_ICONQUESTION "Remove machine-wide data under $PROGRAMDATA\\@CPACK_PACKAGE_VENDOR@\\@CPACK_PACKAGE_NAME@?\nThis will permanently delete shared logs and data." IDNO skip_machine_remove
         RMDir /r "$PROGRAMDATA\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_NAME@"
+    skip_machine_remove:
 
     ; Remove uninstaller
     Delete "$INSTDIR\Uninstall.exe"

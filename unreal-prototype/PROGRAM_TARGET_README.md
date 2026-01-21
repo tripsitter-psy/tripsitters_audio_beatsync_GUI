@@ -61,7 +61,7 @@ Source/
 | Game viewport | Slate UI window |
 | PlayerController/GameMode | Direct application control |
 | Complex architecture | Simple desktop app |
-| UMG/Blueprint support | Slate UI only |
+| UMG (Unreal Motion Graphics)/Blueprint support | Slate UI only |
 
 ## Troubleshooting
 

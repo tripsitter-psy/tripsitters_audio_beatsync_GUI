@@ -23,13 +23,13 @@ static FString GetBeatsyncDllPath()
     FString Filename;
     FString Subdir;
 #if PLATFORM_WINDOWS
-    Filename = TEXT("beatsync_backend.dll");
+    Filename = TEXT("beatsync_backend_shared.dll");
     Subdir = TEXT("x64");
 #elif PLATFORM_MAC
-    Filename = TEXT("libbeatsync_backend.dylib");
+    Filename = TEXT("libbeatsync_backend_shared.dylib");
     Subdir = TEXT("Mac");
 #else
-    Filename = TEXT("libbeatsync_backend.so");
+    Filename = TEXT("beatsync_backend_shared.so");
     Subdir = TEXT("Linux");
 #endif
     FString DllPath = FPaths::Combine(FPaths::ProjectDir(), TEXT(".."), TEXT("unreal-prototype"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("lib"), Subdir, Filename);
@@ -89,6 +89,38 @@ static void CallBackendShutdownTracing()
 }
 } // end anonymous namespace
 
+void FTripSitterUEModule::AddMenuExtension(FMenuBuilder& MenuBuilder)
+{
+    MenuBuilder.AddMenuEntry(
+        FText::FromString("Open TripSitter"),
+        FText::FromString("Open the TripSitter beat sync editor window"),
+        FSlateIcon(),
+        FUIAction(FExecuteAction::CreateRaw(this, &FTripSitterUEModule::OpenTripSitterWindow))
+    );
+}
+
+void FTripSitterUEModule::OpenTripSitterWindow()
+{
+    // Create a simple window with TripSitter content
+    TSharedRef<SWindow> Window = SNew(SWindow)
+        .Title(FText::FromString("TripSitter - Beat Sync Editor"))
+        .ClientSize(FVector2D(800, 600))
+        .SupportsMaximize(true)
+        .SupportsMinimize(true);
+
+    Window->SetContent(
+        SNew(SVerticalBox)
+        + SVerticalBox::Slot()
+        .FillHeight(1.0f)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(TEXT("TripSitter - Beat Sync Editor\n\nThis is a placeholder window. The full TripSitter GUI is implemented in the TripSitter module.")))
+        ]
+    );
+
+    FSlateApplication::Get().AddWindow(Window);
+}
+
 void FTripSitterUEModule::StartupModule()
 {
     // Try to init tracing with service name "tripsitter"
@@ -127,32 +159,4 @@ void FTripSitterUEModule::ShutdownModule()
         FPlatformProcess::FreeDllHandle(BeatsyncDllHandle);
         BeatsyncDllHandle = nullptr;
     }
-}
-
-void FTripSitterUEModule::AddMenuExtension(FMenuBuilder& MenuBuilder)
-{
-    MenuBuilder.AddMenuEntry(
-        FText::FromString("TripSitter Editor"),
-        FText::FromString("Open TripSitter Beat Sync Editor"),
-        FSlateIcon(),
-        FUIAction(FExecuteAction::CreateRaw(this, &FTripSitterUEModule::OpenTripSitterWindow))
-    );
-}
-
-void FTripSitterUEModule::OpenTripSitterWindow()
-{
-    TSharedRef<SWindow> Window = SNew(SWindow)
-        .Title(FText::FromString(TEXT("TripSitter - Beat Sync Editor")))
-        .ClientSize(FVector2D(1400, 900))
-        [
-            SNew(SVerticalBox)
-            + SVerticalBox::Slot()
-            .FillHeight(1.0f)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("TripSitter - Beat Sync Editor")))
-            ]
-        ];
-
-    FSlateApplication::Get().AddWindow(Window);
 }

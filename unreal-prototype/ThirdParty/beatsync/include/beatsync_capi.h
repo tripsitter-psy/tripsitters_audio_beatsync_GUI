@@ -1,3 +1,5 @@
+// NOTE: This is the canonical C API header. All consumers should use this file as the source of truth.
+// The build system (CMake) copies this file to ThirdParty/beatsync/include/beatsync_capi.h for Unreal integration and install/include for consumers.
 #pragma once
 
 #if defined(_WIN32)
@@ -42,6 +44,8 @@ typedef struct bs_beatgrid_t {
 // AudioAnalyzer
 BEATSYNC_API void* bs_create_audio_analyzer();
 BEATSYNC_API void bs_destroy_audio_analyzer(void* analyzer);
+// Set BPM hint for beat detection (0 = auto-detect, >0 = use this BPM for evenly-spaced beats)
+BEATSYNC_API void bs_set_bpm_hint(void* analyzer, double bpm);
 // Returns 0 on success, non-zero on error. On success, outGrid is filled and must be freed with bs_free_beatgrid
 BEATSYNC_API int bs_analyze_audio(void* analyzer, const char* filepath, bs_beatgrid_t* outGrid);
 BEATSYNC_API void bs_free_beatgrid(bs_beatgrid_t* grid);
@@ -58,6 +62,15 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
                                               const double* beatTimes, size_t beatCount,
                                               const char* outputVideo, double clipDuration);
 BEATSYNC_API int bs_video_concatenate(const char** inputs, size_t count, const char* outputVideo);
+// Pre-normalize videos to common resolution/framerate before processing
+// This reduces GPU memory pressure when processing many segments from different sources
+// normalizedPaths: output array of paths to normalized videos (caller allocates array, library fills paths)
+// pathBufferSize: size of each path buffer in normalizedPaths (recommend 512+ chars)
+// Returns 0 on success, -1 on error
+BEATSYNC_API int bs_video_normalize_sources(void* writer, const char** inputVideos, size_t videoCount,
+                                             char** normalizedPaths, size_t pathBufferSize);
+// Free normalized video files created by bs_video_normalize_sources
+BEATSYNC_API void bs_video_cleanup_normalized(char** normalizedPaths, size_t count);
 // Add audio track to video (combines video from first input with audio from second)
 // audioStart/audioEnd: trim audio to selection (-1 for audioEnd means no trim)
 // trimToShortest: if true, output ends when shorter stream ends
@@ -68,6 +81,33 @@ BEATSYNC_API int bs_video_add_audio_track(void* writer, const char* inputVideo, 
 BEATSYNC_API int bs_get_waveform(void* analyzer, const char* filepath,
                                   float** outPeaks, size_t* outCount, double* outDuration);
 BEATSYNC_API void bs_free_waveform(float* peaks);
+
+// Frequency-colored waveform (Rekordbox/Traktor style)
+// Returns 3 separate peak arrays for bass, mids, and highs frequency bands
+// Bass: 20-200 Hz (red), Mids: 200-2000 Hz (cyan/blue), Highs: 2000+ Hz (white/yellow)
+// Memory ownership and nullability:
+// - All peak arrays (bass_peaks, mid_peaks, high_peaks) are allocated by the library using malloc() and must be freed only by calling bs_free_waveform_bands().
+// - Callers must not free these buffers directly.
+// - On failure, all pointers will be NULL and count will be zero.
+// - Callers must always check for NULL before accessing arrays.
+// - bs_free_waveform_bands(bs_waveform_bands_t*) will free all memory for the three peak arrays.
+// - Do not attempt to free or reuse these pointers after calling bs_free_waveform_bands().
+//
+// See also: bs_waveform_bands_t, bs_free_waveform_bands
+typedef struct {
+    float* bass_peaks;    // Low frequency peaks (20-200 Hz) - malloc, freed by bs_free_waveform_bands
+    float* mid_peaks;     // Mid frequency peaks (200-2000 Hz) - malloc, freed by bs_free_waveform_bands
+    float* high_peaks;    // High frequency peaks (2000+ Hz) - malloc, freed by bs_free_waveform_bands
+    size_t count;         // Number of peaks in each array
+    double duration;      // Audio duration in seconds
+} bs_waveform_bands_t;
+
+// Get frequency-band waveform for professional DJ-style display
+// Returns 0 on success, non-zero on error
+// Result must be freed with bs_free_waveform_bands()
+BEATSYNC_API int bs_get_waveform_bands(void* analyzer, const char* filepath,
+                                        bs_waveform_bands_t* out_bands);
+BEATSYNC_API void bs_free_waveform_bands(bs_waveform_bands_t* bands);
 
 // Effects configuration for video processing
 // NOTE: String fields (transitionType, colorPreset) are copied by the implementation
@@ -93,10 +133,14 @@ typedef struct {
     double zoomIntensity;
 
     int effectBeatDivisor;       // 1=every beat, 2=every 2nd, 4=every 4th, etc.
+
+    double effectStartTime;      // Start time for effects in seconds (0 = from beginning)
+    double effectEndTime;        // End time for effects in seconds (-1 = to end of video)
 } bs_effects_config_t;
 
 // Set effects configuration on video writer
-BEATSYNC_API void bs_video_set_effects_config(void* writer, const bs_effects_config_t* config);
+// Returns 0 on success, non-zero on error
+BEATSYNC_API int bs_video_set_effects_config(void* writer, const bs_effects_config_t* config);
 // Apply effects to video using beat times for beat-synced effects
 // Returns 0 on success, non-zero on error
 BEATSYNC_API int bs_video_apply_effects(void* writer, const char* inputVideo,
@@ -215,6 +259,35 @@ BEATSYNC_API int bs_ai_is_available();
 // Get available ONNX execution providers (returns comma-separated string)
 BEATSYNC_API const char* bs_ai_get_providers();
 
+// Check if GPU is enabled for a specific analyzer instance (returns 1 if GPU active, 0 if CPU)
+BEATSYNC_API int bs_ai_is_gpu_enabled(void* analyzer);
+
+// Get the active execution provider name for an analyzer (e.g., "CUDAExecutionProvider" or "CPUExecutionProvider")
+BEATSYNC_API const char* bs_ai_get_active_provider(void* analyzer);
+
+// =============================================================================
+// AudioFlux Spectral Analysis (signal processing-based, no GPU/Python needed)
+// =============================================================================
+
+// Check if AudioFlux is available
+BEATSYNC_API int bs_audioflux_is_available();
+
+// Analyze audio using AudioFlux spectral flux onset detection
+// Returns 0 on success, non-zero on error
+// outResult must be freed with bs_free_ai_result()
+BEATSYNC_API int bs_audioflux_analyze(const char* audio_path,
+                                       bs_ai_result_t* out_result,
+                                       bs_ai_progress_cb progress_cb, void* user_data);
+
+// Analyze audio using stem separation + AudioFlux (best quality)
+// First separates drums using ONNX model, then runs AudioFlux on drums stem
+// stem_model_path: path to demucs/htdemucs ONNX model (pass NULL to skip stem separation)
+// Returns 0 on success, non-zero on error
+// outResult must be freed with bs_free_ai_result()
+BEATSYNC_API int bs_audioflux_analyze_with_stems(const char* audio_path,
+                                                  const char* stem_model_path,
+                                                  bs_ai_result_t* out_result,
+                                                  bs_ai_progress_cb progress_cb, void* user_data);
 
 #ifdef __cplusplus
 }

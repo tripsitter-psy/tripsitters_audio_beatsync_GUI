@@ -11,20 +11,33 @@
 
 param(
     [switch]$ToEngine,
-    [switch]$ToRepo
+    [switch]$ToRepo,
+    [switch]$NonInteractive
 )
+
 
 $RepoRoot = $PSScriptRoot | Split-Path -Parent
 $RepoSource = Join-Path $RepoRoot "unreal-prototype\Source\TripSitter"
+# Validate $RepoSource exists
+if (-not (Test-Path $RepoSource)) {
+    Write-Error "Repo source path '$RepoSource' does not exist. Please check your repository structure."
+    exit 1
+}
 
 function Get-EngineSourcePath {
     $engineSource = $env:TRIPSITTER_ENGINE_PATH
     if (-not $engineSource) {
-        $engineSource = Read-Host "Enter the path to the Unreal Engine source directory (e.g., C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter)"
+        $isInteractive = -not $NonInteractive -and [Environment]::UserInteractive
+        if ($isInteractive) {
+            $engineSource = Read-Host "Enter the path to the Unreal Engine source directory (e.g., C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter)"
+        } else {
+            Write-Warning "Engine source path not set and cannot prompt in non-interactive mode. Set TRIPSITTER_ENGINE_PATH or pass interactively."
+            return $null
+        }
     }
     if (-not (Test-Path $engineSource)) {
         Write-Error "Engine source path '$engineSource' does not exist. Set TRIPSITTER_ENGINE_PATH environment variable or provide a valid path."
-        exit 1
+        return $null
     }
     return $engineSource
 }
@@ -50,58 +63,113 @@ $EngineOnlyFiles = @(
 )
 
 function Sync-ToEngine {
-    $EngineSource = Get-EngineSourcePath
-    Write-Host "Syncing from Repo to Engine..." -ForegroundColor Cyan
-    Write-Host "  From: $RepoSource\Private\" -ForegroundColor Gray
-    Write-Host "  To:   $EngineSource\Private\" -ForegroundColor Gray
+    try {
+        $EngineSource = Get-EngineSourcePath
+        if (-not $EngineSource) {
+            Write-Error "Engine source path could not be resolved. Aborting sync."
+            return
+        }
+        Write-Host "Syncing from Repo to Engine..." -ForegroundColor Cyan
+        Write-Host "  From: $RepoSource\Private\" -ForegroundColor Gray
+        Write-Host "  To:   $EngineSource\Private\" -ForegroundColor Gray
 
-    foreach ($file in $SourceFiles) {
-        $srcFile = Join-Path $RepoSource "Private\$file"
-        $dstFile = Join-Path $EngineSource "Private\$file"
+        $failedWrites = 0
+        foreach ($file in $SourceFiles) {
+            $srcFile = Join-Path $RepoSource "Private\$file"
+            $dstFile = Join-Path $EngineSource "Private\$file"
 
-        if (Test-Path $srcFile) {
-            # Strip TRIPSITTERUE_API from class declarations
-            $content = Get-Content $srcFile -Raw
-            $content = $content -replace 'class\s+TRIPSITTERUE_API\s+', 'class '
-            $content = $content -replace 'struct\s+TRIPSITTERUE_API\s+', 'struct '
+            if (Test-Path $srcFile) {
+                # Strip TRIPSITTERUE_API from class declarations
+                $content = [System.IO.File]::ReadAllText($srcFile, [System.Text.UTF8Encoding]::new($false))
+                $content = $content -replace 'class\s+TRIPSITTERUE_API\s+', 'class '
+                $content = $content -replace 'struct\s+TRIPSITTERUE_API\s+', 'struct '
 
-            # Create directory if needed
-            $dstDir = Split-Path $dstFile -Parent
-            if (-not (Test-Path $dstDir)) {
-                New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
+                # Create directory if needed
+                $dstDir = Split-Path $dstFile -Parent
+                if (-not (Test-Path $dstDir)) {
+                    New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
+                }
+
+                try {
+                    [System.IO.File]::WriteAllText($dstFile, $content, [System.Text.UTF8Encoding]::new($false))
+                    Write-Host "  [OK] $file" -ForegroundColor Green
+                } catch {
+                    Write-Host "  [FAIL] $file: $_" -ForegroundColor Red
+                    $failedWrites++
+                }
+            } else {
+                Write-Host "  [SKIP] $file (not found in repo)" -ForegroundColor Yellow
             }
+        }
+        if ($failedWrites -gt 0) {
+            Write-Host "One or more file writes failed. Exiting with error." -ForegroundColor Red
+            exit 1
+        }
 
+        # Also sync Resources folder
+        $repoResources = Join-Path $RepoSource "Resources"
+        $engineResources = Join-Path $EngineSource "Resources"
+        if (Test-Path $repoResources) {
+            $children = Get-ChildItem $repoResources -Recurse -File -ErrorAction SilentlyContinue
+            if ($children.Count -eq 0) {
+                Write-Warning "Resources folder exists but is empty. Skipping copy."
+            } else {
+                if (-not (Test-Path $engineResources)) {
+                    New-Item -ItemType Directory -Path $engineResources -Force | Out-Null
+                }
+                try {
+                    $sourcePath = Join-Path $repoResources '*'
+                    Copy-Item $sourcePath $engineResources -Force -Recurse
+                    Write-Host "  [OK] Resources folder" -ForegroundColor Green
+                } catch {
+                    Write-Error "Failed to copy Resources folder: $_"
+                    exit 1
+                }
+            }
+        }
+
+        # Resolve Engine root by searching upward for a directory named 'Engine'
+        $EngineRoot = $null
+        $candidate = $EngineSource
+        while ($candidate) {
+            if ((Split-Path $candidate -Leaf) -eq 'Engine') {
+                $EngineRoot = Split-Path $candidate -Parent
+                break
+            }
+            $parent = Split-Path $candidate -Parent
+            if ($parent -eq $candidate -or [string]::IsNullOrEmpty($parent)) { break }
+            $candidate = $parent
+        }
+
+        # Fallback: climb up 4 levels from EngineSource to approximate root
+        if (-not $EngineRoot) {
             try {
-                Set-Content $dstFile -Value $content -NoNewline -ErrorAction Stop
-                Write-Host "  [OK] $file" -ForegroundColor Green
+                $EngineRoot = Split-Path (Split-Path (Split-Path (Split-Path $EngineSource -Parent) -Parent) -Parent) -Parent
             } catch {
-                Write-Host "  [FAIL] $file: $_" -ForegroundColor Red
+                $EngineRoot = Split-Path $EngineSource -Parent
             }
-        } else {
-            Write-Host "  [SKIP] $file (not found in repo)" -ForegroundColor Yellow
         }
-    }
 
-    # Also sync Resources folder
-    $repoResources = Join-Path $RepoSource "Resources"
-    $engineResources = Join-Path $EngineSource "Resources"
-    if (Test-Path $repoResources) {
-        if (-not (Test-Path $engineResources)) {
-            New-Item -ItemType Directory -Path $engineResources -Force | Out-Null
+        if (-not (Test-Path $EngineRoot)) {
+            Write-Warning "Engine root directory '$EngineRoot' does not exist."
+            return
         }
-        Copy-Item "$repoResources\*" $engineResources -Force -Recurse
-        Write-Host "  [OK] Resources folder" -ForegroundColor Green
+        Write-Host "`nSync complete! Now run:" -ForegroundColor Cyan
+        Write-Host "  cd '$EngineRoot'" -ForegroundColor White
+        Write-Host "  .\Engine\Build\BatchFiles\Build.bat TripSitter Win64 Shipping" -ForegroundColor White
+    } catch {
+        Write-Error "Sync-ToEngine failed: $_"
+        exit 1
     }
-
-    # Use Engine root for cd, and Build.bat path relative to that
-    $EngineRoot = Split-Path $EngineSource -Parent
-    Write-Host "`nSync complete! Now run:" -ForegroundColor Cyan
-    Write-Host "  cd '$EngineRoot'" -ForegroundColor White
-    Write-Host "  .\Engine\Build\BatchFiles\Build.bat TripSitter Win64 Shipping" -ForegroundColor White
 }
 
 function Sync-ToRepo {
     $EngineSource = Get-EngineSourcePath
+    if (-not $EngineSource) {
+        Write-Error "Engine source path could not be resolved. Aborting sync."
+        return
+    }
+    $failedWrites = 0
     Write-Host "Syncing from Engine to Repo..." -ForegroundColor Cyan
     Write-Host "  From: $EngineSource\Private\" -ForegroundColor Gray
     Write-Host "  To:   $RepoSource\Private\" -ForegroundColor Gray
@@ -111,7 +179,9 @@ function Sync-ToRepo {
         $dstFile = Join-Path $RepoSource "Private\$file"
 
         if (Test-Path $srcFile) {
-            $content = Get-Content $srcFile -Raw
+            # Read file as UTF-8 (no BOM)
+            $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+            $content = [System.IO.File]::ReadAllText($srcFile, $utf8NoBom)
 
             # Add TRIPSITTERUE_API back to class/struct declarations that don't have it
             $ApiMarkedClasses = @(
@@ -123,8 +193,9 @@ function Sync-ToRepo {
                 'FEffectsConfig'
             )
             $ApiPattern = ($ApiMarkedClasses | ForEach-Object { [Regex]::Escape($_) }) -join '|'
-            $content = $content -replace "class\s+(?!TRIPSITTERUE_API\\b)($ApiPattern)", 'class TRIPSITTERUE_API $1'
-            $content = $content -replace "struct\s+(?!TRIPSITTERUE_API\\b)($ApiPattern)", 'struct TRIPSITTERUE_API $1'
+            # Anchor word boundaries correctly in the regex (use single '\b')
+            $content = $content -replace "class\s+(?!TRIPSITTERUE_API\b)($ApiPattern)\b", 'class TRIPSITTERUE_API $1'
+            $content = $content -replace "struct\s+(?!TRIPSITTERUE_API\b)($ApiPattern)\b", 'struct TRIPSITTERUE_API $1'
 
             # Create directory if needed
             $dstDir = Split-Path $dstFile -Parent
@@ -133,17 +204,23 @@ function Sync-ToRepo {
             }
 
             try {
-                Set-Content $dstFile -Value $content -NoNewline -ErrorAction Stop
+                [System.IO.File]::WriteAllText($dstFile, $content, $utf8NoBom)
                 Write-Host "  [OK] $file" -ForegroundColor Green
             } catch {
                 Write-Host "  [FAIL] $file: $_" -ForegroundColor Red
+                $failedWrites++
             }
         } else {
             Write-Host "  [SKIP] $file (not found in engine)" -ForegroundColor Yellow
         }
     }
 
-    Write-Host "`nSync complete!" -ForegroundColor Cyan
+    if ($failedWrites -eq 0) {
+        Write-Host "`nSync complete!" -ForegroundColor Cyan
+    } else {
+        Write-Error "Sync failed: $failedWrites file(s) could not be written."
+        exit 1
+    }
 }
 
 # Main

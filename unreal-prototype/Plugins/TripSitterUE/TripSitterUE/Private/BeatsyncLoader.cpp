@@ -34,7 +34,7 @@ using bs_video_cut_at_beats_t = int (*)(void*, const char*, const double*, size_
 using bs_video_cut_at_beats_multi_t = int (*)(void*, const char**, size_t, const double*, size_t, const char*, double);
 using bs_video_concatenate_t = int (*)(const char**, size_t, const char*);
 using bs_video_add_audio_track_t = int (*)(void*, const char*, const char*, const char*, int, double, double);
-using bs_video_set_effects_config_t = void (*)(void*, const void* /*bs_effects_config_t*/);
+using bs_video_set_effects_config_t = int (*)(void*, const void* /*bs_effects_config_t*/);
 using bs_video_apply_effects_t = int (*)(void*, const char*, const char*, const double*, size_t);
 using bs_video_extract_frame_t = int (*)(const char*, double, unsigned char**, int*, int*);
 using bs_free_frame_data_t = void (*)(unsigned char*);
@@ -234,8 +234,8 @@ bool FBeatsyncLoader::AnalyzeAudio(void* handle, const FString& path, FBeatGrid&
     // Prepare C beatgrid
     bs_beatgrid_t grid = {};
 
-    FTCHARToANSI PathAnsi(*path);
-    int res = GApi.analyze_audio(handle, PathAnsi.Get(), &grid);
+    FTCHARToUTF8 PathUtf8(*path);
+    int res = GApi.analyze_audio(handle, PathUtf8.Get(), &grid);
     if (res != 0) return false;
 
     outGrid.BPM = grid.bpm;
@@ -320,8 +320,8 @@ bool FBeatsyncLoader::CutVideoAtBeats(void* writer, const FString& inputVideo, c
 {
     if (!GApi.video_cut_at_beats) return false;
 
-    FTCHARToANSI inputConverter(*inputVideo);
-    FTCHARToANSI outputConverter(*outputVideo);
+    FTCHARToUTF8 inputConverter(*inputVideo);
+    FTCHARToUTF8 outputConverter(*outputVideo);
     int res = GApi.video_cut_at_beats(writer, inputConverter.Get(), beatTimes.GetData(), (size_t)beatTimes.Num(), outputConverter.Get(), clipDuration);
     return res == 0;
 }
@@ -331,7 +331,7 @@ bool FBeatsyncLoader::CutVideoAtBeatsMulti(void* writer, const TArray<FString>& 
     if (!GApi.video_cut_at_beats_multi) return false;
 
     // Build char** array with persistent converters
-    TArray<FTCHARToANSI> converters;
+    TArray<FTCHARToUTF8> converters;
     converters.Reserve(inputVideos.Num());
     TArray<const char*> arr;
     arr.Reserve(inputVideos.Num());
@@ -340,7 +340,7 @@ bool FBeatsyncLoader::CutVideoAtBeatsMulti(void* writer, const TArray<FString>& 
         arr.Add(converters.Last().Get());
     }
 
-    FTCHARToANSI outputConverter(*outputVideo);
+    FTCHARToUTF8 outputConverter(*outputVideo);
     int res = GApi.video_cut_at_beats_multi(writer, arr.GetData(), (size_t)arr.Num(), beatTimes.GetData(), (size_t)beatTimes.Num(), outputConverter.Get(), clipDuration);
     return res == 0;
 }
@@ -351,16 +351,16 @@ void FBeatsyncLoader::SetEffectsConfig(void* writer, const FEffectsConfig& confi
 
     // Create persistent converters for string fields - these RAII objects keep the
     // ANSI buffers alive until after the API call completes
-    auto TransitionTypeAnsi = StringCast<ANSICHAR>(*config.TransitionType);
-    auto ColorPresetAnsi = StringCast<ANSICHAR>(*config.ColorPreset);
+    auto TransitionTypeUtf8 = StringCast<UTF8CHAR>(*config.TransitionType);
+    auto ColorPresetUtf8 = StringCast<UTF8CHAR>(*config.ColorPreset);
 
     bs_effects_config_t cfg;
 
     cfg.enableTransitions = config.bEnableTransitions ? 1 : 0;
-    cfg.transitionType = TransitionTypeAnsi.Get();
+    cfg.transitionType = TransitionTypeUtf8.Get();
     cfg.transitionDuration = config.TransitionDuration;
     cfg.enableColorGrade = config.bEnableColorGrade ? 1 : 0;
-    cfg.colorPreset = ColorPresetAnsi.Get();
+    cfg.colorPreset = ColorPresetUtf8.Get();
     cfg.enableVignette = config.bEnableVignette ? 1 : 0;
     cfg.vignetteStrength = config.VignetteStrength;
     cfg.enableBeatFlash = config.bEnableBeatFlash ? 1 : 0;
@@ -368,16 +368,22 @@ void FBeatsyncLoader::SetEffectsConfig(void* writer, const FEffectsConfig& confi
     cfg.enableBeatZoom = config.bEnableBeatZoom ? 1 : 0;
     cfg.zoomIntensity = config.ZoomIntensity;
     cfg.effectBeatDivisor = config.EffectBeatDivisor;
+    cfg.effectStartTime = config.EffectStartTime;
+    cfg.effectEndTime = config.EffectEndTime;
 
-    GApi.video_set_effects(writer, &cfg);
+    int err = GApi.video_set_effects(writer, &cfg);
+    if (err != 0) {
+        FString LastError = GetVideoLastError(writer);
+        UE_LOG(LogTemp, Error, TEXT("SetEffectsConfig failed: %s (code %d)"), *LastError, err);
+    }
 }
 
 bool FBeatsyncLoader::ApplyEffects(void* writer, const FString& inputVideo, const FString& outputVideo, const TArray<double>& beatTimes)
 {
     if (!GApi.video_apply_effects) return false;
 
-    FTCHARToANSI inConv(*inputVideo);
-    FTCHARToANSI outConv(*outputVideo);
+    FTCHARToUTF8 inConv(*inputVideo);
+    FTCHARToUTF8 outConv(*outputVideo);
     int res = GApi.video_apply_effects(writer, inConv.Get(), outConv.Get(), beatTimes.GetData(), (size_t)beatTimes.Num());
     return res == 0;
 }
@@ -388,11 +394,11 @@ bool FBeatsyncLoader::AddAudioTrack(void* writer, const FString& inputVideo, con
 
     // Create persistent converters for string parameters - these RAII objects keep the
     // ANSI buffers alive until after the API call completes
-    FTCHARToANSI InputVideoAnsi(*inputVideo);
-    FTCHARToANSI AudioFileAnsi(*audioFile);
-    FTCHARToANSI OutputVideoAnsi(*outputVideo);
+    FTCHARToUTF8 InputVideoUtf8(*inputVideo);
+    FTCHARToUTF8 AudioFileUtf8(*audioFile);
+    FTCHARToUTF8 OutputVideoUtf8(*outputVideo);
 
-    int res = GApi.video_add_audio(writer, InputVideoAnsi.Get(), AudioFileAnsi.Get(), OutputVideoAnsi.Get(), trimToShortest ? 1 : 0, audioStart, audioEnd);
+    int res = GApi.video_add_audio(writer, InputVideoUtf8.Get(), AudioFileUtf8.Get(), OutputVideoUtf8.Get(), trimToShortest ? 1 : 0, audioStart, audioEnd);
     return res == 0;
 }
 
@@ -402,12 +408,13 @@ bool FBeatsyncLoader::ExtractFrame(const FString& videoPath, double timestamp, T
 
     unsigned char* data = nullptr;
     int w = 0, h = 0;
-    FTCHARToANSI VideoPathAnsi(*videoPath);
-    int res = GApi.video_extract_frame(VideoPathAnsi.Get(), timestamp, &data, &w, &h);
+    FTCHARToUTF8 VideoPathUtf8(*videoPath);
+    int res = GApi.video_extract_frame(VideoPathUtf8.Get(), timestamp, &data, &w, &h);
     if (res != 0 || !data) return false;
 
-    // Validate dimensions are positive and compute size using wider type to prevent overflow
-    if (w <= 0 || h <= 0)
+    // Validate dimensions are positive, not too large, and compute size using wider type to prevent overflow
+    constexpr int32 MAX_DIM = 16384;
+    if (w <= 0 || h <= 0 || w > MAX_DIM || h > MAX_DIM)
     {
         if (GApi.free_frame_data) GApi.free_frame_data(data);
         return false;
@@ -435,7 +442,7 @@ bool FBeatsyncLoader::ExtractFrame(const FString& videoPath, double timestamp, T
 FBeatsyncLoader::SpanHandle FBeatsyncLoader::StartSpan(const FString& name)
 {
     if (!GApi.start_span) return nullptr;
-    FTCHARToANSI TempName(*name);
+    FTCHARToUTF8 TempName(*name);
     return GApi.start_span(TempName.Get());
 }
 
@@ -448,13 +455,13 @@ void FBeatsyncLoader::EndSpan(SpanHandle h)
 void FBeatsyncLoader::SpanSetError(SpanHandle h, const FString& msg)
 {
     if (!GApi.span_set_error) return;
-    FTCHARToANSI TempMsg(*msg);
+    FTCHARToUTF8 TempMsg(*msg);
     GApi.span_set_error(h, TempMsg.Get());
 }
 
 void FBeatsyncLoader::SpanAddEvent(SpanHandle h, const FString& ev)
 {
     if (!GApi.span_add_event) return;
-    FTCHARToANSI TempEv(*ev);
+    FTCHARToUTF8 TempEv(*ev);
     GApi.span_add_event(h, TempEv.Get());
 }

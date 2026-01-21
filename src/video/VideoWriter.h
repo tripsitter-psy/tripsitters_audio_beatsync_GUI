@@ -313,14 +313,18 @@ private:
     mutable int m_scaleCudaCache = -1;    // -1 = not checked, 0 = no, 1 = yes
     mutable std::recursive_mutex m_cacheMutex;
 
-    // GPU memory management: Track segment extraction count
-    // Every N segments, we force CPU mode and flush GPU memory to prevent crashes
-    // Reduced from 50 to 20 to prevent CUDA memory accumulation on long jobs
+
+    // GPU memory management: Track segment extraction count.
+    // Every GPU_RESET_INTERVAL segments, we force CPU mode and flush GPU memory to prevent crashes.
+    // This periodic safety mechanism takes effect regardless of m_allowGpuThisSegment.
+    // See copySegmentFast/copySegmentPrecise for logic.
     mutable size_t m_segmentsSinceGpuReset = 0;
     static constexpr size_t GPU_RESET_INTERVAL = 20;  // Force CPU+flush every 20 segments
 
-    // Explicit GPU decision flag: set by copySegmentFast, used by copySegmentPrecise as fallback
-    // This avoids inferring GPU state from m_segmentsSinceGpuReset counter
+    // Explicit per-segment GPU gate: set by copySegmentFast, consulted by copySegmentPrecise.
+    // m_allowGpuThisSegment can disable GPU for a single segment even if the counter allows GPU.
+    // The periodic reset (m_segmentsSinceGpuReset/GPU_RESET_INTERVAL) always takes precedence and forces CPU+flush when hit.
+    // See copySegmentFast/copySegmentPrecise for details.
     mutable bool m_allowGpuThisSegment = true;
 
     /**

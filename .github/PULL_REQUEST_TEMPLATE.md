@@ -11,7 +11,6 @@ If your PR touches GPU code (CUDA, ONNX runtime, device providers, .cu files, or
 - Optionally mention which GPU/drivers were used for testing and any special setup.
 
 Thanks!
- 
 <details>
 <summary>Optional: PR Metadata (Type, Related Issues, Breaking Changes)</summary>
 

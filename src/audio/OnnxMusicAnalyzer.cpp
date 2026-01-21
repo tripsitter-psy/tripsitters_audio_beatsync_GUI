@@ -189,8 +189,11 @@ struct OnnxMusicAnalyzer::Impl {
                 }
 
                 // Optionally run beat detection on each stem
+                debugLog("[BeatSync] About to check returnStems/analyzePerStemBeats flags");
                 if (config.returnStems || config.analyzePerStemBeats) {
+                    debugLog("[BeatSync] Moving stem result to output");
                     result.rawStemResult = std::move(stemResult);
+                    debugLog("[BeatSync] Stem result moved successfully");
                 }
             } else {
                 // Stem separation failed, fall back to original audio
@@ -202,12 +205,24 @@ struct OnnxMusicAnalyzer::Impl {
             audioForBeatDetection = stereoToMono(stereoSamples);
         }
 
+        debugLog("[BeatSync] About to start beat detection stage");
+
         // Stage 2: Beat Detection
         if (progress) progress(0.6f, "Beat Detection", "Analyzing rhythm...");
 
+        debugLog("[BeatSync] Beat detection progress callback returned");
+
         if (!beatDetectorLoaded || !beatDetector) {
             lastError = "Beat detector not loaded";
+            debugLog("[BeatSync] ERROR: Beat detector not loaded!");
             return result;
+        }
+
+        {
+            std::ostringstream oss;
+            oss << "[BeatSync] Beat detector loaded, preparing to analyze "
+                << audioForBeatDetection.size() << " samples at " << sampleRate << " Hz";
+            debugLog(oss.str());
         }
 
         auto beatCallback = [&](float p, const std::string& msg) {
@@ -222,8 +237,10 @@ struct OnnxMusicAnalyzer::Impl {
         // Run beat detection on prepared audio
         // Note: OnnxBeatDetector expects sample rate of its target (usually 22050)
         // but handles resampling internally
+        debugLog("[BeatSync] Calling beatDetector->analyzeDetailed()...");
         OnnxAnalysisResult beatResult = beatDetector->analyzeDetailed(
             audioForBeatDetection, sampleRate, beatCallback);
+        debugLog("[BeatSync] beatDetector->analyzeDetailed() returned");
 
         // Copy results
         result.beats = beatResult.beats;

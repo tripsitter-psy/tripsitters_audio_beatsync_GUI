@@ -2,6 +2,14 @@
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Styling/CoreStyle.h"
+#include "StandaloneRenderer.h"
+
+#if PLATFORM_WINDOWS
+#include "Windows/WindowsApplication.h"
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include <Windows.h>
+#include "Windows/HideWindowsPlatformTypes.h"
+#endif
 
 FTripSitterApplication::FTripSitterApplication()
 {
@@ -9,31 +17,24 @@ FTripSitterApplication::FTripSitterApplication()
 
 bool FTripSitterApplication::Initialize()
 {
-    // Create platform GenericApplication and renderer
+    // Create platform application and renderer using StandaloneRenderer
+    FSlateApplication::Create();
 
-#if PLATFORM_WINDOWS
-    // Use Windows-specific application and renderer creation
-    HINSTANCE HInstance = FWindowsPlatformApplication::GetHInstance();
-    HICON AppIcon = FWindowsPlatformApplication::GetAppIcon();
-    TSharedPtr<FGenericApplication> PlatformApp = FWindowsApplication::CreateWindowsApplication(HInstance, AppIcon);
-    // Use RHI renderer for Slate
-    ISlateRHIRendererModule& RHIModule = FModuleManager::LoadModuleChecked<ISlateRHIRendererModule>("SlateRHIRenderer");
-    TSharedRef<FSlateRenderer> Renderer = RHIModule.CreateSlateRHIRenderer();
-    SlateApp = FSlateApplication::Create(PlatformApp);
-    FSlateApplication::Get().InitializeRenderer(Renderer);
-#else
-    // Use generic platform application and RHI renderer
-    TSharedPtr<FGenericApplication> PlatformApp = FGenericPlatformApplicationMisc::CreateApplication();
-    ISlateRHIRendererModule& RHIModule = FModuleManager::LoadModuleChecked<ISlateRHIRendererModule>("SlateRHIRenderer");
-    TSharedRef<FSlateRenderer> Renderer = RHIModule.CreateSlateRHIRenderer();
-    SlateApp = FSlateApplication::Create(PlatformApp);
-    FSlateApplication::Get().InitializeRenderer(Renderer);
-#endif
+    // Initialize standalone renderer
+    TSharedPtr<FSlateRenderer> Renderer = GetStandardStandaloneRenderer();
+    if (!Renderer.IsValid())
+    {
+        UE_LOG(LogTemp, Error, TEXT("TripSitterApplication: Failed to create standalone renderer."));
+        return false;
+    }
+    FSlateApplication::Get().InitializeRenderer(Renderer.ToSharedRef());
 
     // Create main window
     MainWindow = CreateMainWindow();
     if (!MainWindow.IsValid())
     {
+        UE_LOG(LogTemp, Error, TEXT("TripSitterApplication: Failed to create main window."));
+        FSlateApplication::Shutdown();
         return false;
     }
 
@@ -46,7 +47,7 @@ bool FTripSitterApplication::Initialize()
 int32 FTripSitterApplication::Run()
 {
     // Main application loop
-    while (!GIsRequestingExit)
+    while (!IsEngineExitRequested())
     {
         // Process Slate messages
         FSlateApplication::Get().PumpMessages();
@@ -63,16 +64,15 @@ int32 FTripSitterApplication::Run()
 
 void FTripSitterApplication::Shutdown()
 {
+    // Destroy main window before tearing down Slate
     if (MainWindow.IsValid())
     {
         MainWindow->RequestDestroyWindow();
         MainWindow.Reset();
     }
 
-    if (SlateApp.IsValid())
-    {
-        SlateApp.Reset();
-    }
+    // Now shutdown Slate application
+    FSlateApplication::Shutdown();
 }
 
 TSharedPtr<SWindow> FTripSitterApplication::CreateMainWindow()
@@ -113,7 +113,7 @@ TSharedPtr<SWindow> FTripSitterApplication::CreateMainWindow()
     Window->SetContent(Content.ToSharedRef());
 
     // Handle window close
-    Window->SetOnWindowClosed(FOnWindowClosed::CreateRaw(this, &FTripSitterApplication::OnWindowClosed));
+    Window->SetOnWindowClosed(FOnWindowClosed::CreateSP(this, &FTripSitterApplication::OnWindowClosed));
 
     return Window;
 }
@@ -121,5 +121,5 @@ TSharedPtr<SWindow> FTripSitterApplication::CreateMainWindow()
 void FTripSitterApplication::OnWindowClosed(const TSharedRef<SWindow>& Window)
 {
     // Request application exit when main window is closed
-    GIsRequestingExit = true;
+    RequestEngineExit(TEXT("Main window closed"));
 }

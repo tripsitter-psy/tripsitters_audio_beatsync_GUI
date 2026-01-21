@@ -484,7 +484,39 @@ bool FBeatsyncLoader::CutVideoAtBeats(void* Handle, const FString& InputVideo, c
 
 bool FBeatsyncLoader::CutVideoAtBeatsMulti(void* Handle, const TArray<FString>& InputVideos, const TArray<double>& BeatTimes, const FString& OutputVideo, double ClipDuration)
 {
-    if (!GApi.video_cut_at_beats_multi || !Handle || InputVideos.Num() == 0 || BeatTimes.Num() == 0) return false;
+    // File-based diagnostic logging
+    FString DiagLogPath = FPaths::Combine(FPlatformMisc::GetEnvironmentVariable(TEXT("TEMP")), TEXT("beatsync_ue_cutmulti.log"));
+    FString DiagContent;
+    DiagContent += FString::Printf(TEXT("=== CutVideoAtBeatsMulti UE side ===\n"));
+    DiagContent += FString::Printf(TEXT("video_cut_at_beats_multi ptr: %p\n"), GApi.video_cut_at_beats_multi);
+    DiagContent += FString::Printf(TEXT("Handle: %p\n"), Handle);
+    DiagContent += FString::Printf(TEXT("InputVideos.Num(): %d\n"), InputVideos.Num());
+    DiagContent += FString::Printf(TEXT("BeatTimes.Num(): %d\n"), BeatTimes.Num());
+    DiagContent += FString::Printf(TEXT("OutputVideo: %s\n"), *OutputVideo);
+    DiagContent += FString::Printf(TEXT("ClipDuration: %.6f\n"), ClipDuration);
+
+    if (!GApi.video_cut_at_beats_multi) {
+        DiagContent += TEXT("FAIL: video_cut_at_beats_multi is NULL!\n");
+        FFileHelper::SaveStringToFile(DiagContent, *DiagLogPath);
+        return false;
+    }
+    if (!Handle) {
+        DiagContent += TEXT("FAIL: Handle is NULL!\n");
+        FFileHelper::SaveStringToFile(DiagContent, *DiagLogPath);
+        return false;
+    }
+    if (InputVideos.Num() == 0) {
+        DiagContent += TEXT("FAIL: InputVideos is empty!\n");
+        FFileHelper::SaveStringToFile(DiagContent, *DiagLogPath);
+        return false;
+    }
+    if (BeatTimes.Num() == 0) {
+        DiagContent += TEXT("FAIL: BeatTimes is empty!\n");
+        FFileHelper::SaveStringToFile(DiagContent, *DiagLogPath);
+        return false;
+    }
+    DiagContent += TEXT("All checks passed, proceeding...\n");
+    FFileHelper::SaveStringToFile(DiagContent, *DiagLogPath);
 
     // Convert FStrings to UTF8 and store them
     // IMPORTANT: Reserve capacity upfront to prevent reallocation during the loop
@@ -555,6 +587,7 @@ bool FBeatsyncLoader::GetWaveform(void* Analyzer, const FString& FilePath, TArra
     int Result = GApi.get_waveform(Analyzer, TCHAR_TO_UTF8(*FilePath), &Peaks, &Count, &Duration);
 
     UE_LOG(LogTemp, Log, TEXT("TripSitter: get_waveform returned %d, Count=%llu, Duration=%.2f"), Result, (unsigned long long)Count, Duration);
+    // Note: Peaks is always freed internally after copying. Caller never owns or frees this buffer.
 
     if (Result == 0 && Peaks && Count > 0) {
         OutPeaks.SetNum(Count);
@@ -577,12 +610,6 @@ bool FBeatsyncLoader::GetWaveform(void* Analyzer, const FString& FilePath, TArra
     return false;
 }
 
-void FBeatsyncLoader::FreeWaveform(float* Peaks)
-{
-    if (GApi.free_waveform && Peaks) {
-        GApi.free_waveform(Peaks);
-    }
-}
 
 bool FBeatsyncLoader::GetWaveformBands(void* Analyzer, const FString& FilePath,
                                         TArray<float>& OutBassPeaks, TArray<float>& OutMidPeaks,
@@ -793,9 +820,9 @@ void* FBeatsyncLoader::CreateAIAnalyzer(const FAIConfig& Config)
     bs_ai_config_t CConfig = {};
     CConfig.beat_model_path = BeatModelUtf8.Get();
     CConfig.stem_model_path = Config.StemModelPath.IsEmpty() ? nullptr : StemModelUtf8.Get();
-    CConfig.use_stem_separation = Config.bUseStemSeparation ? 1 : 0;
-    CConfig.use_drums_for_beats = Config.bUseDrumsForBeats ? 1 : 0;
-    CConfig.use_gpu = Config.bUseGPU ? 1 : 0;
+    CConfig.use_stem_separation = Config.bEnableStemSeparation ? 1 : 0;
+    CConfig.use_drums_for_beats = Config.bEnableDrumsForBeats ? 1 : 0;
+    CConfig.use_gpu = Config.bEnableGPU ? 1 : 0;
     CConfig.gpu_device_id = Config.GPUDeviceId;
     CConfig.beat_threshold = Config.BeatThreshold;
     CConfig.downbeat_threshold = Config.DownbeatThreshold;
@@ -803,7 +830,7 @@ void* FBeatsyncLoader::CreateAIAnalyzer(const FAIConfig& Config)
     void* Handle = GApi.create_ai_analyzer(&CConfig);
     if (Handle) {
         UE_LOG(LogTemp, Log, TEXT("Created AI analyzer with GPU=%d, model=%s"),
-               Config.bUseGPU ? 1 : 0, *Config.BeatModelPath);
+               Config.bEnableGPU ? 1 : 0, *Config.BeatModelPath);
     }
     return Handle;
 }
@@ -964,19 +991,37 @@ bool FBeatsyncLoader::NormalizeVideos(void* Handle, const TArray<FString>& Input
 
     UE_LOG(LogTemp, Log, TEXT("NormalizeVideos: bs_video_normalize_sources returned %d"), Result);
 
+    // File-based diagnostic logging
+    FString DiagLogPath = FPaths::Combine(FPlatformMisc::GetEnvironmentVariable(TEXT("TEMP")), TEXT("beatsync_ue_normalize.log"));
+    FString DiagContent;
+    DiagContent += FString::Printf(TEXT("=== NormalizeVideos UE side ===\n"));
+    DiagContent += FString::Printf(TEXT("DLL returned: %d\n"), Result);
+    DiagContent += FString::Printf(TEXT("InputVideos.Num(): %d\n"), InputVideos.Num());
+
     if (Result == 0) {
         OutNormalizedPaths.Empty();
         OutNormalizedPaths.Reserve(InputVideos.Num());
+        int32 EmptyCount = 0;
         for (int32 i = 0; i < InputVideos.Num(); ++i) {
             if (OutputBuffers[i][0] != '\0') {
                 OutNormalizedPaths.Add(FString(UTF8_TO_TCHAR(OutputBuffers[i])));
                 UE_LOG(LogTemp, Log, TEXT("NormalizeVideos: Output[%d] = %s"), i, *OutNormalizedPaths.Last());
+                if (i < 5) {
+                    DiagContent += FString::Printf(TEXT("Output[%d] = %hs\n"), i, OutputBuffers[i]);
+                }
+            } else {
+                EmptyCount++;
+                DiagContent += FString::Printf(TEXT("Output[%d] is EMPTY!\n"), i);
             }
         }
+        DiagContent += FString::Printf(TEXT("Total outputs: %d, Empty: %d\n"), OutNormalizedPaths.Num(), EmptyCount);
         UE_LOG(LogTemp, Log, TEXT("Normalized %d videos successfully"), OutNormalizedPaths.Num());
     } else {
+        DiagContent += FString::Printf(TEXT("ERROR: DLL returned failure\n"));
         UE_LOG(LogTemp, Error, TEXT("Video normalization failed with result %d"), Result);
     }
+
+    FFileHelper::SaveStringToFile(DiagContent, *DiagLogPath);
 
     // Free output buffers
     for (int32 i = 0; i < OutputBuffers.Num(); ++i) {

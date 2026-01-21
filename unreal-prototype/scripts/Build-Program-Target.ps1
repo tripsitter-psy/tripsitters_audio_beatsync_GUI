@@ -32,7 +32,10 @@ if (-not (Test-Path $UEPath)) {
             }
             if ($detectedUEPath) { break }
         }
-    } catch {}
+    } catch {
+        Write-Verbose "Failed to query registry for Unreal Engine installations: $($_.Exception.Message)"
+        Write-Debug "Full exception details: $($_.Exception | Out-String)"
+    }
     # Try common folders
     if (-not $detectedUEPath) {
         $parentDirs = @(
@@ -48,11 +51,8 @@ if (-not (Test-Path $UEPath)) {
                 }
             }
         }
-        foreach ($folder in $commonFolders) {
-            if (Test-Path $folder) {
-                $detectedUEPath = $folder
-                break
-            }
+        if ($commonFolders.Count -gt 0) {
+            $detectedUEPath = $commonFolders[0]
         }
     }
     if ($detectedUEPath) {
@@ -97,21 +97,47 @@ if (!(Test-Path $ProjectPath)) {
 Write-Host "Building Program target..." -ForegroundColor Yellow
 
 # Build the program
+
+# Use named -Project flag and add -log argument
+$LogPath = Join-Path $PSScriptRoot "UBT-TripSitter.log"
 $BuildArgs = @(
     "TripSitter",
     $Platform,
     $Configuration,
-    "`"$ProjectPath`"",
+    "-Project=`"$ProjectPath`"",
     "-WaitMutex",
-    "-FromMsBuild"
+    "-FromMsBuild",
+    "-log=`"$LogPath`""
 )
 
 Write-Host "Running: $UBTPath $BuildArgs" -ForegroundColor Gray
 
-$proc = Start-Process -FilePath $UBTPath -ArgumentList $BuildArgs -Wait -PassThru -NoNewWindow
+# Capture stdout/stderr and exit code
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = $UBTPath
+$psi.Arguments = [string]::Join(' ', $BuildArgs)
+$psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError = $true
+$psi.UseShellExecute = $false
+$psi.CreateNoWindow = $true
+
+$proc = New-Object System.Diagnostics.Process
+$proc.StartInfo = $psi
+$script:stdout = ""
+$script:stderr = ""
+$proc.add_OutputDataReceived({ if ($_.Data) { $script:stdout += $_.Data + "`n" } })
+$proc.add_ErrorDataReceived({ if ($_.Data) { $script:stderr += $_.Data + "`n" } })
+$proc.Start() | Out-Null
+$proc.BeginOutputReadLine()
+$proc.BeginErrorReadLine()
+$proc.WaitForExit()
+
+Write-Host $script:stdout
+if ($script:stderr) { Write-Host $script:stderr -ForegroundColor Yellow }
 
 if ($proc.ExitCode -ne 0) {
     Write-Host "ERROR: Build failed with exit code $($proc.ExitCode)" -ForegroundColor Red
+    Write-Host "See log: $LogPath" -ForegroundColor Red
     exit $proc.ExitCode
 }
 

@@ -67,41 +67,30 @@ def main():
     # First understand its exact input requirements
     print("\n=== Testing original model ===")
 
-    # BeatNet processes audio frames, not spectrograms directly
-    # The input to the neural network is extracted features
-    # Let's check what shape it expects
 
     # From BeatNet source: input is (batch, seq_len, dim_in)
     # where dim_in=272 (spectral features per frame)
     # seq_len is the number of time frames
-    dim_in = original_model.dim_in  # 272
-    test_input = torch.randn(1, 10, dim_in)  # 10 time frames
 
-    with torch.no_grad():
-        try:
+    dim_in = original_model.dim_in
+    test_input = torch.randn(1, 10, dim_in)  # 10 time frames
+    try:
+        with torch.no_grad():
             output = original_model(test_input)
             print(f"  Input shape: {test_input.shape}")
             print(f"  Output shape: {output.shape}")
             print(f"  Output sample: {output[0, :5]}")
-        except Exception as e:
-            print(f"  Error with test input: {e}")
+    except Exception as e:
+        print(f"  Error with test input: {e}")
+        return 1
 
     # Create output directory
     os.makedirs(os.path.dirname(args.out) if os.path.dirname(args.out) else ".", exist_ok=True)
 
     print("\n=== Exporting to ONNX ===")
 
-    # Use a wrapper that handles the reshape properly
-    class ExportableBDA(nn.Module):
-        def __init__(self, model):
-            super().__init__()
-            self.model = model
-
-        def forward(self, x):
-            # Just pass through - model handles its own logic
-            return self.model(x)
-
-    export_model = ExportableBDA(original_model)
+    # Use original_model directly for export
+    export_model = original_model
     export_model.eval()
 
     # BeatNet expects (batch, seq_len, dim_in)
@@ -115,18 +104,28 @@ def main():
         'output': {0: 'batch', 1: 'seq_len'}
     }
 
+    # Check if dynamo parameter is supported (PyTorch >= 2.5)
+    import inspect
+    export_sig = inspect.signature(torch.onnx.export)
+    dynamo_supported = 'dynamo' in export_sig.parameters
+
+    export_kwargs = {
+        'export_params': True,
+        'opset_version': args.opset,
+        'do_constant_folding': True,
+        'input_names': ['input'],
+        'output_names': ['output'],
+        'dynamic_axes': dynamic_axes,
+    }
+    if dynamo_supported:
+        export_kwargs['dynamo'] = False
+
     try:
         torch.onnx.export(
             export_model,
             dummy_input,
             args.out,
-            export_params=True,
-            opset_version=args.opset,
-            do_constant_folding=True,
-            input_names=['input'],
-            output_names=['output'],
-            dynamic_axes=dynamic_axes,
-            dynamo=False
+            **export_kwargs
         )
         print(f"  Saved: {args.out}")
     except Exception as e:
@@ -134,17 +133,13 @@ def main():
 
         # Try without dynamic axes
         print("\n  Retrying with fixed input size...")
+        retry_kwargs = {k: v for k, v in export_kwargs.items() if k != 'dynamic_axes'}
         try:
             torch.onnx.export(
                 export_model,
                 dummy_input,
                 args.out,
-                export_params=True,
-                opset_version=args.opset,
-                do_constant_folding=True,
-                input_names=['input'],
-                output_names=['output'],
-                dynamo=False
+                **retry_kwargs
             )
             print(f"  Saved: {args.out}")
         except Exception as e2:

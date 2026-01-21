@@ -1,4 +1,4 @@
 #pragma once
 
-// This file has been removed. Use the canonical BeatsyncProcessingTask.h from TripSitter module.
+// Forwarding header: re-exports the canonical BeatsyncProcessingTask from the TripSitter module.
 #include "TripSitter/BeatsyncProcessingTask.h"

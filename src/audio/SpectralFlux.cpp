@@ -3,7 +3,9 @@
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+
 #include <valarray>
+#include <utility> // for std::swap
 
 static const double PI = 3.14159265358979323846;
 
@@ -139,22 +141,22 @@ std::vector<double> detectBeatsFromWaveform(const std::vector<float>& samples, i
             if (diff > 0) sumPos += diff;
         }
         flux[f] = sumPos;
-        prevMag = mag;
+        std::swap(prevMag, mag);
     }
 
     // Normalize flux
     double mean = std::accumulate(flux.begin(), flux.end(), 0.0) / flux.size();
     double sq = 0.0;
-    for (double v : flux) sq += (v-mean)*(v-mean);
+    for (double v : flux)
+        sq += (v - mean) * (v - mean);
     double stdev = 0.0;
     if (flux.size() > 1) {
         stdev = sqrt(sq / (flux.size() - 1)); // sample stdev for small datasets
-    } else if (flux.size() == 1) {
-        stdev = 0.0;
     } else {
         stdev = 0.0;
     }
-    for (double &v : flux) v = (v - mean) / (stdev + 1e-9);
+    for (double &v : flux)
+        v = (v - mean) / (stdev + 1e-9);
 
     // Smooth
     auto smooth = gaussianSmooth(flux, smoothSigma);

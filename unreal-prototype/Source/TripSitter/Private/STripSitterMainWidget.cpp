@@ -79,12 +79,31 @@ static bool LoadPngToRawData(const FString& FilePath, TArray<uint8>& OutPixelDat
 void STripSitterMainWidget::LoadAssets()
 {
 	// For Program target, resources are relative to the executable
-	// First try: Next to executable in Resources folder
-	// Second try: In Engine/Source/Programs/TripSitter/Resources (dev builds)
+	// Try multiple locations in order of preference:
+	// 1. Resources folder next to executable (packaged app)
+	// 2. BEATSYNC_RESOURCES environment variable (dev override)
+	// 3. BeatSyncEditor project source location (dev builds)
+	// 4. Engine source location (legacy dev builds)
 	FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
 	FString ResourceDir = FPaths::Combine(ExeDir, TEXT("Resources"));
 
-	// If not found next to exe, try the source location (for dev builds)
+	// Check environment variable for dev builds
+	if (!FPaths::DirectoryExists(ResourceDir))
+	{
+		FString EnvPath = FPlatformMisc::GetEnvironmentVariable(TEXT("BEATSYNC_RESOURCES"));
+		if (!EnvPath.IsEmpty() && FPaths::DirectoryExists(EnvPath))
+		{
+			ResourceDir = EnvPath;
+		}
+	}
+
+	// Try project-relative path for development builds
+	if (!FPaths::DirectoryExists(ResourceDir))
+	{
+		ResourceDir = FPaths::Combine(FPaths::ProjectDir(), TEXT("Source"), TEXT("TripSitter"), TEXT("Resources"));
+	}
+
+	// Fallback: try the old Engine source location (for dev builds)
 	if (!FPaths::DirectoryExists(ResourceDir))
 	{
 		ResourceDir = FPaths::Combine(ExeDir, TEXT(".."), TEXT(".."), TEXT("Source"), TEXT("Programs"), TEXT("TripSitter"), TEXT("Resources"));
@@ -2001,9 +2020,14 @@ void STripSitterMainWidget::AnalyzeStemFile(int32 StemIndex)
 		return;
 	}
 
+	// RAII guard to ensure analyzer is always destroyed
+	ON_SCOPE_EXIT
+	{
+		FBeatsyncLoader::DestroyAnalyzer(Analyzer);
+	};
+
 	FBeatGrid BeatGrid;
 	bool bSuccess = FBeatsyncLoader::AnalyzeAudio(Analyzer, StemConfigs[StemIndex].FilePath, BeatGrid);
-	FBeatsyncLoader::DestroyAnalyzer(Analyzer);
 
 	if (bSuccess && BeatGrid.Beats.Num() > 0)
 	{
@@ -2244,7 +2268,7 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 		// Configure AI analyzer
 		FAIConfig AIConfig;
 		AIConfig.BeatModelPath = ModelPath;
-		AIConfig.bUseGPU = true;
+		AIConfig.bEnableGPU = true;
 		AIConfig.GPUDeviceId = 0;
 		AIConfig.BeatThreshold = 0.66f;
 		AIConfig.DownbeatThreshold = 0.66f;
@@ -2256,8 +2280,8 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 			if (FPaths::FileExists(StemModelPath))
 			{
 				AIConfig.StemModelPath = StemModelPath;
-				AIConfig.bUseStemSeparation = true;
-				AIConfig.bUseDrumsForBeats = true;
+				AIConfig.bEnableStemSeparation = true;
+				AIConfig.bEnableDrumsForBeats = true;
 				UE_LOG(LogTemp, Log, TEXT("TripSitter: Stem separation enabled with %s"), *StemModelPath);
 			}
 			else
@@ -2280,9 +2304,15 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 			return FReply::Handled();
 		}
 
+		// RAII guard to ensure AI analyzer is always destroyed
+		ON_SCOPE_EXIT
+		{
+			FBeatsyncLoader::DestroyAIAnalyzer(AIAnalyzer);
+		};
+
 		// Run AI analysis
 		FAIResult AIResult;
-		if (AnalysisMode == EAnalysisMode::AIStems && AIConfig.bUseStemSeparation)
+		if (AnalysisMode == EAnalysisMode::AIStems && AIConfig.bEnableStemSeparation)
 		{
 			bSuccess = FBeatsyncLoader::AIAnalyzeFile(AIAnalyzer, AudioPath, AIResult);
 		}
@@ -2305,8 +2335,6 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 			FString Error = FBeatsyncLoader::GetAILastError(AIAnalyzer);
 			UE_LOG(LogTemp, Error, TEXT("TripSitter: AI analysis failed: %s"), *Error);
 		}
-
-		FBeatsyncLoader::DestroyAIAnalyzer(AIAnalyzer);
 	}
 	else
 	{
@@ -2322,6 +2350,12 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 			return FReply::Handled();
 		}
 
+		// RAII guard to ensure analyzer is always destroyed
+		ON_SCOPE_EXIT
+		{
+			FBeatsyncLoader::DestroyAnalyzer(Analyzer);
+		};
+
 		// If user has set a BPM in the spinbox, use it as a hint
 		// This reads the CURRENT spinbox value (what user typed), not DetectedBPM
 		if (BPMSpinBox.IsValid())
@@ -2335,7 +2369,6 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 		}
 
 		bSuccess = FBeatsyncLoader::AnalyzeAudio(Analyzer, AudioPath, BeatGrid);
-		FBeatsyncLoader::DestroyAnalyzer(Analyzer);
 	}
 
 	if (bSuccess && BeatGrid.Beats.Num() > 0)

@@ -14,12 +14,12 @@
 #include <opentelemetry/sdk/resource/resource.h>
 #include <opentelemetry/trace/provider.h>
 #include <opentelemetry/exporters/otlp/otlp_grpc_exporter.h>
-#include <opentelemetry/sdk/trace/simple_processor.h>
-#include <opentelemetry/sdk/trace/noop_tracer_provider.h>
+#include <opentelemetry/sdk/trace/batch_span_processor.h>
+#include <opentelemetry/trace/noop.h>
 
 namespace {
 using opentelemetry::nostd::shared_ptr;
-using sdktrace = opentelemetry::sdk::trace;
+namespace sdktrace = opentelemetry::sdk::trace;
 static std::shared_ptr<sdktrace::TracerProvider> g_provider;
 static std::mutex g_providerMutex;  // Protects g_provider access
 }
@@ -38,7 +38,7 @@ bool InitializeTracing(const std::string& serviceName) {
         opentelemetry::exporters::otlp::OtlpGrpcExporterOptions options;
         options.endpoint = endpoint;
         auto exporter = std::unique_ptr<opentelemetry::sdk::trace::SpanExporter>(new opentelemetry::exporters::otlp::OtlpGrpcExporter(options));
-        auto processor = std::unique_ptr<opentelemetry::sdk::trace::SpanProcessor>(new opentelemetry::sdk::trace::SimpleSpanProcessor(std::move(exporter)));
+        auto processor = std::unique_ptr<opentelemetry::sdk::trace::SpanProcessor>(new opentelemetry::sdk::trace::BatchSpanProcessor(std::move(exporter)));
 
         // Create resource with service name
         auto resource = opentelemetry::sdk::resource::Resource::Create({{"service.name", serviceName}});

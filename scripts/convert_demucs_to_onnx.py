@@ -218,8 +218,15 @@ def main():
         # Load pre-trained weights if provided
         if args.weights:
             print(f"Loading weights from: {args.weights}")
+
             try:
-                state_dict = torch.load(args.weights, map_location='cpu')
+                # Try safe loading with weights_only=True (PyTorch >= 1.13)
+                try:
+                    state_dict = torch.load(args.weights, map_location='cpu', weights_only=True)
+                except TypeError:
+                    # Fallback for older PyTorch versions
+                    print("  WARNING: weights_only=True not supported, falling back to unsafe loading")
+                    state_dict = torch.load(args.weights, map_location='cpu')
                 # Handle different checkpoint formats
                 if 'state_dict' in state_dict:
                     state_dict = state_dict['state_dict']
@@ -227,7 +234,6 @@ def main():
                     state_dict = state_dict['model_state_dict']
                 elif 'model' in state_dict:
                     state_dict = state_dict['model']
-
                 result = model.load_state_dict(state_dict, strict=False)
                 print("  Weights loaded successfully!")
                 if getattr(result, 'missing_keys', None):
@@ -238,8 +244,9 @@ def main():
                 print(f"  WARNING: Could not load weights: {e}")
                 print("  Using random initialization instead.")
         else:
-            # Initialize weights
+            # Ensure deterministic initialization
             torch.manual_seed(42)
+            model = LightweightStemSeparator()
             for m in model.modules():
                 if isinstance(m, (nn.Conv1d, nn.ConvTranspose1d)):
                     nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
@@ -252,7 +259,7 @@ def main():
         model.eval()
 
         # Export
-        segment_length = 44100 * 5  # 5 seconds at 44.1kHz
+        segment_length = args.segment_length
         dummy_input = torch.randn(1, 2, segment_length)
 
         print(f"Exporting to ONNX (input shape: {dummy_input.shape})...")

@@ -1,9 +1,24 @@
 #include "BeatsyncLoader.h"
+#include "HAL/ThreadSafeCounter.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformProcess.h"
 #include "Misc/OutputDeviceNull.h"
 #include <cassert>
 #include "beatsync_capi.h"
+
+// Active operations tracking
+static FThreadSafeCounter GActiveOperations;
+
+void FBeatsyncLoader::IncrementActiveOperations() { GActiveOperations.Increment(); }
+void FBeatsyncLoader::DecrementActiveOperations() { GActiveOperations.Decrement(); }
+int32 FBeatsyncLoader::GetActiveOperations() { return GActiveOperations.GetValue(); }
+
+// Internal callback data structure
+struct FBeatsyncLoader::CallbackData
+{
+    FProgressCb Func;
+    void* Key;
+};
 
 // Static storage for callback data to prevent leaks
 static TMap<void*, TSharedPtr<FBeatsyncLoader::CallbackData>> GCallbackStorage;
@@ -16,11 +31,16 @@ static void ProgressCallbackTrampoline(double progress, void* user_data)
     FBeatsyncLoader::CallbackData* data = reinterpret_cast<FBeatsyncLoader::CallbackData*>(user_data);
     if (!data || !data->Key) return;
 
+    // Take a shared_ptr copy to extend lifetime during callback invocation.
+    // This prevents use-after-free if another thread removes the callback
+    // from GCallbackStorage while we're invoking it.
+    TSharedPtr<FBeatsyncLoader::CallbackData> localData;
     TFunction<void(double)> localFunc;
     {
         FScopeLock Lock(&GCallbackStorageMutex);
         TSharedPtr<FBeatsyncLoader::CallbackData>* found = GCallbackStorage.Find(data->Key);
         if (found && found->IsValid() && found->Get() == data) {
+            localData = *found;  // Extend lifetime via ref count
             localFunc = data->Func;
         }
     }
@@ -28,6 +48,7 @@ static void ProgressCallbackTrampoline(double progress, void* user_data)
     if (localFunc) {
         localFunc(progress);
     }
+    // localData releases here, after callback completes
 }
 
 // Function pointer types
@@ -110,7 +131,7 @@ bool FBeatsyncLoader::Initialize()
     FString Filename;
     FString Subdir;
 #if PLATFORM_WINDOWS
-    Filename = TEXT("beatsync_backend.dll");
+    Filename = TEXT("beatsync_backend_shared.dll");
     Subdir = TEXT("x64");
 #elif PLATFORM_MAC
     Filename = TEXT("libbeatsync_backend.dylib");
@@ -185,6 +206,21 @@ bool FBeatsyncLoader::Initialize()
 
 void FBeatsyncLoader::Shutdown()
 {
+    // Wait for active operations to finish (with timeout)
+    const double TimeoutSeconds = 10.0;
+    double StartTime = FPlatformTime::Seconds();
+    while (GetActiveOperations() > 0 && (FPlatformTime::Seconds() - StartTime) < TimeoutSeconds)
+    {
+        FPlatformProcess::Sleep(0.05f);
+    }
+    if (GetActiveOperations() > 0)
+    {
+        // Continue with cleanup despite active operations. While this risks crashes if
+        // operations access the DLL after unload, leaving resources loaded is worse for
+        // application shutdown. Callers should ensure operations complete before shutdown.
+        UE_LOG(LogTemp, Error, TEXT("BeatsyncLoader::Shutdown: Timed out waiting for %d active operations to finish! Proceeding with cleanup."), GetActiveOperations());
+    }
+
     // Clear all callback data to prevent leaks
     {
         FScopeLock Lock(&GCallbackStorageMutex);
@@ -193,6 +229,7 @@ void FBeatsyncLoader::Shutdown()
 
     if (GApi.DllHandle) {
         FPlatformProcess::FreeDllHandle(GApi.DllHandle);
+        GApi.DllHandle = nullptr;
         GApi = {};
     }
 }
@@ -206,7 +243,7 @@ FString FBeatsyncLoader::ResolveFFmpegPath()
 {
     if (!GApi.resolve_ffmpeg) return FString();
     const char* p = GApi.resolve_ffmpeg();
-    return p ? FString(p) : FString();
+    return p ? FString(UTF8_TO_TCHAR(p)) : FString();
 }
 
 void* FBeatsyncLoader::CreateAnalyzer()
@@ -249,7 +286,8 @@ bool FBeatsyncLoader::AnalyzeAudio(void* handle, const FString& path, FBeatGrid&
     // Prepare C beatgrid
     bs_beatgrid_t grid = {};
 
-    int res = GApi.analyze_audio(handle, TCHAR_TO_ANSI(*path), &grid);
+    FTCHARToUTF8 PathUtf8(*path);
+    int res = GApi.analyze_audio(handle, PathUtf8.Get(), &grid);
     if (res != 0) return false;
 
     outGrid.BPM = grid.bpm;
@@ -267,44 +305,39 @@ FString FBeatsyncLoader::GetVideoLastError(void* writer)
 {
     if (!GApi.video_get_last_error) return FString();
     const char* p = GApi.video_get_last_error(writer);
-    return p ? FString(p) : FString();
+    return p ? FString(UTF8_TO_TCHAR(p)) : FString();
 }
 
 void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
 {
     if (!GApi.video_set_progress) return;
 
-    FScopeLock Lock(&GCallbackStorageMutex);
-
-    // Remove any existing callback for this writer
-    GCallbackStorage.Remove(writer);
-
-    if (cb)
+    CallbackData* rawPtr = nullptr;
+    bool doRegister = false;
     {
-        // Allocate callback data using MakeShared for stable pointer
-        TSharedPtr<CallbackData> data = MakeShared<CallbackData>();
-        data->Func = cb;
-        GCallbackStorage.Add(writer, data);  // Store shared ptr to manage lifetime
-
-        // Use the static trampoline function defined at file scope for stable address
-        GApi.video_set_progress(writer, ProgressCallbackTrampoline, data.Get());
-    }
-    {
-        if (!writer) return;
-        TSharedPtr<CallbackData> data = MakeShared<CallbackData>();
-        data->Func = cb;
-        data->Key = writer;
+        FScopeLock Lock(&GCallbackStorageMutex);
+        GCallbackStorage.Remove(writer);
+        if (cb)
         {
-            FScopeLock Lock(&GCallbackStorageMutex);
+            TSharedPtr<CallbackData> data = MakeShared<CallbackData>();
+            data->Func = cb;
+            data->Key = writer;
             GCallbackStorage.Add(writer, data);
+            rawPtr = data.Get();
+            doRegister = true;
         }
-        // Register trampoline with backend
-        if (GApi.video_set_progress) {
-            GApi.video_set_progress(writer, &ProgressCallbackTrampoline, data.Get());
-        }
+        // else: doRegister remains false, rawPtr is nullptr
     }
-    int res = GApi.video_cut_at_beats(writer, inputConverter.Get(), beatTimes.GetData(), (size_t)beatTimes.Num(), outputConverter.Get(), clipDuration);
-    return res == 0;
+    // Call the native setter outside the lock to avoid deadlock if callback is invoked immediately
+    if (doRegister)
+    {
+        GApi.video_set_progress(writer, ProgressCallbackTrampoline, rawPtr);
+    }
+    else
+    {
+        // Unregister native callback if cb is null or on removal
+        GApi.video_set_progress(writer, nullptr, nullptr);
+    }
 }
 
 bool FBeatsyncLoader::CutVideoAtBeatsMulti(void* writer, const TArray<FString>& inputVideos, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration)
@@ -312,7 +345,7 @@ bool FBeatsyncLoader::CutVideoAtBeatsMulti(void* writer, const TArray<FString>& 
     if (!GApi.video_cut_at_beats_multi) return false;
 
     // Build char** array with persistent converters
-    TArray<FTCHARToANSI> converters;
+    TArray<FTCHARToUTF8> converters;
     converters.Reserve(inputVideos.Num());
     TArray<const char*> arr;
     arr.Reserve(inputVideos.Num());
@@ -321,7 +354,7 @@ bool FBeatsyncLoader::CutVideoAtBeatsMulti(void* writer, const TArray<FString>& 
         arr.Add(converters.Last().Get());
     }
 
-    FTCHARToANSI outputConverter(*outputVideo);
+    FTCHARToUTF8 outputConverter(*outputVideo);
     int res = GApi.video_cut_at_beats_multi(writer, arr.GetData(), (size_t)arr.Num(), beatTimes.GetData(), (size_t)beatTimes.Num(), outputConverter.Get(), clipDuration);
     return res == 0;
 }
@@ -349,6 +382,8 @@ void FBeatsyncLoader::SetEffectsConfig(void* writer, const FEffectsConfig& confi
     cfg.enableBeatZoom = config.bEnableBeatZoom ? 1 : 0;
     cfg.zoomIntensity = config.ZoomIntensity;
     cfg.effectBeatDivisor = config.EffectBeatDivisor;
+    cfg.effectStartTime = config.EffectStartTime;
+    cfg.effectEndTime = config.EffectEndTime;
 
     GApi.video_set_effects(writer, &cfg);
 }
@@ -357,8 +392,8 @@ bool FBeatsyncLoader::ApplyEffects(void* writer, const FString& inputVideo, cons
 {
     if (!GApi.video_apply_effects) return false;
 
-    FTCHARToANSI inConv(*inputVideo);
-    FTCHARToANSI outConv(*outputVideo);
+    FTCHARToUTF8 inConv(*inputVideo);
+    FTCHARToUTF8 outConv(*outputVideo);
     int res = GApi.video_apply_effects(writer, inConv.Get(), outConv.Get(), beatTimes.GetData(), (size_t)beatTimes.Num());
     return res == 0;
 }
@@ -368,12 +403,12 @@ bool FBeatsyncLoader::AddAudioTrack(void* writer, const FString& inputVideo, con
     if (!GApi.video_add_audio) return false;
 
     // Create persistent converters for string parameters - these RAII objects keep the
-    // ANSI buffers alive until after the API call completes
-    FTCHARToANSI InputVideoAnsi(*inputVideo);
-    FTCHARToANSI AudioFileAnsi(*audioFile);
-    FTCHARToANSI OutputVideoAnsi(*outputVideo);
+    // UTF8 buffers alive until after the API call completes
+    FTCHARToUTF8 InputVideoUtf8(*inputVideo);
+    FTCHARToUTF8 AudioFileUtf8(*audioFile);
+    FTCHARToUTF8 OutputVideoUtf8(*outputVideo);
 
-    int res = GApi.video_add_audio(writer, InputVideoAnsi.Get(), AudioFileAnsi.Get(), OutputVideoAnsi.Get(), trimToShortest ? 1 : 0, audioStart, audioEnd);
+    int res = GApi.video_add_audio(writer, InputVideoUtf8.Get(), AudioFileUtf8.Get(), OutputVideoUtf8.Get(), trimToShortest ? 1 : 0, audioStart, audioEnd);
     return res == 0;
 }
 
@@ -381,12 +416,23 @@ bool FBeatsyncLoader::ExtractFrame(const FString& videoPath, double timestamp, T
 {
     if (!GApi.video_extract_frame) return false;
 
+    FTCHARToUTF8 VideoPathUtf8(*videoPath);
     unsigned char* data = nullptr;
     int w = 0, h = 0;
-    int res = GApi.video_extract_frame(TCHAR_TO_ANSI(*videoPath), timestamp, &data, &w, &h);
+    int res = GApi.video_extract_frame(VideoPathUtf8.Get(), timestamp, &data, &w, &h);
     if (res != 0 || !data) return false;
 
-    int size = w * h * 3;
+    // Guard against overflow and unreasonable dimensions
+    if (w <= 0 || h <= 0 || w > 16384 || h > 16384) {
+        if (GApi.free_frame_data) GApi.free_frame_data(data);
+        return false;
+    }
+    int64 size64 = static_cast<int64>(w) * h * 3;
+    if (size64 > INT32_MAX) {
+        if (GApi.free_frame_data) GApi.free_frame_data(data);
+        return false;
+    }
+    int size = static_cast<int>(size64);
     outRgb24.SetNumUninitialized(size);
     memcpy(outRgb24.GetData(), data, size);
     outWidth = w;
@@ -399,7 +445,7 @@ bool FBeatsyncLoader::ExtractFrame(const FString& videoPath, double timestamp, T
 FBeatsyncLoader::SpanHandle FBeatsyncLoader::StartSpan(const FString& name)
 {
     if (!GApi.start_span) return nullptr;
-    FTCHARToANSI TempName(*name);
+    FTCHARToUTF8 TempName(*name);
     return GApi.start_span(TempName.Get());
 }
 
@@ -412,13 +458,13 @@ void FBeatsyncLoader::EndSpan(SpanHandle h)
 void FBeatsyncLoader::SpanSetError(SpanHandle h, const FString& msg)
 {
     if (!GApi.span_set_error) return;
-    FTCHARToANSI TempMsg(*msg);
+    FTCHARToUTF8 TempMsg(*msg);
     GApi.span_set_error(h, TempMsg.Get());
 }
 
 void FBeatsyncLoader::SpanAddEvent(SpanHandle h, const FString& ev)
 {
     if (!GApi.span_add_event) return;
-    FTCHARToANSI TempEv(*ev);
+    FTCHARToUTF8 TempEv(*ev);
     GApi.span_add_event(h, TempEv.Get());
 }

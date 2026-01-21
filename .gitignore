@@ -41,9 +41,6 @@ vcpkg_installed/
 
 # Unreal runtime-generated files
 Saved/
-
-# Unreal runtime-generated files
-Saved/
 *.log
 *.tmp
 *.temp
@@ -62,13 +59,13 @@ Thumbs.db
 # Keep sample files in dedicated directory
 !test_assets/*.mp3
 !test_assets/*.wav
-vcpkg/
 
-# Large binary files (use Git LFS or external storage)
+# Large binary files (not tracked in git, not LFS)
 models/*.onnx
+# Not tracked in git, not LFS. Remove this line and add to .gitattributes if you want to use Git LFS.
 tools/onnxruntime-official/
 assets/loading asset.gif
 vcpkg/
 unreal-prototype/Binaries/
 unreal-prototype/Intermediate/
-unreal-prototype/Saved/
+# Note: Saved/ directories are ignored by the general Saved/ pattern above

@@ -1,5 +1,4 @@
-
-name: GPU PR Check
+name: "GPU PR Check"
 permissions:
   pull-requests: write
 

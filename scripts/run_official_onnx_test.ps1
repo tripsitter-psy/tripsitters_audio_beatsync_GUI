@@ -6,7 +6,7 @@ Usage:
 Note: Requires PowerShell 7+, `Expand-Archive` and that you have network access.
 #>
 param(
-    [string]$Version = "1.18.1"
+    [string]$Version = "1.23.2"
 )
 
 $baseUrl = "https://github.com/microsoft/onnxruntime/releases/download/v$Version/" 
@@ -44,41 +44,60 @@ try {
     exit 2
 }
 
-# Find the runtime bin folder (search for onnxruntime.dll)
-$bin = Get-ChildItem -Path $outDir -Recurse -Filter onnxruntime.dll | Select-Object -First 1
-if (-not $bin) { Write-Error "Could not find onnxruntime.dll in extracted archive."; exit 1 }
-$binDir = $bin.DirectoryName
-Write-Host "Found runtime in: $binDir"
-
-# Add to PATH for this session
-$env:Path = $binDir + ";" + $env:Path
-
-# Build & run helper test
-
-Write-Host "Configuring & building (with tracing)"
-cmake -S . -B build -DUSE_TRACING=ON
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "CMake configuration failed with exit code $LASTEXITCODE"
-    exit $LASTEXITCODE
-}
-cmake --build build --config Debug -- /m
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "CMake build failed with exit code $LASTEXITCODE"
-    exit $LASTEXITCODE
-}
-
-Write-Host "Running helper test (official ONNX $Version)"
-Push-Location build
-$ctestExitCode = 0
+# Wrap all remaining work in try/finally to ensure $outDir cleanup
+$scriptExitCode = 0
 try {
-    ctest -C Debug -R onnx_inference_helper -V --output-on-failure
-    $ctestExitCode = $LASTEXITCODE
+    # Find the runtime bin folder (search for onnxruntime.dll)
+    $bin = Get-ChildItem -Path $outDir -Recurse -Filter onnxruntime.dll | Select-Object -First 1
+    if (-not $bin) {
+        Write-Error "Could not find onnxruntime.dll in extracted archive."
+        $scriptExitCode = 1
+        throw "onnxruntime.dll not found"
+    }
+    $binDir = $bin.DirectoryName
+    Write-Host "Found runtime in: $binDir"
+
+    # Add to PATH for this session
+    $env:Path = $binDir + ";" + $env:Path
+
+    # Build & run helper test
+
+    Write-Host "Configuring & building (with tracing)"
+    cmake -S . -B build -DUSE_TRACING=ON
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "CMake configuration failed with exit code $LASTEXITCODE"
+        $scriptExitCode = $LASTEXITCODE
+        throw "CMake configuration failed"
+    }
+    cmake --build build --config Debug -- /m
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "CMake build failed with exit code $LASTEXITCODE"
+        $scriptExitCode = $LASTEXITCODE
+        throw "CMake build failed"
+    }
+
+    Write-Host "Running helper test (official ONNX $Version)"
+    Push-Location build
+    try {
+        ctest -C Debug -R onnx_inference_helper -V --output-on-failure
+        $scriptExitCode = $LASTEXITCODE
+        if ($scriptExitCode -ne 0) {
+            Write-Error "ctest failed with exit code: $scriptExitCode"
+        }
+    } finally {
+        Pop-Location
+    }
+
+    if ($scriptExitCode -eq 0) {
+        Write-Host "Done. If the helper crashed, consider running ProcDump to capture a full .dmp file."
+    }
 } finally {
-    Pop-Location
-    if ($ctestExitCode -ne 0) {
-        Write-Error "ctest failed with exit code: $ctestExitCode"
-        exit $ctestExitCode
+    # Always cleanup the extracted temp directory
+    if (Test-Path $outDir) {
+        Write-Host "Cleaning up temp directory: $outDir"
+        Remove-Item $outDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ($scriptExitCode -ne 0) {
+        exit $scriptExitCode
     }
 }
-
-Write-Host "Done. If the helper crashed, consider running ProcDump to capture a full .dmp file."

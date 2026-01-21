@@ -1,3 +1,5 @@
+// NOTE: This is the canonical C API header. All consumers should use this file as the source of truth.
+// The build system (CMake) copies this file to ThirdParty/beatsync/include/beatsync_capi.h for Unreal integration and install/include for consumers.
 #pragma once
 
 #if defined(_WIN32)

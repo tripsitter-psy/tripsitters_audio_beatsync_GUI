@@ -126,4 +126,4 @@ cmake --build build --config Release --target test_backend_api
 
 ---
 
-Last updated: January 14, 2026
+Last updated: January 18, 2026

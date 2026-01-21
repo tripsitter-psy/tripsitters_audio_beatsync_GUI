@@ -34,9 +34,9 @@ struct FAIConfig
 {
     FString BeatModelPath;
     FString StemModelPath;
-    bool bUseStemSeparation = false;
-    bool bUseDrumsForBeats = true;
-    bool bUseGPU = true;
+    bool bEnableStemSeparation = false;
+    bool bEnableDrumsForBeats = true;
+    bool bEnableGPU = true;
     int32 GPUDeviceId = 0;
     float BeatThreshold = 0.66f;
     float DownbeatThreshold = 0.66f;
@@ -71,8 +71,9 @@ public:
     static bool AnalyzeAudio(void* Analyzer, const FString& FilePath, FBeatGrid& OutGrid);
 
     // Waveform visualization
+    // Note: OutPeaks is always managed by the caller (TArray). No memory needs to be freed.
+    // The internal buffer from the backend is copied and freed automatically.
     static bool GetWaveform(void* Analyzer, const FString& FilePath, TArray<float>& OutPeaks, double& OutDuration);
-    static void FreeWaveform(float* Peaks);
     static bool GetWaveformBands(void* Analyzer, const FString& FilePath,
                                   TArray<float>& OutBassPeaks, TArray<float>& OutMidPeaks,
                                   TArray<float>& OutHighPeaks, double& OutDuration);

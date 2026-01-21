@@ -15,9 +15,10 @@ enum class StemType {
     Drums = 0,
     Bass = 1,
     Other = 2,
-    Vocals = 3,
-    NumStems = 4
+    Vocals = 3
 };
+
+constexpr int kNumStems = 4;
 
 /**
  * @brief Get stem name as string
@@ -62,9 +63,24 @@ struct StemSeparationResult {
     /// Duration in seconds
     double duration = 0.0;
 
+    /// Whether separation completed successfully
+    bool ok = true;
+
+    /// Whether separation was cancelled by user
+    bool cancelled = false;
+
     /// Get mono mix of a specific stem
     std::vector<float> getMonoStem(StemType stem) const {
-        const auto& stereo = stems[static_cast<int>(stem)];
+        int stemIndex = static_cast<int>(stem);
+        if (stemIndex < 0 || stemIndex >= static_cast<int>(stems.size())) {
+            return {};  // Return empty vector for invalid stem type
+        }
+        const auto& stereo = stems[stemIndex];
+        if (stereo.size() % 2 != 0) {
+            // Optionally log a warning here about odd buffer size
+            // fprintf(stderr, "Warning: stereo buffer for stem %d has odd length (%zu), returning empty vector.\n", stemIndex, stereo.size());
+            return {};
+        }
         size_t numSamples = stereo.size() / 2;
         std::vector<float> mono(numSamples);
         for (size_t i = 0; i < numSamples; ++i) {

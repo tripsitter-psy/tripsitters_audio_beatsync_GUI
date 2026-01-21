@@ -53,14 +53,30 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmak
 cmake --build build --config Release --target beatsync_backend_shared
 ```
 
+### With AudioFlux (Spectral Flux Beat Detection)
+
+```powershell
+# Install AudioFlux to C:\audioFlux
+
+# Configure with AudioFlux support
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DAUDIOFLUX_ROOT="C:/audioFlux"
+
+# Or combine with GPU acceleration
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets -DAUDIOFLUX_ROOT="C:/audioFlux"
+
+# Build
+cmake --build build --config Release --target beatsync_backend_shared
+```
+
+**Note**: AudioFlux enables the "Flux" beat detection mode in TripSitter. Without it, the app falls back to energy-based detection.
+
 
 ### TripSitter GUI (Unreal Engine)
 
 > **Before building the TripSitter GUI:**
-> Set the `UE5_ROOT` environment variable to your Unreal Engine source root directory. For example:
-> - **PowerShell:** `$env:UE5_ROOT = 'C:\UE5_Source\UnrealEngine'`
-> - **cmd.exe:** `set UE5_ROOT=C:\UE5_Source\UnrealEngine`
-> - **bash:** `export UE5_ROOT=/mnt/c/UE5_Source/UnrealEngine`
+> - **PowerShell:** `$env:UE_ENGINE_PATH = 'C:\UE5_Source\UnrealEngine'`
+> - **cmd.exe:** `set UE_ENGINE_PATH=C:\UE5_Source\UnrealEngine`
+> - **bash:** `export UE_ENGINE_PATH=/mnt/c/UE5_Source/UnrealEngine`
 
 
 
@@ -69,13 +85,27 @@ cmake --build build --config Release --target beatsync_backend_shared
 Copy-Item 'build\Release\beatsync_backend_shared.dll' 'unreal-prototype\ThirdParty\beatsync\lib\x64\' -Force
 
 # Copy source files to engine
-Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "$env:UE5_ROOT\Engine\Source\Programs\TripSitter\Private\" -Recurse -Force
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "$env:UE_ENGINE_PATH\Engine\Source\Programs\TripSitter\Private\" -Recurse -Force
 
 # Build TripSitter
-& "$env:UE5_ROOT\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+& "$env:UE_ENGINE_PATH\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
 
-Output: `%UE5_ROOT%\Engine\Binaries\Win64\TripSitter.exe`
+Output: `%UE_ENGINE_PATH%\Engine\Binaries\Win64\TripSitter.exe`
+
+### Deploy All DLLs to TripSitter
+
+**CRITICAL**: TripSitter.exe requires all dependency DLLs in its directory.
+
+```powershell
+# Recommended: Use the deployment script
+.\scripts\deploy_tripsitter.ps1
+
+# Or verify existing deployment
+.\scripts\deploy_tripsitter.ps1 -Verify
+```
+
+**WARNING**: Do NOT copy all DLLs from `build/Release/` - this overwrites correct FFmpeg DLLs with incompatible versions. Always use the deployment script or copy ThirdParty FFmpeg DLLs last.
 
 ## Dependencies
 
@@ -88,14 +118,31 @@ Defined in `vcpkg.json`:
 
 ### External (manual installation)
 
-- **TensorRT 10.9.0.34** - For GPU-accelerated inference
+- **TensorRT 10.9.0.34** - For GPU-accelerated inference (RTX GPUs)
   - Download from NVIDIA Developer
   - Extract to `C:\TensorRT-10.9.0.34`
   - The overlay triplet handles environment setup
+  - Runtime DLLs (~515 MB) are copied automatically during build
 
 - **CUDA Toolkit 12.x** - Required for GPU acceleration
   - Download from NVIDIA Developer
   - Install to default location
+
+- **AudioFlux** (optional) - For spectral flux beat detection
+  - Build or download to `C:\audioFlux`
+  - Headers: `C:\audioFlux\include\`
+  - Library: `C:\audioFlux\build\windowBuild\Release\audioflux.lib`
+  - Runtime DLLs: `audioflux.dll`, `libfftw3f-3.dll`
+
+### GPU Execution Provider Fallback
+
+The application automatically selects the best GPU provider:
+
+1. **TensorRT** - Best performance on RTX GPUs with Tensor Cores (FP16 enabled)
+2. **CUDA** - Good performance on any NVIDIA GPU (GTX or RTX)
+3. **CPU** - Fallback when no GPU available
+
+No configuration needed - detection is automatic at runtime.
 
 ## Build Configurations
 
@@ -128,83 +175,6 @@ cmake --build build --config RelWithDebInfo
 - Optimizations + debug symbols
 - Good for profiling
 
-
-# Build Instructions
-
-*Last updated: January 13, 2026*
-
-## Prerequisites
-
-### Windows
-
-1. **Visual Studio 2022** (Build Tools or Community Edition)
-   - Include "Desktop development with C++"
-   - C++ CMake tools for Windows
-
-2. **CMake 3.20+**
-   - Usually included with Visual Studio
-   - Or download from <https://cmake.org/download/>
-
-3. **vcpkg** (included as submodule)
-   - Already configured in this repository
-   - Uses manifest mode (`vcpkg.json`)
-
-4. **NVIDIA GPU Support** (optional, for AI acceleration)
-   - CUDA Toolkit 12.x
-   - TensorRT 10.9.0.34
-
-5. **Unreal Engine 5** (for TripSitter GUI)
-   - Source build at `<UE_SOURCE>`
-
-## Quick Start
-
-### Backend DLL Only
-
-```powershell
-# Navigate to project
-cd path\to\BeatSyncEditor
-```
-
-The triplet at `triplets/x64-windows.cmake` sets `TENSORRT_HOME`.
-
-### ONNX Runtime Build Takes Too Long
-
-First build with CUDA/TensorRT takes ~2 hours. Subsequent builds are fast.
-
-To build without GPU support:
-
-```powershell
-# Edit vcpkg.json to remove cuda/tensorrt features, then:
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
-```
-
-### Missing DLLs at Runtime
-
-Copy required DLLs to executable directory:
-
-```powershell
-# FFmpeg DLLs
-Copy-Item 'build\vcpkg_installed\x64-windows\bin\*.dll' 'build\Release\' -Force
-
-# ONNX Runtime DLLs
-Copy-Item 'build\vcpkg_installed\x64-windows\bin\onnxruntime*.dll' 'build\Release\' -Force
-```
-
-### TripSitter Won't Compile
-
-Ensure source files are copied to the engine:
-
-```powershell
-Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
-```
-
-### std::numbers::pi Error
-
-This was fixed by using `constexpr double PI` instead. If you see this error, ensure you have the latest code.
-
-### bs_ai_result_t Redefinition Error
-
-This was fixed in beatsync_capi.h. Ensure you have the latest code.
 
 ## IDE Integration
 
@@ -251,4 +221,4 @@ cmake --build build --config Release
 
 ---
 
-Last updated: January 14, 2026
+Last updated: January 21, 2026

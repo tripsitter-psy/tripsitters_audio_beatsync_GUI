@@ -29,8 +29,9 @@ struct FEffectsConfig
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BeatSync|Transitions")
     FString TransitionType = TEXT("fade");
 
+    // Backend uses double, but Blueprint only supports float; default matches backend (0.3)
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BeatSync|Transitions", meta = (ClampMin = "0.0", ClampMax = "2.0"))
-    float TransitionDuration = 0.5f;
+    float TransitionDuration = 0.3f; // Backend: double, default 0.3
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BeatSync|Color")
     bool bEnableColorGrade = false;
@@ -48,13 +49,13 @@ struct FEffectsConfig
     bool bEnableBeatFlash = false;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BeatSync|BeatEffects", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-    float FlashIntensity = 0.5f;
+    float FlashIntensity = 0.3f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BeatSync|BeatEffects")
     bool bEnableBeatZoom = false;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BeatSync|BeatEffects", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-    float ZoomIntensity = 0.5f;
+    float ZoomIntensity = 0.04f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BeatSync|BeatEffects", meta = (ClampMin = "1", ClampMax = "16"))
     int32 EffectBeatDivisor = 1;

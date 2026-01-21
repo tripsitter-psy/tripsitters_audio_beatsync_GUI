@@ -21,7 +21,7 @@ struct MusicAnalyzerConfig {
     // Pipeline options
     bool useStemSeparation = true;     ///< Enable stem separation before beat detection
     bool useDrumsForBeats = true;      ///< Use drums stem for beat detection (most accurate)
-    bool combineAllStems = false;      ///< Also run beat detection on combined stems
+    bool analyzePerStemBeats = false;  ///< Perform beat detection separately for each stem
 
     // Beat detection config
     OnnxConfig beatConfig;
@@ -171,6 +171,21 @@ public:
      */
     MusicAnalysisResult analyzeQuick(const std::vector<float>& samples, int sampleRate,
                                      MusicAnalysisProgress progress = nullptr);
+
+    /**
+     * @brief Get the underlying beat detector (for GPU status queries)
+     */
+    const OnnxBeatDetector* getBeatDetector() const;
+
+    /**
+     * @brief Check if GPU acceleration is enabled
+     */
+    bool isGPUEnabled() const;
+
+    /**
+     * @brief Get the active execution provider name
+     */
+    std::string getActiveProvider() const;
 
 private:
     struct Impl;

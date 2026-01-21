@@ -52,7 +52,7 @@ jobs:
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgGitCommitId: '25b458671af03578e6a34edd8f0d1ac85e084df4'
+          vcpkgGitCommitId: '25b458671af03578e6a34edd8f0d1ac85e084df4' # Example: replace with a real commit from microsoft/vcpkg
 
       - name: Configure CMake
         run: |
@@ -103,13 +103,18 @@ jobs:
         run: |
           $installer = Get-ChildItem -Path build -Filter "TripSitter*-Setup*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $installer) {
-            $installer = Get-ChildItem -Path build -Filter "*.exe" | Where-Object { $_.Name -like "*TripSitter*.exe" -and $_.Name -notlike "*uninstall*" -and $_.Name -notlike "*Uninstall*" } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            $installer = Get-ChildItem -Path build -Filter "*.exe" | Where-Object { 
+              $_.Name -like "*TripSitter*" -and 
+              ($_.Name -like "*Setup*" -or $_.Name -match "\d+\.\d+") -and 
+              $_.Name -notlike "*uninstall*" -and 
+              $_.Name -notlike "*Uninstall*" 
+            } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           }
           if (-not $installer) {
             Write-Error "No installer executable found."
             exit 1
           }
-          pwsh -File ./scripts/sign-windows-binaries.ps1 -BuildDir $installer.DirectoryName
+            pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/sign-windows-binaries.ps1 -InstallerPath $installer.FullName
         shell: powershell
 
       - name: List build artifacts
@@ -158,8 +163,15 @@ jobs:
 
           Write-Host "Installing: $($installer.FullName)"
 
-          # Run silent installation
-          $proc = Start-Process -FilePath $installer.FullName -ArgumentList "/S" -PassThru -Wait
+          # Run silent installation with timeout
+          $proc = Start-Process -FilePath $installer.FullName -ArgumentList "/S" -PassThru
+          $timeoutMs = 600000  # 10 minutes
+          $waitResult = $proc.WaitForExit($timeoutMs)
+          if (-not $waitResult) {
+            Write-Error "Installer did not finish within $($timeoutMs / 60000) minutes. Killing process and failing job."
+            try { $proc.Kill() } catch {}
+            exit 1
+          }
           if ($proc.ExitCode -ne 0) {
             Write-Error "Installation failed with exit code: $($proc.ExitCode)"
             exit 1
@@ -196,13 +208,25 @@ jobs:
           # Verify executable can start (brief launch test)
           Write-Host "Starting smoke test launch..."
           $proc = Start-Process -FilePath $exe.FullName -PassThru
-          Start-Sleep -Seconds 5
+          
+          # Configurable timeout for smoke test (default 30 seconds)
+          $smokeTestTimeout = [int]$env:SMOKE_TEST_TIMEOUT
+          if ($smokeTestTimeout -le 0) { $smokeTestTimeout = 30 }
+          $pollInterval = 2  # Check every 2 seconds
+          $elapsed = 0
+          
+          Write-Host "Waiting up to ${smokeTestTimeout}s for application to initialize..."
+          while ($elapsed -lt $smokeTestTimeout -and -not $proc.HasExited) {
+            Start-Sleep -Seconds $pollInterval
+            $elapsed += $pollInterval
+            Write-Host "  ... ${elapsed}s elapsed, process still running"
+          }
 
           if ($proc.HasExited) {
             Write-Warning "Application exited during smoke test (exit code: $($proc.ExitCode))"
             # Don't fail - app might legitimately exit if missing audio file, etc.
           } else {
-            Write-Host "Application running successfully"
+            Write-Host "Application running successfully after ${elapsed}s"
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
           }
 
@@ -250,11 +274,26 @@ jobs:
         run: |
           cd artifacts
           # Create empty checksums.txt file
-          touch checksums.txt
-          # Find and checksum installer files
-          find mtv-tripsitter-installer -name "*.exe" -type f -exec sha256sum {} \; >> checksums.txt 2>/dev/null || true
-          # Find and checksum zip files
-          find mtv-tripsitter-zip -name "*.zip" -type f -exec sha256sum {} \; >> checksums.txt 2>/dev/null || true
+          : > checksums.txt
+          found_files=0
+          # Checksum installer files
+          if compgen -G "mtv-tripsitter-installer/*.exe" > /dev/null; then
+            for f in mtv-tripsitter-installer/*.exe; do
+              sha256sum "$f" | sed 's|mtv-tripsitter-installer/||' >> checksums.txt
+              found_files=1
+            done
+          fi
+          # Checksum zip files
+          if compgen -G "mtv-tripsitter-zip/*.zip" > /dev/null; then
+            for f in mtv-tripsitter-zip/*.zip; do
+              sha256sum "$f" | sed 's|mtv-tripsitter-zip/||' >> checksums.txt
+              found_files=1
+            done
+          fi
+          if [ "$found_files" -eq 0 ]; then
+            echo "ERROR: No installer or zip files found for checksumming." | tee checksums.txt
+            exit 1
+          fi
           echo "Generated checksums:"
           cat checksums.txt
 

@@ -157,7 +157,7 @@ private:
 	int32 TransitionType = 0;
 
 	// Stem configurations (Kick, Snare, HiHat, Synth)
-	FStemConfig StemConfigs[STEM_COUNT];
+	TStaticArray<FStemConfig, STEM_COUNT> StemConfigs;
 	TArray<TSharedPtr<FString>> StemEffectOptions;
 
 	// Preview state

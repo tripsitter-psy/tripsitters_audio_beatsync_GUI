@@ -4,38 +4,38 @@
 #include "Misc/Paths.h"
 #include <functional>
 
-struct FBeatGrid
-{
-    TArray<double> Beats;
-    double BPM = 0.0;
-    double Duration = 0.0;
-};
+#include "BeatsyncTypes.h" // Shared types (FBeatGrid, FEffectsConfig, etc.)
 
-struct FEffectsConfig
-{
-    bool bEnableTransitions = false;
-    FString TransitionType;
-    double TransitionDuration = 0.0;
-
-    bool bEnableColorGrade = false;
-    FString ColorPreset;
-
-    bool bEnableVignette = false;
-    double VignetteStrength = 0.0;
-
-    bool bEnableBeatFlash = false;
-    double FlashIntensity = 0.0;
-
-    bool bEnableBeatZoom = false;
-    double ZoomIntensity = 0.0;
-
-    int32 EffectBeatDivisor = 1;
-};
+// AUTHORITATIVE HEADER: This is the canonical FBeatsyncLoader class declaration.
+// All other modules should include this header for the complete API.
+// For extended functionality, see FBeatsyncLoaderExtended in application-specific headers.
+//
+// CONSOLIDATION: Duplicate class definitions have been removed. The authoritative
+// declaration includes: Initialize, ResolveFFmpegPath, CreateAnalyzer/DestroyAnalyzer,
+// CreateVideoWriter/DestroyVideoWriter, SetProgressCallback, CutVideoAtBeats/CutVideoAtBeatsMulti,
+// ApplyEffects, SetEffectsConfig, AddAudioTrack, ExtractFrame, StartSpan/EndSpan/SpanSetError/SpanAddEvent, IsInitialized.
 
 class FBeatsyncLoader
 {
 public:
     static bool Initialize();
+
+    /**
+     * @brief Shuts down the BeatsyncLoader and clears all registered progress callback storage.
+     *
+     * This function only clears the internal callback registration storage (GCallbackStorage)
+     * under lock (GCallbackStorageMutex). It does NOT cancel or block on any in-flight callbacks.
+     *
+     * Callbacks that are currently executing (in-flight) hold their own TSharedPtr copies of the
+     * callback data via the trampoline mechanism, so their lifetime is independent of the storage.
+     *
+     * Callers MUST ensure that all asynchronous operations and work that could invoke callbacks
+     * have fully completed before calling Shutdown. Failure to do so may result in use-after-free
+     * or undefined behavior if a callback is invoked after storage is cleared.
+     *
+     * References: FBeatsyncLoader::Shutdown, GCallbackStorage, GCallbackStorageMutex, and the
+     * ProgressCallbackTrampoline behavior in the implementation for details on lifetime guarantees.
+     */
     static void Shutdown();
 
     static FString ResolveFFmpegPath();
@@ -73,9 +73,6 @@ public:
     static bool IsInitialized();
 
 private:
-    struct CallbackData
-    {
-        FProgressCb Func;
-    };
+    struct CallbackData;  // Forward declaration - defined in .cpp
     // Internal state handled in .cpp
 };

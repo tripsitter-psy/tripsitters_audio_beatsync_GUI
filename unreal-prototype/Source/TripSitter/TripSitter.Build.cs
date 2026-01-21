@@ -28,12 +28,11 @@ public class TripSitter : ModuleRules
 
         // Beatsync backend DLL path - relative to Engine folder
         // The DLL will need to be deployed alongside the executable
-        string archFolder = Target.Architecture switch
+        string archFolder = "x64"; // Default
+        if (Target.Architecture == UnrealArch.Arm64)
         {
-            UnrealArch.X64 => "x64",
-            UnrealArch.Arm64 => "arm64",
-            _ => "x64" // Default fallback
-        };
+            archFolder = "arm64";
+        }
         string BeatsyncLib = Path.Combine(EngineDirectory, "Source", "Programs", "TripSitter", "ThirdParty", "beatsync", "lib", archFolder);
 
         if (!Directory.Exists(BeatsyncLib))

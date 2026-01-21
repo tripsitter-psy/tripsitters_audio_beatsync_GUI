@@ -18,11 +18,12 @@
 BeatSyncEditor/
 ├── src/
 │   ├── audio/
-│   │   ├── AudioAnalyzer.cpp/h     # FFmpeg audio loading & basic beat detection
-│   │   ├── BeatGrid.cpp/h          # Beat timing data structure
-│   │   ├── OnnxBeatDetector.cpp/h  # ONNX Runtime neural network inference
-│   │   ├── OnnxMusicAnalyzer.cpp/h # High-level AI music analysis
-│   │   └── SpectralFlux.cpp/h      # Spectral analysis utilities
+│   │   ├── AudioAnalyzer.cpp/h        # FFmpeg audio loading & basic beat detection
+│   │   ├── AudioFluxBeatDetector.cpp/h # AudioFlux spectral flux beat detection
+│   │   ├── BeatGrid.cpp/h             # Beat timing data structure
+│   │   ├── OnnxBeatDetector.cpp/h     # ONNX Runtime neural network inference
+│   │   ├── OnnxMusicAnalyzer.cpp/h    # High-level AI music analysis
+│   │   └── SpectralFlux.cpp/h         # Spectral analysis utilities
 │   ├── video/
 │   │   ├── VideoProcessor.cpp/h    # FFmpeg video reading & info
 │   │   ├── VideoWriter.cpp/h       # Segment extraction, concat, audio mux
@@ -49,10 +50,14 @@ BeatSyncEditor/
 - **CMake** with vcpkg for dependencies
 - **MSVC 2022** on Windows
 - **Dependencies**: FFmpeg, ONNX Runtime (with CUDA/TensorRT)
+- **Optional**: AudioFlux (for spectral flux beat detection)
 
 ```powershell
 # Configure with TensorRT support
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
+
+# Configure with TensorRT + AudioFlux
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets -DAUDIOFLUX_ROOT="C:/audioFlux"
 
 # Build
 cmake --build build --config Release --target beatsync_backend_shared
@@ -60,18 +65,19 @@ cmake --build build --config Release --target beatsync_backend_shared
 
 ### Frontend (Unreal Engine)
 
-- **UE5 Source Build** at `C:\UE5_Source\UnrealEngine`
+- **UE5 Source Build** at `$env:UE_ENGINE_PATH` (set this environment variable to your local UE5 source location; e.g., in PowerShell: `$env:UE_ENGINE_PATH = 'C:\Path\To\UnrealEngine'`, in bash: `export UE_ENGINE_PATH=/path/to/UnrealEngine`. If unset, a typical default might be `C:\UnrealEngine` or `/home/user/UnrealEngine`)
 - **TripSitter Program Target** (standalone executable, not game)
 
 ```powershell
+
 # Copy source to engine
-Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "$env:UE_ENGINE_PATH\Engine\Source\Programs\TripSitter\Private\" -Recurse -Force
 
 # Build
-& "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+& "$env:UE5_ROOT\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
 
-**Output**: `C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe`
+**Output**: `$env:UE5_ROOT\Engine\Binaries\Win64\TripSitter.exe`
 
 ---
 
@@ -109,8 +115,10 @@ Available execution providers can be queried via `bs_ai_get_providers()`.
 - C API for audio analysis, video processing, AI inference
 - vcpkg manifest with FFmpeg and ONNX Runtime
 - Overlay triplet for TensorRT environment setup
+- AudioFlux spectral flux beat detection integration
+- Stem separation with Demucs (via ONNX Runtime)
 
-### Recent Fixes (January 14, 2026)
+### Recent Fixes (January 13, 2026)
 
 1. **bs_ai_result_t redefinition** - Fixed struct tag name conflict in beatsync_capi.h
 2. **std::numbers::pi** - Replaced C++20 constant with C++17-compatible `constexpr double PI`
@@ -159,15 +167,15 @@ Available execution providers can be queried via `bs_ai_get_providers()`.
 ## Quick Reference
 
 ```powershell
-# Full build sequence
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
+# Full build sequence (with TensorRT + AudioFlux)
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets -DAUDIOFLUX_ROOT="C:/audioFlux"
 cmake --build build --config Release --target beatsync_backend_shared
 Copy-Item 'build\Release\beatsync_backend_shared.dll' 'unreal-prototype\ThirdParty\beatsync\lib\x64\' -Force
-Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
-& "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "$env:UE5_ROOT\Engine\Source\Programs\TripSitter\Private\" -Recurse -Force
+& "$env:UE5_ROOT\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 
 # Run TripSitter
-& "C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe"
+& "$env:UE5_ROOT\Engine\Binaries\Win64\TripSitter.exe"
 
 # Run tests
 cmake --build build --config Release --target test_backend_api
@@ -206,4 +214,4 @@ Used instead of `std::numbers::pi` for C++17 compatibility.
 
 ---
 
-*Last updated: January 14, 2026*
+*Last updated: January 21, 2026*

@@ -3,113 +3,38 @@
     "allow": [
       "Bash(git add:*)",
       "Bash(git commit:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git push:*)",
       "Bash(gh pr create:*)",
+      "Bash(gh issue view:*)",
       "Bash(cmake:*)",
       "Bash(ls:*)",
-      "Bash(powershell -Command Get-ChildItem:*)",
-      "Bash(powershell -Command Test-Path:*)",
-      "Bash(where:*)",
-      "Bash(reg query:*)",
       "Bash(dir:*)",
+      "Bash(where:*)",
       "Bash(findstr:*)",
       "Bash(assoc:*)",
       "Bash(ftype:*)",
+      "Bash(echo:*)",
+      "Bash(timeout:*)",
+      "Bash(tasklist:*)",
+      "Bash(taskkill /im TripSitter.exe:*)",
+      "Bash(taskkill /im ffmpeg.exe:*)",
+      "Bash(taskkill /im test_backend_api.exe:*)",
+      "Bash(taskkill /im cmake.exe:*)",
+      "Bash(ffmpeg:*)",
+      "Bash(ffprobe:*)",
       "Bash(cmd /c dir:*)",
       "Bash(cmd /c echo:*)",
-      "Bash(taskkill /im:*)",
-      "Bash(tasklist /fi \"imagename eq *\")",
-      "Bash(ffmpeg:*)",
-      "Bash(powershell -File scripts/check-ffmpeg-nvenc.ps1)",
-      "Bash(powershell -Command \"if \\(Test-Path ''C:\\\\ffmpeg-dev\\\\ffmpeg-master-latest-win64-gpl-shared\\\\bin\\\\ffmpeg.exe''\\) { & ''C:\\\\ffmpeg-dev\\\\ffmpeg-master-latest-win64-gpl-shared\\\\bin\\\\ffmpeg.exe'' -hide_banner -encoders 2>&1 | Select-String nvenc }\")",
-      "Bash(gh issue view:*)",
-      "Bash(powershell -Command \"& {$ffmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue; if \\($ffmpeg\\) { Write-Host ''FFmpeg found at:'' $ffmpeg.Source; & $ffmpeg.Source -hide_banner -encoders 2>&1 | Select-String -Pattern ''nvenc|h264_nvenc|hevc_nvenc'' } else { Write-Host ''FFmpeg not in PATH. Checking common locations...''; $paths = @\\(''C:\\\\ffmpeg-dev\\\\ffmpeg-master-latest-win64-gpl-shared\\\\bin\\\\ffmpeg.exe'', ''C:\\\\ffmpeg\\\\bin\\\\ffmpeg.exe''\\); foreach \\($p in $paths\\) { if \\(Test-Path $p\\) { Write-Host ''Found at:'' $p; & $p -hide_banner -encoders 2>&1 | Select-String -Pattern ''nvenc'' } } }}\")",
-      "Bash(powershell -Command \"if \\(Test-Path ''C:\\\\ffmpeg-dev\\\\ffmpeg-master-latest-win64-gpl-shared\\\\bin\\\\ffmpeg.exe''\\) { & ''C:\\\\ffmpeg-dev\\\\ffmpeg-master-latest-win64-gpl-shared\\\\bin\\\\ffmpeg.exe'' -hide_banner -encoders 2>&1 | Select-String nvenc }\")"
+      "Bash(reg query:*)",
+      "Bash(powershell -Command Get-ChildItem:*)",
+      "Bash(powershell -Command Test-Path:*)",
+      "Bash(powershell -Command Copy-Item:*)",
+      "Bash(powershell -File scripts/*.ps1)",
+      "Bash(powershell -ExecutionPolicy Bypass -File:*)",
+      "Bash(./build/tests/Release/test_backend_api.exe:*)",
+      "Bash(C:/UE5_Source/UnrealEngine/Engine/Build/BatchFiles/Build.bat:*)"
     ]
-  },
-  "__notes": [
-    {
-      "pattern": "Bash(ffmpeg:*)",
-      "description": "Allows running ffmpeg with any arguments. Used for video/audio processing and encoder checks."
-    },
-    {
-      "pattern": "Bash(powershell -Command \"& {$ffmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue; if \\($ffmpeg\\) { Write-Host ''FFmpeg found at:'' $ffmpeg.Source; & $ffmpeg.Source -hide_banner -encoders 2>&1 | Select-String -Pattern ''nvenc|h264_nvenc|hevc_nvenc'' } else { Write-Host ''FFmpeg not in PATH. Checking common locations...''; $paths = @\\(''C:\\\\ffmpeg-dev\\\\ffmpeg-master-latest-win64-gpl-shared\\\\bin\\\\ffmpeg.exe'', ''C:\\\\ffmpeg\\\\bin\\\\ffmpeg.exe''\\); foreach \\($p in $paths\\) { if \\(Test-Path $p\\) { Write-Host ''Found at:'' $p; & $p -hide_banner -encoders 2>&1 | Select-String -Pattern ''nvenc'' } } }}\")",
-      "description": "Allows PowerShell to probe for ffmpeg and check for nvenc/h264_nvenc/hevc_nvenc encoder support, including searching common install locations."
-    },
-    {
-      "pattern": "Bash(powershell -Command \"if \\(Test-Path ''C:\\\\ffmpeg-dev\\\\ffmpeg-master-latest-win64-gpl-shared\\\\bin\\\\ffmpeg.exe''\\) { & ''C:\\\\ffmpeg-dev\\\\ffmpeg-master-latest-win64-gpl-shared\\\\bin\\\\ffmpeg.exe'' -hide_banner -encoders 2>&1 | Select-String nvenc }\")",
-      "description": "Allows PowerShell to directly check a specific ffmpeg.exe for nvenc encoder support."
-    },
-    {
-      "pattern": "Bash(git add:*)",
-      "description": "Git add operations"
-    },
-    {
-      "pattern": "Bash(git commit:*)",
-      "description": "Git commit operations"
-    },
-    {
-      "pattern": "Bash(gh pr create:*)",
-      "description": "GitHub PR creation"
-    },
-    {
-      "pattern": "Bash(cmake:*)",
-      "description": "CMake build commands"
-    },
-    {
-      "pattern": "Bash(ls:*)",
-      "description": "List directory contents"
-    },
-    {
-      "pattern": "Bash(powershell -Command Get-ChildItem:*)",
-      "description": "Safe PowerShell directory listing"
-    },
-    {
-      "pattern": "Bash(powershell -Command Test-Path:*)",
-      "description": "Safe PowerShell path testing"
-    },
-    {
-      "pattern": "Bash(where:*)",
-      "description": "Find executable locations"
-    },
-    {
-      "pattern": "Bash(reg query:*)",
-      "description": "Registry queries"
-    },
-    {
-      "pattern": "Bash(dir:*)",
-      "description": "Directory listings"
-    },
-    {
-      "pattern": "Bash(findstr:*)",
-      "description": "Text search in files"
-    },
-    {
-      "pattern": "Bash(assoc:*)",
-      "description": "File associations"
-    },
-    {
-      "pattern": "Bash(ftype:*)",
-      "description": "File type associations"
-    },
-    {
-      "pattern": "Bash(cmd /c dir:*)",
-      "description": "Safe cmd directory listing"
-    },
-    {
-      "pattern": "Bash(cmd /c echo:*)",
-      "description": "Safe cmd echo operations"
-    },
-    {
-      "pattern": "Bash(taskkill /im:*)",
-      "description": "Kill specific processes by image name (wildcard: any .exe)"
-    },
-    {
-      "pattern": "Bash(tasklist /fi \"imagename eq *\")",
-      "description": "List processes filtered by image name (wildcard: any .exe)"
-    },
-    {
-      "pattern": "Bash(gh issue view:*)",
-      "description": "GitHub issue view"
-    }
-  ]
+  }
 }

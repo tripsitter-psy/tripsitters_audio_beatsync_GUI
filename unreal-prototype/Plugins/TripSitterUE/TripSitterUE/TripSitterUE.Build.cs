@@ -19,8 +19,13 @@ public class TripSitterUE : ModuleRules
             "Slate",
             "SlateCore",
             "StandaloneRenderer",
-            "ImageCore",
-            "UnrealEd"
+            "ImageCore"
         });
+
+        // Editor-only dependencies
+        if (Target.Type == TargetType.Editor)
+        {
+            PrivateDependencyModuleNames.Add("UnrealEd");
+        }
     }
 }

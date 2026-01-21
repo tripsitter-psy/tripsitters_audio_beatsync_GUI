@@ -1,13 +1,13 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Application/SlateApplication.h"
+#include "Framework/Application/SlateApplication.h"
 #include "Widgets/SWindow.h"
 
 /**
  * Main application class for TripSitter desktop application
  */
-class FTripSitterApplication
+class FTripSitterApplication : public TSharedFromThis<FTripSitterApplication>
 {
 public:
     FTripSitterApplication();
@@ -28,10 +28,6 @@ private:
     /** Handle window close requests */
     void OnWindowClosed(const TSharedRef<SWindow>& Window);
 
-private:
     /** Main application window */
     TSharedPtr<SWindow> MainWindow;
-
-    /** Application instance */
-    TSharedPtr<FSlateApplication> SlateApp;
 };

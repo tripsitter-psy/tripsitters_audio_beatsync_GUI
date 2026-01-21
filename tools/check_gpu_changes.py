@@ -29,8 +29,12 @@ try:
 except Exception as e:
     print(f"Warning: Exception during git fetch of origin/{BASE}: {e}")
 
+
 try:
     res = subprocess.run(['git', 'diff', '--name-only', f'origin/{BASE}...HEAD'], capture_output=True, text=True, check=False)
+    if res.returncode != 0:
+        print(f'Error running git diff (BASE={BASE}): {res.stderr}')
+        sys.exit(1)
     files = [f for f in res.stdout.splitlines() if f.strip()]
 except Exception as e:
     print('Error running git diff:', e)
@@ -51,11 +55,7 @@ for f in files:
                     matched.append((f, f'content match: {p}'))
                     break
         except Exception as e:
-            logger = globals().get('logger', None)
-            if logger:
-                logger.exception(f"Error running git diff for {f}")
-            else:
-                print(f"[WARN] Exception running git diff for {f}: {e}")
+            print(f"[WARN] Exception running git diff for {f}: {e}")
 
 if not matched:
     print('No GPU/ONNX-related changes detected.')

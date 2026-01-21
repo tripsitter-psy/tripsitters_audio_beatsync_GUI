@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "audio/SpectralFlux.h"
+#include <cmath>
 #include <vector>
 #include <limits>
 

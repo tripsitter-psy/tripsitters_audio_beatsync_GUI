@@ -58,7 +58,9 @@ public:
 	virtual FCursorReply OnCursorQuery(const FGeometry& MyGeometry, const FPointerEvent& CursorEvent) const override;
 
 protected:
-	// Effect region data (not owned - reference to waveform viewer's data)
+	// EffectRegions is a non-owning raw pointer to external TArray<FEffectRegion> data.
+	// Caller is responsible for ensuring the pointed-to array outlives this SEffectTimeline widget.
+	// To avoid dangling pointers, call SetEffectRegions(nullptr) before destroying SEffectTimeline or the referenced array.
 	const TArray<FEffectRegion>* EffectRegions = nullptr;
 
 	// Time parameters (synced with waveform viewer)

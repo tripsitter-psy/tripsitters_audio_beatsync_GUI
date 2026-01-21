@@ -42,7 +42,7 @@ struct FBeatsyncProcessingParams
     bool bIsMultiClip = false;
     // BeatRate is a non-negative exponent: BeatDivisor = 2^BeatRate
     // BeatRate = 0 → every beat; BeatRate = 1 → every 2nd beat; BeatRate = 2 → every 4th beat, etc.
-    // Must be >= 0
+    // Valid range: [0, 3]. BeatRate must be clamped to this range so BeatDivisor = 1 << BeatRate does not overflow the expected range (see clamp to ClampedBeatRate and shift in BeatsyncProcessingTask.cpp).
     int32 BeatRate = 0;
     double AudioStart = 0.0;
     double AudioEnd = -1.0;
@@ -106,6 +106,7 @@ private:
     FOnBeatsyncProcessingComplete OnComplete;
     FThreadSafeBool bCancelRequested;
     TSharedPtr<FThreadSafeBool> SharedCancelFlag;
+    FThreadSafeBool bWorkCompleted;  // Set when DoWork finishes, used for destructor synchronization
     void* Writer = nullptr;
 
     void ReportProgress(float Progress, const FString& Status);

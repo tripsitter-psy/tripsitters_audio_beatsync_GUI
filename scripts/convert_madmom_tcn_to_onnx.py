@@ -60,13 +60,17 @@ class MadmomUnpickler(pickle.Unpickler):
 
 
 def load_pkl_safe(pkl_path):
-    """Load pkl file, handling madmom classes gracefully."""
+    """
+    Load a madmom .pkl file using a restricted unpickler.
+
+    SECURITY WARNING: Only load pickle files from trusted sources! Pickle files can execute arbitrary code.
+    This function uses MadmomUnpickler (a restricted Unpickler) to avoid arbitrary code execution, but you should
+    never load untrusted or tampered pickle files.
+    """
     with open(pkl_path, 'rb') as f:
-        try:
-            return pickle.load(f, encoding='latin1')
-        except ModuleNotFoundError:
-            f.seek(0)
-            return MadmomUnpickler(f, encoding='latin1').load()
+        f.seek(0)
+        # Always use MadmomUnpickler for safety; never call pickle.load directly
+        return MadmomUnpickler(f, encoding='latin1').load()
 
 
 def extract_weights(pkl_path):
@@ -109,12 +113,13 @@ def extract_weights(pkl_path):
                     if hasattr(block, attr):
                         block_weights['bias'] = getattr(block, attr)
                         break
-                # Also check for sub-layers
+                # Also check for sub-layers (only if direct attributes weren't found)
+                # This prefers direct block attributes over sub-layer weights
                 if hasattr(block, 'layers'):
                     for sub in block.layers:
-                        if hasattr(sub, 'weights'):
+                        if 'weights' not in block_weights and hasattr(sub, 'weights'):
                             block_weights['weights'] = sub.weights
-                        if hasattr(sub, 'bias'):
+                        if 'bias' not in block_weights and hasattr(sub, 'bias'):
                             block_weights['bias'] = sub.bias
 
                 if block_weights:
@@ -189,6 +194,12 @@ def main():
     if args.pkl:
         pkl_files = [args.pkl]
     elif args.pkl_dir:
+        if not os.path.exists(args.pkl_dir):
+            print(f"ERROR: Directory does not exist: {args.pkl_dir}", file=sys.stderr)
+            return 1
+        if not os.path.isdir(args.pkl_dir):
+            print(f"ERROR: Path is not a directory: {args.pkl_dir}", file=sys.stderr)
+            return 1
         pkl_files = sorted([
             os.path.join(args.pkl_dir, f)
             for f in os.listdir(args.pkl_dir)
@@ -246,17 +257,15 @@ def main():
         """Single TCN block with dilated causal convolution."""
         def __init__(self, channels, kernel_size=3, dilation=1):
             super().__init__()
-            self.dilation = dilation
-            padding = (kernel_size - 1) * dilation
-
+            self.left_pad = (kernel_size - 1) * dilation
             self.conv = nn.Conv1d(channels, channels, kernel_size,
-                                  padding=padding, dilation=dilation)
+                                  padding=0, dilation=dilation)
             self.activation = nn.ELU()
 
         def forward(self, x):
-            out = self.conv(x)
-            # Remove future samples (causal)
-            out = out[:, :, :x.size(2)]
+            # Pad only on the left side for causality
+            x_padded = torch.nn.functional.pad(x, (self.left_pad, 0))
+            out = self.conv(x_padded)
             out = self.activation(out)
             return out
 
@@ -267,8 +276,10 @@ def main():
         Input: (batch, 1, freq_bins, time) - spectrogram
         Output: (batch, 2, time) - [beat_activation, downbeat_activation]
         """
+
         def __init__(self, freq_bins=81, num_tcn_blocks=11, hidden_channels=16):
             super().__init__()
+            self.register_buffer('skip_sum_buf', None)
 
             self.hidden_channels = hidden_channels
 
@@ -331,13 +342,13 @@ def main():
             x = self.project(x)
             x = self.activation(x)
 
-            # TCN with skip connections
-            skip_sum = torch.zeros_like(x)
+
+            # TCN with skip connections (no in-place ops, no persistent buffer)
+            skip_accum = x.new_zeros(x.size())
             for block in self.tcn_blocks:
                 x = block(x)
-                skip_sum = skip_sum + x
-
-            x = skip_sum
+                skip_accum = skip_accum + x
+            x = skip_accum
 
             # Output
             beat = self.sigmoid(self.output_beat(x))      # (batch, 1, time)
@@ -386,13 +397,36 @@ def main():
                         weight = np.transpose(weight, (1, 0, 2, 3))
                     try:
                         state_dict[f'{name}.weight'] = torch.from_numpy(weight.astype(np.float32))
+                        print(f"  Loaded {name}.weight: {state_dict[f'{name}.weight'].shape}")
                     except Exception as e:
-                        pass
+                        print(f"  Failed to load {name}.weight: {e}")
                 if 'bias' in w and w['bias'] is not None:
                     try:
                         state_dict[f'{name}.bias'] = torch.from_numpy(w['bias'].astype(np.float32))
+                        print(f"  Loaded {name}.bias")
                     except Exception as e:
-                        pass
+                        print(f"  Failed to load {name}.bias: {e}")
+
+            # Load TCN block weights
+            for i, block_w in enumerate(weights.get('tcn_blocks', [])):
+                if i >= len(sub_model.tcn_blocks):
+                    break
+                if 'weights' in block_w and block_w['weights'] is not None:
+                    weight = block_w['weights']
+                    if weight.ndim == 3:
+                        # (in, out, kernel) -> (out, in, kernel)
+                        weight = np.transpose(weight, (1, 0, 2))
+                    try:
+                        state_dict[f'tcn_blocks.{i}.conv.weight'] = torch.from_numpy(weight.astype(np.float32))
+                        print(f"  Loaded tcn_blocks.{i}.conv.weight")
+                    except Exception as e:
+                        print(f"  Failed to load tcn_blocks.{i}: {e}")
+                if 'bias' in block_w and block_w['bias'] is not None:
+                    try:
+                        state_dict[f'tcn_blocks.{i}.conv.bias'] = torch.from_numpy(block_w['bias'].astype(np.float32))
+                        print(f"  Loaded tcn_blocks.{i}.conv.bias")
+                    except Exception as e:
+                        print(f"  Failed to load tcn_blocks.{i}.conv.bias: {e}")
 
             # Load output weights
             output_names = ['output_beat', 'output_downbeat']
@@ -403,13 +437,12 @@ def main():
                         weight = weight.T[..., np.newaxis]
                     try:
                         state_dict[f'{name}.weight'] = torch.from_numpy(weight.astype(np.float32))
-                    except:
-                        pass
+                    except (AttributeError, ValueError, TypeError, RuntimeError) as e:
+                        print(f"[ERROR] Failed to convert weights for '{name}': {e}\n  Weight shape: {getattr(weight, 'shape', None)} Value: {repr(weight)[:200]}")
+                        raise
 
             try:
                 sub_model.load_state_dict(state_dict, strict=False)
-            except Exception as e:
-                pass
                 print(f"  Model {model_idx + 1}/{len(all_weights)}: weights loaded")
             except Exception as e:
                 print(f"  Model {model_idx + 1}/{len(all_weights)}: partial load ({e})")
@@ -460,6 +493,12 @@ def main():
                         print(f"  Loaded tcn_blocks.{i}.conv.weight")
                     except Exception as e:
                         print(f"  Failed to load tcn_blocks.{i}: {e}")
+                if 'bias' in block_w and block_w['bias'] is not None:
+                    try:
+                        state_dict[f'tcn_blocks.{i}.conv.bias'] = torch.from_numpy(block_w['bias'].astype(np.float32))
+                        print(f"  Loaded tcn_blocks.{i}.conv.bias")
+                    except Exception as e:
+                        print(f"  Failed to load tcn_blocks.{i}.conv.bias: {e}")
 
             # Load output weights
             output_names = ['output_beat', 'output_downbeat']
@@ -485,7 +524,7 @@ def main():
             torch.manual_seed(42)
             for m in model.modules():
                 if isinstance(m, (nn.Conv1d, nn.Conv2d)):
-                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu')
                     if m.bias is not None:
                         nn.init.zeros_(m.bias)
 
@@ -509,18 +548,32 @@ def main():
     }
 
     # Use legacy exporter for compatibility
-    torch.onnx.export(
-        model,
-        dummy_input,
-        args.out,
-        export_params=True,
-        opset_version=max(args.opset, 18),  # Use at least opset 18
-        do_constant_folding=True,
-        input_names=['spectrogram'],
-        output_names=['activations'],
-        dynamic_axes=dynamic_axes,
-        dynamo=False  # Use legacy TorchScript exporter
-    )
+    try:
+        torch.onnx.export(
+            model,
+            dummy_input,
+            args.out,
+            export_params=True,
+            opset_version=max(args.opset, 18),  # Use at least opset 18
+            do_constant_folding=True,
+            input_names=['spectrogram'],
+            output_names=['activations'],
+            dynamic_axes=dynamic_axes,
+            dynamo=False  # Use legacy TorchScript exporter
+        )
+    except TypeError:
+        # Fallback for PyTorch < 2.5 where dynamo parameter is not supported
+        torch.onnx.export(
+            model,
+            dummy_input,
+            args.out,
+            export_params=True,
+            opset_version=max(args.opset, 18),  # Use at least opset 18
+            do_constant_folding=True,
+            input_names=['spectrogram'],
+            output_names=['activations'],
+            dynamic_axes=dynamic_axes
+        )
 
     print(f"  Saved: {args.out}")
 

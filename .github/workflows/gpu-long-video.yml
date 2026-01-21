@@ -1,0 +1,167 @@
+name: GPU Long Video Test (Gated)
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for running long GPU video test'
+        required: true
+        default: 'Manual long video regression test'
+  schedule:
+    - cron: '0 2 * * *' # nightly at 02:00 UTC
+  pull_request:
+    types: [labeled, opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  long-video:
+    name: Long Video End-to-End
+    runs-on: [self-hosted, windows, gpu]
+    timeout-minutes: 180
+    # Gated: only run when manually dispatched or when PR has label 'test-cuda'
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'test-cuda'))
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for NVIDIA GPU
+        id: check_gpu
+        shell: powershell
+        run: |
+          $gpu = Get-WmiObject Win32_VideoController | Where-Object { $_.Name -match 'NVIDIA' }
+          if ($gpu) {
+            Write-Host "Found NVIDIA GPU: $($gpu.Name)"
+            "has_gpu=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            Write-Host "No NVIDIA GPU found on this host. Skipping long video test."
+            "has_gpu=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+      - name: Notice when GPU is absent
+        if: steps.check_gpu.outputs.has_gpu == 'false'
+        run: |
+          echo "::notice::No NVIDIA GPU detected on runner - long video test will be skipped. Use a self-hosted runner with label 'gpu' to run this test."
+
+      - name: Setup vcpkg and ONNX Runtime GPU
+        if: steps.check_gpu.outputs.has_gpu == 'true'
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '25b458671af03578e6a34edd8f0d1ac85e084df4'
+
+      - name: Install dependencies
+        if: steps.check_gpu.outputs.has_gpu == 'true'
+        shell: powershell
+        run: |
+          .\vcpkg\vcpkg.exe install onnxruntime-gpu:x64-windows --clean-after-build
+
+      - name: Configure CMake
+        if: steps.check_gpu.outputs.has_gpu == 'true'
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DBUILD_TESTS=ON `
+            -DBUILD_GUI=OFF `
+            -DUSE_ONNX=ON
+
+      - name: Build project
+        if: steps.check_gpu.outputs.has_gpu == 'true'
+        run: cmake --build build --config Release -j 2
+
+      - name: Generate long audio
+        if: steps.check_gpu.outputs.has_gpu == 'true'
+        run: |
+          python tools/generate_long_test_wav.py build/tmp/gpu_stress.wav 600
+
+      - name: Run long video test (PowerShell)
+        if: steps.check_gpu.outputs.has_gpu == 'true' && runner.os == 'Windows'
+        shell: powershell
+        env:
+          TEST_MODEL_DIR: models
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_long_video_test.ps1 -OutputVideo build/tmp/out_gpu_test.mp4 -Audio build/tmp/gpu_stress.wav -DurationSeconds 600
+
+  long-video-linux:
+    name: Long Video End-to-End (Linux)
+    runs-on: [self-hosted, linux, gpu]
+    timeout-minutes: 180
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'test-cuda'))
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check NVIDIA GPU (Linux)
+        id: check_gpu_linux
+        run: |
+          if command -v nvidia-smi >/dev/null 2>&1; then
+            echo "has_gpu=true" >> $GITHUB_OUTPUT
+            nvidia-smi --query-gpu=name --format=csv,noheader
+          else
+            echo "has_gpu=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install dependencies (Linux)
+        if: steps.check_gpu_linux.outputs.has_gpu == 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y build-essential ninja-build cmake python3 python3-pip
+
+      - name: Setup vcpkg (Linux)
+        if: steps.check_gpu_linux.outputs.has_gpu == 'true'
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '25b458671af03578e6a34edd8f0d1ac85e084df4'
+
+      - name: Install onnxruntime-gpu (Linux)
+        if: steps.check_gpu_linux.outputs.has_gpu == 'true'
+        run: |
+          ./vcpkg/vcpkg install onnxruntime-gpu:x64-linux --clean-after-build
+
+      - name: Configure and build (Linux)
+        if: steps.check_gpu_linux.outputs.has_gpu == 'true'
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_ONNX=ON
+          cmake --build build -j $(nproc)
+
+      - name: Generate long audio (Linux)
+        if: steps.check_gpu_linux.outputs.has_gpu == 'true'
+        run: python3 tools/generate_long_test_wav.py build/tmp/gpu_stress.wav 600
+
+      - name: Run long video test (Linux)
+        if: steps.check_gpu_linux.outputs.has_gpu == 'true'
+        run: |
+          chmod +x scripts/run_long_video_test.sh
+          scripts/run_long_video_test.sh 600
+
+      - name: Upload artifacts (Linux)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: long-video-test-artifacts-linux
+          path: |
+            build/tmp/out_gpu_test.mp4
+            build/gpu_log.csv
+            build/long_video_stdout.log
+            build/long_video_stderr.log
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: long-video-test-artifacts
+          path: |
+            build/tmp/out_gpu_test.mp4
+            build/gpu_log.csv
+            build/long_video_stdout.log
+            build/long_video_stderr.log
+
+      - name: Summarize
+        if: always()
+        shell: bash
+        run: |
+          echo "## Long Video Test" >> $GITHUB_STEP_SUMMARY
+          echo "Artifacts uploaded: long-video-test-artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "Note: This workflow is gated — trigger manually or add the 'test-cuda' label to PRs." >> $GITHUB_STEP_SUMMARY

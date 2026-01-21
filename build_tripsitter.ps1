@@ -61,7 +61,14 @@ if ($LASTEXITCODE -eq 0) {
     exit $LASTEXITCODE
 }
 
-# Only prompt if not -NonInteractive and session is interactive
-if (-not $NonInteractive -and $Host.UI.RawUI -and $PSBoundParameters["NonInteractive"] -ne $true) {
+
+# Only prompt if not -NonInteractive, session is interactive, and input is not redirected
+$isInputRedirected = $false
+try {
+    $isInputRedirected = [Console]::IsInputRedirected
+} catch {
+    $isInputRedirected = $true # Assume redirected if check fails
+}
+if (-not $NonInteractive -and $Host.UI.RawUI -and -not $isInputRedirected) {
     Read-Host "Press Enter to close"
 }

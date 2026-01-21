@@ -22,6 +22,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <iostream>
+#include <algorithm>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -65,6 +66,9 @@ BEATSYNC_API void bs_shutdown() {
     std::lock_guard<std::mutex> lock(s_effectsConfigsMutex);
     s_effectsConfigs.clear();
 }
+} // extern "C" closed after C API symbols
+
+extern "C" {
 
 // ==================== AudioAnalyzer API ====================
 
@@ -512,7 +516,34 @@ BEATSYNC_API int bs_video_cut_at_beats(void* writer, const char* inputVideo,
                                         const double* beatTimes, size_t count,
                                         const char* outputVideo, double clipDuration) {
     TRACE_FUNC();
+
+    // File-based logging for diagnostics - SINGLE VIDEO PATH
+    std::string logPath;
+    FILE* logFile = nullptr;
+#ifdef _WIN32
+    wchar_t tempPath[MAX_PATH + 1];
+    if (GetTempPathW(MAX_PATH + 1, tempPath) > 0) {
+        char narrowPath[MAX_PATH + 1];
+        WideCharToMultiByte(CP_UTF8, 0, tempPath, -1, narrowPath, MAX_PATH + 1, nullptr, nullptr);
+        logPath = std::string(narrowPath) + "beatsync_single_cut.log";
+    }
+#endif
+    if (!logPath.empty()) {
+        logFile = fopen(logPath.c_str(), "w");
+        if (logFile) {
+            fprintf(logFile, "=== bs_video_cut_at_beats (SINGLE) ENTERED (v2025.01.20) ===\n");
+            fprintf(logFile, "writer=%p, inputVideo=%s\n", writer, inputVideo ? inputVideo : "(null)");
+            fprintf(logFile, "beatTimes=%p, count=%zu, clipDuration=%.6f\n", (void*)beatTimes, count, clipDuration);
+            fprintf(logFile, "outputVideo=%s\n", outputVideo ? outputVideo : "(null)");
+            fflush(logFile);
+        }
+    }
+
     if (!writer || !inputVideo || !beatTimes || !outputVideo || count == 0) {
+        if (logFile) {
+            fprintf(logFile, "ERROR: Invalid parameters\n");
+            fclose(logFile);
+        }
         return -1;
     }
 
@@ -534,9 +565,32 @@ BEATSYNC_API int bs_video_cut_at_beats(void* writer, const char* inputVideo,
             clipDuration = 1.0; // Default to 1 second if only one beat and no duration
         }
 
+        if (logFile) {
+            fprintf(logFile, "Calling cutAtBeats with clipDuration=%.6f, beatCount=%zu\n", clipDuration, count);
+            fflush(logFile);
+        }
+
         bool success = w->cutAtBeats(inputVideo, grid, outputVideo, clipDuration);
+
+        if (logFile) {
+            fprintf(logFile, "cutAtBeats returned %s\n", success ? "SUCCESS" : "FAILURE");
+            if (!success) {
+                fprintf(logFile, "Last error: %s\n", w->getLastError().c_str());
+            }
+            fclose(logFile);
+        }
         return success ? 0 : -1;
+    } catch (const std::exception& e) {
+        if (logFile) {
+            fprintf(logFile, "EXCEPTION: %s\n", e.what());
+            fclose(logFile);
+        }
+        return -1;
     } catch (...) {
+        if (logFile) {
+            fprintf(logFile, "UNKNOWN EXCEPTION\n");
+            fclose(logFile);
+        }
         return -1;
     }
 }
@@ -545,7 +599,36 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
                                               const double* beatTimes, size_t beatCount,
                                               const char* outputVideo, double clipDuration) {
     TRACE_FUNC();
+
+    // File-based logging for diagnostics - MUST be first thing to catch all issues
+    std::string logPath;
+    FILE* logFile = nullptr;
+#ifdef _WIN32
+    wchar_t tempPath[MAX_PATH + 1];
+    if (GetTempPathW(MAX_PATH + 1, tempPath) > 0) {
+        char narrowPath[MAX_PATH + 1];
+        WideCharToMultiByte(CP_UTF8, 0, tempPath, -1, narrowPath, MAX_PATH + 1, nullptr, nullptr);
+        logPath = std::string(narrowPath) + "beatsync_multi_cut.log";
+    }
+#endif
+    if (!logPath.empty()) {
+        logFile = fopen(logPath.c_str(), "w");
+        if (logFile) {
+            fprintf(logFile, "=== bs_video_cut_at_beats_multi ENTERED (v2025.01.20) ===\n");
+            fprintf(logFile, "writer=%p, inputVideos=%p, videoCount=%zu\n", writer, (void*)inputVideos, videoCount);
+            fprintf(logFile, "beatTimes=%p, beatCount=%zu, clipDuration=%.6f\n", (void*)beatTimes, beatCount, clipDuration);
+            fprintf(logFile, "outputVideo=%s\n", outputVideo ? outputVideo : "(null)");
+            fflush(logFile);
+        }
+    }
+
     if (!writer || !inputVideos || !beatTimes || !outputVideo || videoCount == 0 || beatCount == 0) {
+        s_lastError = "Invalid parameters to bs_video_cut_at_beats_multi";
+        if (logFile) {
+            fprintf(logFile, "ERROR: Invalid parameters - writer=%d inputVideos=%d beatTimes=%d outputVideo=%d videoCount=%zu beatCount=%zu\n",
+                    writer != nullptr, inputVideos != nullptr, beatTimes != nullptr, outputVideo != nullptr, videoCount, beatCount);
+            fclose(logFile);
+        }
         return -1;
     }
 
@@ -577,7 +660,16 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
 
         if (videos.empty()) {
             s_lastError = "No input videos provided";
+            if (logFile) { fprintf(logFile, "ERROR: No input videos provided\n"); fclose(logFile); }
             return -1;
+        }
+
+        if (logFile) {
+            fprintf(logFile, "Collected %zu videos:\n", videos.size());
+            for (size_t i = 0; i < videos.size(); ++i) {
+                fprintf(logFile, "  [%zu] %s\n", i, videos[i].c_str());
+            }
+            fflush(logFile);
         }
 
         // Precompute and cache video durations
@@ -588,108 +680,267 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
                 durations[i] = proc.getInfo().duration;
                 proc.close();
             }
+            if (logFile) {
+                fprintf(logFile, "Video[%zu] duration=%.3f sec\n", i, durations[i]);
+            }
             // If duration <= 0, we'll use DEFAULT_DURATION later
         }
+        if (logFile) fflush(logFile);
 
-        // Build segments from beats, cycling through videos
-        size_t videoIdx = 0;
+        // ================================================================
+        // GENERALIZED GAP HANDLING: Detect long gaps anywhere in the timeline
+        // ================================================================
+        // Long gaps (intro, breakdown, outro) should play full video clips
+        // without cutting. Normal beat intervals get cut as usual.
+        // "Long gap" = gap > 3x the average beat interval
 
-        for (size_t i = 0; i < beatCount; ++i) {
-            double startTime = beatTimes[i];
-            double endTime;
-            const double MIN_SEGMENT_DURATION = 0.1; // Minimum 100ms segment
-            
-            if (i + 1 < beatCount) {
-                endTime = beatTimes[i + 1];
-            } else {
-                // Last segment: use clipDuration if positive, otherwise minimum duration
-                endTime = startTime + std::max(clipDuration, MIN_SEGMENT_DURATION);
+        // Step 1: Calculate average beat interval to detect long gaps
+        double avgBeatInterval = clipDuration;  // Default fallback
+        if (beatCount >= 2) {
+            double totalInterval = 0.0;
+            size_t intervalCount = 0;
+            for (size_t i = 1; i < beatCount; ++i) {
+                double interval = beatTimes[i] - beatTimes[i - 1];
+                // Only count "normal" intervals (skip outliers that are likely gaps)
+                if (interval > 0.05 && interval < 5.0) {
+                    totalInterval += interval;
+                    intervalCount++;
+                }
+            }
+            if (intervalCount > 0) {
+                avgBeatInterval = totalInterval / intervalCount;
+            }
+        }
+
+        // Gap threshold: 3x average interval indicates a "break" section
+        const double GAP_THRESHOLD_MULTIPLIER = 3.0;
+        double longGapThreshold = avgBeatInterval * GAP_THRESHOLD_MULTIPLIER;
+
+        if (logFile) {
+            fprintf(logFile, "\n=== GAP DETECTION ===\n");
+            fprintf(logFile, "Average beat interval: %.3f sec\n", avgBeatInterval);
+            fprintf(logFile, "Long gap threshold (3x avg): %.3f sec\n", longGapThreshold);
+            fflush(logFile);
+        }
+
+        // Step 2: Create sorted list of videos by duration (longest first) for filling gaps
+        std::vector<std::pair<double, size_t>> sortedByDuration;
+        for (size_t i = 0; i < videos.size(); ++i) {
+            double dur = durations[i] > 0 ? durations[i] : DEFAULT_DURATION;
+            sortedByDuration.push_back({dur, i});
+        }
+        std::sort(sortedByDuration.begin(), sortedByDuration.end(),
+                  [](const auto& a, const auto& b) { return a.first > b.first; });
+
+        if (logFile) {
+            fprintf(logFile, "Videos sorted by duration (longest first):\n");
+            for (size_t i = 0; i < std::min(sortedByDuration.size(), (size_t)5); ++i) {
+                fprintf(logFile, "  [%zu] %.3f sec\n", sortedByDuration[i].second, sortedByDuration[i].first);
+            }
+            if (sortedByDuration.size() > 5) {
+                fprintf(logFile, "  ... and %zu more\n", sortedByDuration.size() - 5);
+            }
+            fflush(logFile);
+        }
+
+        // Helper lambda to fill a time gap with full-length videos (longest first)
+        size_t totalSegmentCount = 0;
+        size_t longVideoIdx = 0;  // Index into sortedByDuration for gap filling
+
+        auto fillGapWithFullVideos = [&](double gapStart, double gapEnd, const char* gapType) {
+            double gapDuration = gapEnd - gapStart;
+            if (gapDuration < 0.1) return;  // Skip tiny gaps
+
+            if (logFile) {
+                fprintf(logFile, "\n=== %s SECTION (%.3f to %.3f sec, duration=%.3f) ===\n",
+                        gapType, gapStart, gapEnd, gapDuration);
+                fflush(logFile);
             }
 
-            double duration = endTime - startTime;
-            // Ensure duration is positive
-            if (duration <= 0) {
-                duration = MIN_SEGMENT_DURATION;
-                endTime = startTime + duration;
-            }
+            double timeRemaining = gapDuration;
+            size_t gapSegCount = 0;
 
-            // Insert segment number before extension for cleaner temp file names
-            std::string outStr(outputVideo);
-            size_t dotPos = outStr.rfind('.');
-            std::string tempFile;
-            if (dotPos != std::string::npos) {
-                tempFile = outStr.substr(0, dotPos) + "_seg" + std::to_string(i) + outStr.substr(dotPos);
-            } else {
-                tempFile = outStr + "_seg" + std::to_string(i) + ".mp4";
-            }
+            while (timeRemaining > 0.1) {
+                // Get next longest video (cycling if needed)
+                size_t vidIdx = sortedByDuration[longVideoIdx % sortedByDuration.size()].second;
+                double vidDuration = sortedByDuration[longVideoIdx % sortedByDuration.size()].first;
 
-            // Use segment start time as position within the source video (modular approach)
-            // For short looping videos, we cycle through the video content
-            double sourceStart = 0.0;
-            double sourceDuration = duration;  // How much to extract from source
-            double cachedDuration = durations[videoIdx];
+                // Use full video duration or remaining time, whichever is smaller
+                double segmentDuration = std::min(vidDuration, timeRemaining);
 
-            if (cachedDuration > 0) {
-                // Wrap the start position to stay within video bounds
-                sourceStart = fmod(startTime, cachedDuration);
-
-                // CRITICAL FIX: fmod can return tiny values close to zero due to floating-point
-                // precision issues. Clamp very small values to exactly 0.0 to avoid FFmpeg errors.
-                // 1 millisecond threshold is well below a single frame at any reasonable framerate.
-                if (sourceStart < 0.001) {
-                    sourceStart = 0.0;
+                // Generate temp file name
+                std::string outStr(outputVideo);
+                size_t dotPos = outStr.rfind('.');
+                std::string tempFile;
+                if (dotPos != std::string::npos) {
+                    tempFile = outStr.substr(0, dotPos) + "_seg" + std::to_string(totalSegmentCount) + outStr.substr(dotPos);
+                } else {
+                    tempFile = outStr + "_seg" + std::to_string(totalSegmentCount) + ".mp4";
                 }
 
-                // CRITICAL FIX: Ensure we don't try to extract more than what's available
-                // from the current position. For short looping videos, just extract
-                // what's available from this position (loop will continue with next video)
-                double availableFromStart = cachedDuration - sourceStart;
-                if (availableFromStart < sourceDuration) {
-                    // Not enough content from this position - start from beginning instead
-                    // to maximize usable content from this video
-                    if (cachedDuration >= sourceDuration) {
-                        sourceStart = 0.0;  // Reset to start
-                    } else {
-                        // Video is shorter than requested segment - use whole video
-                        sourceStart = 0.0;
-                        sourceDuration = cachedDuration;
+                if (logFile) {
+                    fprintf(logFile, "GapSeg[%zu] video[%zu]=%s full_duration=%.3f using=%.3f (remaining=%.3f) -> %s\n",
+                            gapSegCount, vidIdx, videos[vidIdx].c_str(), vidDuration, segmentDuration, timeRemaining, tempFile.c_str());
+                    fflush(logFile);
+                }
+
+                // Extract from start of video (full clip, no cutting)
+                if (w->copySegmentFast(videos[vidIdx], 0.0, segmentDuration, tempFile)) {
+                    tempFiles.push_back(tempFile);
+                    timeRemaining -= segmentDuration;
+                    totalSegmentCount++;
+                    gapSegCount++;
+                } else {
+                    std::string errMsg = w->getLastError();
+                    if (logFile) {
+                        fprintf(logFile, "WARNING: Failed to copy gap segment: %s (continuing...)\n", errMsg.c_str());
+                        fflush(logFile);
                     }
                 }
-            } else {
-                sourceStart = fmod(startTime, DEFAULT_DURATION);  // Fallback
+
+                longVideoIdx++;
             }
 
-            if (w->copySegmentFast(videos[videoIdx], sourceStart, sourceDuration, tempFile)) {
-                tempFiles.push_back(tempFile);
+            if (logFile) {
+                fprintf(logFile, "%s complete: %zu segments\n", gapType, gapSegCount);
+                fflush(logFile);
+            }
+        };
+
+        // Step 3: Process timeline - handle gaps and beat-synced sections
+        size_t beatVideoIdx = 0;  // Cycling index for beat-synced sections
+        const double MIN_SEGMENT_DURATION = 0.1;
+
+        // Check for intro gap (before first beat)
+        if (beatTimes[0] > longGapThreshold) {
+            fillGapWithFullVideos(0.0, beatTimes[0], "INTRO");
+        }
+
+        if (logFile) {
+            fprintf(logFile, "\n=== PROCESSING %zu BEATS ===\n", beatCount);
+            fflush(logFile);
+        }
+
+        for (size_t i = 0; i < beatCount; ++i) {
+            double beatTime = beatTimes[i];
+            double nextTime;
+
+            if (i + 1 < beatCount) {
+                nextTime = beatTimes[i + 1];
             } else {
-                std::cerr << "Failed to copy segment: videoIdx=" << videoIdx 
-                         << ", sourceStart=" << sourceStart 
-                         << ", duration=" << duration 
-                         << ", tempFile=" << tempFile << std::endl;
-                s_lastError = "Failed to copy video segment " + std::to_string(i);
-                return -1; // Propagate failure instead of silently continuing
+                // Last beat - use clipDuration for final segment
+                nextTime = beatTime + std::max(clipDuration, MIN_SEGMENT_DURATION);
             }
 
-            videoIdx = (videoIdx + 1) % videos.size();
+            double gapDuration = nextTime - beatTime;
+
+            // Check if this is a long gap (breakdown section)
+            if (gapDuration > longGapThreshold && i + 1 < beatCount) {
+                // This is a breakdown/gap section - fill with full videos
+                fillGapWithFullVideos(beatTime, nextTime, "BREAKDOWN");
+            } else {
+                // Normal beat interval - cut as usual
+                double duration = gapDuration;
+                if (duration <= 0) {
+                    duration = MIN_SEGMENT_DURATION;
+                }
+
+                // Generate temp file name
+                std::string outStr(outputVideo);
+                size_t dotPos = outStr.rfind('.');
+                std::string tempFile;
+                if (dotPos != std::string::npos) {
+                    tempFile = outStr.substr(0, dotPos) + "_seg" + std::to_string(totalSegmentCount) + outStr.substr(dotPos);
+                } else {
+                    tempFile = outStr + "_seg" + std::to_string(totalSegmentCount) + ".mp4";
+                }
+
+                // Use segment start time as position within source video (modular approach)
+                double sourceStart = 0.0;
+                double sourceDuration = duration;
+                double cachedDuration = durations[beatVideoIdx];
+
+                if (cachedDuration > 0) {
+                    sourceStart = fmod(beatTime, cachedDuration);
+
+                    // Clamp tiny values to 0
+                    if (sourceStart < 0.001) {
+                        sourceStart = 0.0;
+                    }
+
+                    // Ensure we don't exceed available content
+                    double availableFromStart = cachedDuration - sourceStart;
+                    if (availableFromStart < sourceDuration) {
+                        if (cachedDuration >= sourceDuration) {
+                            sourceStart = 0.0;
+                        } else {
+                            sourceStart = 0.0;
+                            sourceDuration = cachedDuration;
+                        }
+                    }
+                } else {
+                    sourceStart = fmod(beatTime, DEFAULT_DURATION);
+                }
+
+                // Log periodically
+                if (logFile && (totalSegmentCount < 5 || totalSegmentCount % 100 == 0)) {
+                    fprintf(logFile, "BeatSeg[%zu] beat[%zu] video[%zu]=%s sourceStart=%.6f dur=%.6f -> %s\n",
+                            totalSegmentCount, i, beatVideoIdx, videos[beatVideoIdx].c_str(),
+                            sourceStart, sourceDuration, tempFile.c_str());
+                    fflush(logFile);
+                }
+
+                if (w->copySegmentFast(videos[beatVideoIdx], sourceStart, sourceDuration, tempFile)) {
+                    tempFiles.push_back(tempFile);
+                    totalSegmentCount++;
+                } else {
+                    std::string errMsg = w->getLastError();
+                    s_lastError = "Failed to copy video segment " + std::to_string(i) + ": " + errMsg;
+                    if (logFile) {
+                        fprintf(logFile, "FAILED BeatSeg[%zu]: beatVideoIdx=%zu sourceStart=%.6f dur=%.6f err=%s\n",
+                                totalSegmentCount, beatVideoIdx, sourceStart, sourceDuration, errMsg.c_str());
+                        fclose(logFile);
+                    }
+                    return -1;
+                }
+
+                beatVideoIdx = (beatVideoIdx + 1) % videos.size();
+            }
         }
 
         if (tempFiles.empty()) {
             s_lastError = "Failed to extract any segments";
+            if (logFile) { fprintf(logFile, "ERROR: No segments extracted\n"); fclose(logFile); }
             return -1;
+        }
+
+        if (logFile) {
+            fprintf(logFile, "All %zu segments extracted, concatenating...\n", tempFiles.size());
+            fflush(logFile);
         }
 
         // Concatenate all segments
         bool success = w->concatenateVideos(tempFiles, outputVideo);
+
+        if (logFile) {
+            fprintf(logFile, "Concatenation %s\n", success ? "SUCCEEDED" : "FAILED");
+            if (!success) {
+                fprintf(logFile, "Concat error: %s\n", w->getLastError().c_str());
+            }
+            fclose(logFile);
+        }
 
         // Cleanup handled by TempFileCleanup destructor
         return success ? 0 : -1;
     } catch (const std::exception& e) {
         // Cleanup handled by TempFileCleanup destructor
         s_lastError = std::string("Error during video segment extraction: ") + e.what();
+        if (logFile) { fprintf(logFile, "EXCEPTION: %s\n", e.what()); fclose(logFile); }
         return -1;
     } catch (...) {
         // Cleanup handled by TempFileCleanup destructor
         s_lastError = "Unknown exception in bs_video_extract_segments";
+        if (logFile) { fprintf(logFile, "UNKNOWN EXCEPTION\n"); fclose(logFile); }
         return -1;
     }
 }
@@ -724,7 +975,33 @@ BEATSYNC_API int bs_video_concatenate(const char** inputs, size_t count, const c
 BEATSYNC_API int bs_video_normalize_sources(void* writer, const char** inputVideos, size_t videoCount,
                                              char** normalizedPaths, size_t pathBufferSize) {
     TRACE_FUNC();
+
+    // File-based logging for diagnostics - NORMALIZE
+    std::string logPath;
+    FILE* logFile = nullptr;
+#ifdef _WIN32
+    wchar_t tempPath[MAX_PATH + 1];
+    if (GetTempPathW(MAX_PATH + 1, tempPath) > 0) {
+        char narrowPath[MAX_PATH + 1];
+        WideCharToMultiByte(CP_UTF8, 0, tempPath, -1, narrowPath, MAX_PATH + 1, nullptr, nullptr);
+        logPath = std::string(narrowPath) + "beatsync_normalize.log";
+    }
+#endif
+    if (!logPath.empty()) {
+        logFile = fopen(logPath.c_str(), "w");
+        if (logFile) {
+            fprintf(logFile, "=== bs_video_normalize_sources ENTERED (v2025.01.20) ===\n");
+            fprintf(logFile, "writer=%p, inputVideos=%p, videoCount=%zu\n", writer, (void*)inputVideos, videoCount);
+            fprintf(logFile, "normalizedPaths=%p, pathBufferSize=%zu\n", (void*)normalizedPaths, pathBufferSize);
+            fflush(logFile);
+        }
+    }
+
     if (!writer || !inputVideos || !normalizedPaths || videoCount == 0 || pathBufferSize == 0) {
+        if (logFile) {
+            fprintf(logFile, "ERROR: Invalid parameters\n");
+            fclose(logFile);
+        }
         return -1;
     }
 
@@ -740,13 +1017,27 @@ BEATSYNC_API int bs_video_normalize_sources(void* writer, const char** inputVide
 
         if (inputs.empty()) {
             s_lastError = "No valid input videos provided";
+            if (logFile) { fprintf(logFile, "ERROR: No valid input videos\n"); fclose(logFile); }
             return -1;
+        }
+
+        if (logFile) {
+            fprintf(logFile, "Collected %zu input videos, calling normalizeVideos...\n", inputs.size());
+            fflush(logFile);
         }
 
         std::vector<std::string> outputPaths;
         if (!w->normalizeVideos(inputs, outputPaths)) {
             s_lastError = w->getLastError();
+            if (logFile) {
+                fprintf(logFile, "ERROR: normalizeVideos failed: %s\n", s_lastError.c_str());
+                fclose(logFile);
+            }
             return -1;
+        }
+
+        if (logFile) {
+            fprintf(logFile, "normalizeVideos returned %zu output paths\n", outputPaths.size());
         }
 
         // Copy paths to output buffers
@@ -754,18 +1045,25 @@ BEATSYNC_API int bs_video_normalize_sources(void* writer, const char** inputVide
             if (!normalizedPaths[i]) continue;
             if (outputPaths[i].length() >= pathBufferSize) {
                 s_lastError = "Normalized path exceeds buffer size for video " + std::to_string(i);
+                if (logFile) { fprintf(logFile, "ERROR: %s\n", s_lastError.c_str()); fclose(logFile); }
                 return -1;
             }
             strncpy(normalizedPaths[i], outputPaths[i].c_str(), pathBufferSize - 1);
             normalizedPaths[i][pathBufferSize - 1] = '\0';
         }
 
+        if (logFile) {
+            fprintf(logFile, "SUCCESS: Normalized %zu videos\n", outputPaths.size());
+            fclose(logFile);
+        }
         return 0;
     } catch (const std::exception& e) {
         s_lastError = e.what();
+        if (logFile) { fprintf(logFile, "EXCEPTION: %s\n", e.what()); fclose(logFile); }
         return -1;
     } catch (...) {
         s_lastError = "Unknown exception in bs_video_normalize_sources";
+        if (logFile) { fprintf(logFile, "UNKNOWN EXCEPTION\n"); fclose(logFile); }
         return -1;
     }
 }
@@ -824,9 +1122,9 @@ BEATSYNC_API int bs_video_set_effects_config(void* writer, const bs_effects_conf
             return 0;
         }
 
-        // Basic validation (example: transitionType must not be null, effectBeatDivisor > 0, etc.)
-        if (config->transitionType == nullptr || config->effectBeatDivisor <= 0) {
-            s_lastError = "Invalid effects config: transitionType null or effectBeatDivisor <= 0";
+        // Basic validation: transitionType required only if enableTransitions is set
+        if ((config->enableTransitions && config->transitionType == nullptr) || config->effectBeatDivisor <= 0) {
+            s_lastError = "Invalid effects config: transitionType null when transitions enabled or effectBeatDivisor <= 0";
             return 2;
         }
 
@@ -972,8 +1270,15 @@ BEATSYNC_API int bs_video_extract_frame(const char* videoPath, double timestamp,
             return -1;
         }
 
-        // Allocate output buffer
-        int rgbSize = srcW * srcH * 3;
+        // Allocate output buffer with overflow check
+        size_t rgbSize = 0;
+        if (srcW > 0 && srcH > 0 && (size_t)srcW <= SIZE_MAX / (size_t)srcH && ((size_t)srcW * (size_t)srcH) <= SIZE_MAX / 3) {
+            rgbSize = (size_t)srcW * (size_t)srcH * 3;
+        } else {
+            sws_freeContext(swsCtx);
+            s_lastError = "Invalid or too large image dimensions for RGB buffer allocation";
+            return -1;
+        }
         rgbData = static_cast<unsigned char*>(malloc(rgbSize));
         if (!rgbData) {
             sws_freeContext(swsCtx);
@@ -1750,7 +2055,7 @@ BEATSYNC_API int bs_audioflux_analyze_with_stems(const char* audio_path,
                     if (progress_cb) {
                         // Map stem progress (0-1) to overall progress (0.1-0.5)
                         float overallProgress = 0.1f + p * 0.4f;
-                        return progress_cb(overallProgress, msg.c_str(), "", user_data) == 0;
+                        return progress_cb(overallProgress, msg.c_str(), "", user_data) != 0;
                     }
                     return true;
                 };
@@ -1781,7 +2086,7 @@ BEATSYNC_API int bs_audioflux_analyze_with_stems(const char* audio_path,
         auto fluxProgress = [progress_cb, user_data](float progress, const char* stage) -> bool {
             if (progress_cb) {
                 float overallProgress = 0.55f + progress * 0.45f;
-                return progress_cb(overallProgress, stage, "", user_data) == 0;
+                return progress_cb(overallProgress, stage, "", user_data) != 0;
             }
             return true;
         };

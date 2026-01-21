@@ -1,8 +1,11 @@
 #pragma once
 
+#include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 #include "Framework/Commands/UICommandList.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
+
+class FExtender;
 
 class FTripSitterUEModule : public IModuleInterface
 {
@@ -13,4 +16,6 @@ public:
 private:
     void AddMenuExtension(FMenuBuilder& MenuBuilder);
     void OpenTripSitterWindow();
+
+    TSharedPtr<FExtender> MenuExtender;
 };

@@ -9,13 +9,13 @@ A beat-synced video editor with:
 
 ## Key Locations
 
-| Item | Path |
-| ---- | ---- |
-| Project Root | `<PROJECT_ROOT>` |
-| Backend DLL | `<BACKEND_DLL_PATH>` |
-| UE Source | `<UE_SOURCE>` |
-| TripSitter EXE | `<TRIPSITTER_EXE>` |
-| TensorRT | `<TENSORRT_PATH>` |
+| Item | Path (use env variable) |
+| ---- | ----------------------- |
+| Project Root | `${PROJECT_ROOT}` |
+| Backend DLL | `${BACKEND_DLL_PATH}` |
+| UE Source | `${UE_SOURCE}` |
+| TripSitter EXE | `${TRIPSITTER_EXE}` |
+| TensorRT | `${TENSORRT_PATH}` |
 
 > **Note:** Set the following environment variables to configure your local paths:
 > - PROJECT_ROOT
@@ -32,11 +32,11 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmak
 cmake --build build --config Release --target beatsync_backend_shared
 
 # TripSitter
-Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
-& "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "${UE_SOURCE}\Engine\Source\Programs\TripSitter\Private\" -Recurse -Force
+& "${UE_SOURCE}\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
 
-## Recent Fixes (January 14, 2026)
+## Recent Fixes (January 13, 2026)
 
 1. **bs_ai_result_t redefinition** - Fixed in beatsync_capi.h (wrong struct tag name)
 2. **std::numbers::pi** - Replaced with `constexpr double PI` for C++17

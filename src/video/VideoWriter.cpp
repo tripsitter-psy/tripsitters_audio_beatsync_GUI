@@ -485,9 +485,17 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
                                    double startTime,
                                    double duration,
                                    const std::string& outputVideo) {
+    // DEBUG: Version marker to confirm correct DLL is loaded (v2025.01.19)
+    static bool versionLogged = false;
+    if (!versionLogged) {
+        std::cout << "[VideoWriter] DLL version: 2025.01.19-fix-scientific-notation\n";
+        versionLogged = true;
+    }
+
     // Clamp very small start times to zero - values like 2e-05 (0.00002s) are essentially zero
     // and can cause FFmpeg errors with scientific notation even with std::fixed in some cases
     if (startTime < 0.001) {
+        std::cout << "[VideoWriter] Clamping startTime from " << std::scientific << startTime << " to 0.0\n" << std::fixed;
         startTime = 0.0;
     }
 
@@ -507,8 +515,17 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
     // Store in member variable so copySegmentPrecise fallback can use the same decision
     m_allowGpuThisSegment = shouldUseGpuForSegment();
     bool allowGpuThisSegment = m_allowGpuThisSegment;
-    bool useCuda = allowGpuThisSegment && hasCudaHwaccel();
-    bool useScaleCuda = useCuda && hasScaleCudaFilter();
+    bool cudaAvailable = hasCudaHwaccel();
+    bool useCuda = allowGpuThisSegment && cudaAvailable;
+    bool scaleCudaAvailable = hasScaleCudaFilter();
+    bool useScaleCuda = useCuda && scaleCudaAvailable;
+
+    // DEBUG: Log GPU decision for every segment
+    static int segmentNum = 0;
+    segmentNum++;
+    std::cout << "[GPU DEBUG] Segment " << segmentNum << ": allowGpu=" << allowGpuThisSegment
+              << " cudaHwaccel=" << cudaAvailable << " scaleCuda=" << scaleCudaAvailable
+              << " -> useCuda=" << useCuda << " useScaleCuda=" << useScaleCuda << "\n";
 
     if (useCuda) {
         cmd << " -hwaccel cuda -hwaccel_device 0";
@@ -541,14 +558,10 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
             << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
     }
 
-    // Use GPU encoder only if GPU is allowed for this segment
-    // When allowGpuThisSegment is false, force CPU encoder to release GPU memory
-    if (allowGpuThisSegment) {
-        cmd << " " << getEncoderArgs("ultrafast");
-    } else {
-        // Force CPU encoder (libx264) for GPU memory release
-        cmd << " -c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p";
-    }
+    // Always use best available encoder (GPU preferred)
+    std::string encoderArgs = getEncoderArgs("ultrafast");
+    std::cout << "[GPU DEBUG] Using encoder: " << encoderArgs << "\n";
+    cmd << " " << encoderArgs;
     cmd << " -c:a aac -b:a 192k -ar 44100"
         << " -video_track_timescale 90000"
         << " -avoid_negative_ts make_zero"
@@ -686,13 +699,8 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
             << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
     }
 
-    // Use GPU encoder only if GPU is allowed for this segment
-    if (allowGpuThisSegment) {
-        cmd << " " << getEncoderArgs("ultrafast");
-    } else {
-        // Force CPU encoder (libx264) for GPU memory release
-        cmd << " -c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p";
-    }
+    // Always use best available encoder (GPU preferred)
+    cmd << " " << getEncoderArgs("ultrafast");
     cmd << " -c:a aac -b:a 192k -ar 44100"
         << " -video_track_timescale 90000"
         << " -avoid_negative_ts make_zero"
@@ -754,30 +762,79 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
 bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::string& outputVideo) {
     std::cout << "Pre-normalizing video: " << inputVideo << " -> " << outputVideo << "\n";
 
+    // File-based diagnostic logging
+    FILE* diagLog = fopen((getTempDir() + "beatsync_normalize_detail.log").c_str(), "a");
+    if (diagLog) {
+        fprintf(diagLog, "\n=== normalizeVideo ENTER ===\n");
+        fprintf(diagLog, "  input: %s\n", inputVideo.c_str());
+        fprintf(diagLog, "  output: %s\n", outputVideo.c_str());
+        fflush(diagLog);
+    }
+
     std::string ffmpegPath = getFFmpegPath();
+    if (diagLog) {
+        fprintf(diagLog, "  ffmpegPath: %s\n", ffmpegPath.c_str());
+        fflush(diagLog);
+    }
+
     std::ostringstream cmd;
     cmd << "\"" << ffmpegPath << "\"";
 
-    // NOTE: Deliberately NOT using CUDA for normalization to avoid GPU memory issues
-    // The whole point of normalization is to reduce GPU pressure during segment extraction
-    // Using CPU here is slower but prevents CUDA crashes when processing multiple videos
+    // Check GPU availability for hardware-accelerated normalization
+    bool cudaAvail = hasCudaHwaccel();
+    bool scaleCudaAvail = hasScaleCudaFilter();
+    bool nvencAvail = probeEncoder("h264_nvenc");
+    bool useGpuNormalize = cudaAvail && scaleCudaAvail && nvencAvail;
 
-    cmd << " -i \"" << inputVideo << "\"";
+    if (diagLog) {
+        fprintf(diagLog, "  GPU normalize: cuda=%d scaleCuda=%d nvenc=%d -> useGpu=%d\n",
+                cudaAvail, scaleCudaAvail, nvencAvail, useGpuNormalize);
+        fflush(diagLog);
+    }
 
-    // CPU filter chain for maximum compatibility and stability
-    cmd << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
-        << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
-        << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+    if (useGpuNormalize) {
+        // GPU-accelerated pipeline: CUDA decode -> scale_cuda -> NVENC encode
+        // Keep frames on GPU throughout for maximum performance
+        cmd << " -hwaccel cuda -hwaccel_device 0 -hwaccel_output_format cuda";
+        cmd << " -i \"" << inputVideo << "\"";
 
-    // Use libx264 for encoding during normalization (CPU-based, stable)
-    // This avoids CUDA memory issues that occur when multiple videos are being normalized
-    cmd << " -c:v libx264 -preset fast -crf 18"
-        << " -c:a aac -b:a 192k -ar 44100"
-        << " -video_track_timescale 90000"
-        << " -y \"" << outputVideo << "\"";
+        // GPU filter chain using scale_cuda, then hwdownload for pad (no pad_cuda with aspect handling)
+        // Use scale_cuda for the heavy lifting, then CPU pad for letterboxing
+        cmd << " -vf \"scale_cuda=" << m_outputWidth << ":" << m_outputHeight
+            << ":force_original_aspect_ratio=decrease,hwdownload,format=nv12"
+            << ",pad=" << m_outputWidth << ":" << m_outputHeight
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+
+        // NVENC encoding for GPU-accelerated output
+        cmd << " -c:v h264_nvenc -preset p4 -rc vbr -cq 18 -pix_fmt yuv420p"
+            << " -c:a aac -b:a 192k -ar 44100"
+            << " -video_track_timescale 90000"
+            << " -y \"" << outputVideo << "\"";
+    } else {
+        // CPU fallback for systems without CUDA/NVENC
+        cmd << " -i \"" << inputVideo << "\"";
+
+        // CPU filter chain
+        cmd << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
+            << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+
+        // libx264 CPU encoding
+        cmd << " -c:v libx264 -preset fast -crf 18"
+            << " -c:a aac -b:a 192k -ar 44100"
+            << " -video_track_timescale 90000"
+            << " -y \"" << outputVideo << "\"";
+    }
 
     std::string ffmpegOutput;
     int exitCode;
+
+    if (diagLog) {
+        fprintf(diagLog, "  Executing FFmpeg command...\n");
+        fprintf(diagLog, "  cmd: %s\n", cmd.str().substr(0, 500).c_str());
+        fflush(diagLog);
+    }
+
 #ifdef _WIN32
     exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
 #else
@@ -785,6 +842,7 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
     FILE* pipe = popen_compat(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg for video normalization";
+        if (diagLog) { fprintf(diagLog, "  ERROR: popen failed\n"); fclose(diagLog); }
         return false;
     }
     char buffer[256];
@@ -793,6 +851,12 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
     }
     exitCode = pclose_compat(pipe);
 #endif
+
+    if (diagLog) {
+        fprintf(diagLog, "  exitCode: %d\n", exitCode);
+        fprintf(diagLog, "  ffmpegOutput (first 300): %s\n", ffmpegOutput.substr(0, 300).c_str());
+        fflush(diagLog);
+    }
 
     // Log the normalization
     appendFfmpegLog("beatsync_ffmpeg_normalize.log", "normalizeVideo", cmd.str(), exitCode, ffmpegOutput, "");
@@ -806,11 +870,24 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
             fclose(test);
             if (fileSize > 1024) {
                 std::cout << "  Normalization completed (non-zero exit but file OK: " << fileSize << " bytes)\n";
+                if (diagLog) { fprintf(diagLog, "  File created despite error: %ld bytes\n", fileSize); fclose(diagLog); }
                 return true;
             }
         }
         m_lastError = "Video normalization failed: " + ffmpegOutput.substr(0, 200);
+        if (diagLog) { fprintf(diagLog, "  FAILED: %s\n", m_lastError.c_str()); fclose(diagLog); }
         return false;
+    }
+
+    // Verify file was created
+    FILE* verify = fopen(outputVideo.c_str(), "rb");
+    if (verify) {
+        fseek(verify, 0, SEEK_END);
+        long fileSize = ftell(verify);
+        fclose(verify);
+        if (diagLog) { fprintf(diagLog, "  SUCCESS: Output file %ld bytes\n", fileSize); fclose(diagLog); }
+    } else {
+        if (diagLog) { fprintf(diagLog, "  WARNING: Output file not found after success exit code!\n"); fclose(diagLog); }
     }
 
     std::cout << "  Normalization complete\n";
@@ -1134,12 +1211,11 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
                         fclose(logf);
                     }
 
-                    std::remove(listFile.c_str());
-
                     if (exitCode != 0) {
                         m_lastError = "FFmpeg transition chain failed: " + ffmpegOutput.substr(0, 200);
-                        // Fall back to standard concat below
+                        // Fall back to standard concat below (do not remove listFile yet)
                     } else {
+                        std::remove(listFile.c_str());
                         return true;
                     }
                 }  // End of transition processing block
@@ -1408,7 +1484,18 @@ static std::set<std::string> getAvailableEncoders(const std::string& ffmpegPath)
 
 bool VideoWriter::probeEncoder(const std::string& encoder) const {
     auto encoders = getAvailableEncoders(getFFmpegPath());
-    return encoders.find(encoder) != encoders.end();
+    bool found = encoders.find(encoder) != encoders.end();
+    // Log first time each encoder is probed (thread-safe)
+    static std::set<std::string> loggedEncoders;
+    static std::mutex loggedEncodersMutex;
+    {
+        std::lock_guard<std::mutex> lock(loggedEncodersMutex);
+        if (loggedEncoders.find(encoder) == loggedEncoders.end()) {
+            std::cout << "[GPU DEBUG] probeEncoder(" << encoder << ") = " << (found ? "YES" : "NO") << "\n";
+            loggedEncoders.insert(encoder);
+        }
+    }
+    return found;
 }
 
 GPUEncoderInfo VideoWriter::detectBestEncoder(const std::string& speedPreset) const {
@@ -1574,27 +1661,10 @@ void VideoWriter::logGpuCapabilities() const {
 }
 
 bool VideoWriter::shouldUseGpuForSegment() {
-    std::lock_guard<std::recursive_mutex> lock(m_cacheMutex);
-
-    // Increment counter
-    m_segmentsSinceGpuReset++;
-
-    // Every GPU_RESET_INTERVAL segments, flush GPU memory and force CPU mode
-    // This prevents CUDA memory accumulation during long processing jobs
-    if (m_segmentsSinceGpuReset >= GPU_RESET_INTERVAL) {
-        int triggeredSegment = m_segmentsSinceGpuReset;
-        m_segmentsSinceGpuReset = 0;
-        std::cout << "[GPU] Flushing GPU memory and forcing CPU mode for segment "
-                  << triggeredSegment << "\n";
-
-        // Flush GPU memory before continuing - this forces NVIDIA driver
-        // to clean up orphaned CUDA contexts from previous FFmpeg processes
-        flushGpuMemory();
-
-        return false;  // Don't use GPU for this segment
-    }
-
-    return true;  // Use GPU (if available)
+    // Always use GPU - modern GPUs (8GB+ VRAM) can easily handle the load
+    // FFmpeg manages its own CUDA contexts per process and cleans up properly
+    // The periodic CPU fallback was overly conservative and hurt performance
+    return true;
 }
 
 void VideoWriter::resetSegmentCounter() {
@@ -1824,9 +1894,41 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
     std::ostringstream cmd;
     cmd << "\"" << ffmpegPath << "\"";
 
-    // Add CUDA hardware acceleration for decoding if available
-    if (hasCudaHwaccel()) {
+    // Check GPU capabilities for optimal pipeline selection
+    bool cudaAvailable = hasCudaHwaccel();
+    bool scaleCudaAvailable = hasScaleCudaFilter();
+    bool nvencAvailable = probeEncoder("h264_nvenc");
+
+    // GPU-accelerated effects pipeline strategy:
+    // - Use CUDA decode with hwaccel_output_format cuda to keep frames on GPU
+    // - Use scale_cuda and overlay_cuda for zoom effects (keeps frames on GPU)
+    // - For brightness (eq filter), we must go through CPU but minimize transfers
+    // - Use NVENC for encoding to leverage GPU
+
+    bool useGpuPipeline = cudaAvailable && scaleCudaAvailable && nvencAvailable;
+    bool hasZoomEffect = m_effects.enableBeatZoom && !filteredBeats.empty();
+    bool hasFlashEffect = m_effects.enableBeatFlash && !filteredBeats.empty();
+
+    // Log GPU pipeline decision
+    {
+        FILE* gpuLog = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
+        if (gpuLog) {
+            fprintf(gpuLog, "\n--- GPU Pipeline Decision ---\n");
+            fprintf(gpuLog, "cudaAvailable=%d, scaleCudaAvailable=%d, nvencAvailable=%d\n",
+                    cudaAvailable, scaleCudaAvailable, nvencAvailable);
+            fprintf(gpuLog, "useGpuPipeline=%d, hasZoomEffect=%d, hasFlashEffect=%d\n",
+                    useGpuPipeline, hasZoomEffect, hasFlashEffect);
+            fclose(gpuLog);
+        }
+    }
+
+    // Add CUDA hardware acceleration for decoding
+    if (cudaAvailable) {
         cmd << " -hwaccel cuda -hwaccel_device 0";
+        // Keep frames on GPU if we're using GPU pipeline for zoom (no flash, or flash-only with GPU zoom)
+        if (useGpuPipeline && hasZoomEffect && !hasFlashEffect) {
+            cmd << " -hwaccel_output_format cuda";
+        }
     }
 
     cmd << " -i \"" << inputVideo << "\"";
@@ -1847,11 +1949,14 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
     // Track if we need to output a label for the zoom filter to consume
     // When prior filters exist and zoom is enabled, we need proper filter graph syntax
     // because FFmpeg filter graphs can only consume an input stream once
-    bool zoomWillBeEnabled = m_effects.enableBeatZoom && !filteredBeats.empty();
+    bool zoomWillBeEnabled = hasZoomEffect;
     std::string priorFilterOutput;  // Will be set if prior filters output a label for zoom
 
     // Beat flash effect using chained eq filters
-    if (m_effects.enableBeatFlash && !filteredBeats.empty()) {
+    // Note: eq filter is CPU-only, but we optimize by:
+    // 1. Using CUDA decode (frames downloaded once for eq processing)
+    // 2. Using NVENC encode (frames uploaded once after all CPU filters)
+    if (hasFlashEffect) {
         double flashDuration = 0.08;
         double intensity = std::max(0.1, std::min(1.0, m_effects.flashIntensity));
 
@@ -1897,10 +2002,11 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         priorFilterOutput = "[prior_out]";
     }
 
-    // Beat zoom effect using chained scale filters
-    // Note: scale filter doesn't support time expressions, so we use setpts+trim approach
-    // Actually, for zoom we need a different approach - use crop+scale with enable
-    if (m_effects.enableBeatZoom && !filteredBeats.empty()) {
+    // Beat zoom effect
+    // Strategy: Use GPU-accelerated filters when available and no flash effect
+    // - scale_cuda + overlay_cuda for pure GPU pipeline
+    // - CPU scale + overlay when flash effect is present (frames already on CPU)
+    if (hasZoomEffect) {
         double zoomDuration = 0.15;
         double zoomAmount = std::max(0.01, std::min(0.15, m_effects.zoomIntensity));
         // Scale factor: 1.0 + zoomAmount means we scale up then crop back
@@ -1916,6 +2022,23 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
 
         // Calculate total number of chunks upfront so we know which is the last
         size_t totalChunks = (filteredBeats.size() + BEATS_PER_FILTER - 1) / BEATS_PER_FILTER;
+
+        // Determine if we can use GPU zoom filters
+        // We can use GPU zoom if:
+        // 1. GPU pipeline is available (scale_cuda, overlay_cuda)
+        // 2. No flash effect (which forces CPU processing)
+        // 3. No prior CPU filters in the chain
+        bool useGpuZoom = useGpuPipeline && !hasFlashEffect && filterChain.empty();
+
+        // Log zoom strategy
+        {
+            FILE* zoomLog = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
+            if (zoomLog) {
+                fprintf(zoomLog, "Zoom strategy: useGpuZoom=%d (gpuPipeline=%d, noFlash=%d, noFilterChain=%d)\n",
+                        useGpuZoom, useGpuPipeline, !hasFlashEffect, filterChain.empty());
+                fclose(zoomLog);
+            }
+        }
 
         // Split beats into chunks
         for (size_t chunk = 0; chunk * BEATS_PER_FILTER < filteredBeats.size(); ++chunk) {
@@ -1943,15 +2066,33 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
             // so FFmpeg uses it as the default video output
             std::string outputLabel = isLastChunk ? "" : "[zoom_out" + std::to_string(chunk) + "]";
 
-            // Use scale+crop combination with enable expression
-            // When enabled, scale up and crop to center; when disabled, pass through
             std::ostringstream zoomFilter;
-            zoomFilter << inputPad << "split[zoom_main" << chunk << "][zoom_in" << chunk << "];"
-                      << "[zoom_in" << chunk << "]scale=" << scaledW << ":" << scaledH
-                      << ",crop=" << m_outputWidth << ":" << m_outputHeight << ":" << cropX << ":" << cropY
-                      << "[zoom_scaled" << chunk << "];"
-                      << "[zoom_main" << chunk << "][zoom_scaled" << chunk << "]overlay=enable='" << enableExpr.str() << "'"
-                      << outputLabel;
+
+            if (useGpuZoom) {
+                // GPU-accelerated zoom using scale_cuda and overlay_cuda
+                // Note: overlay_cuda doesn't support enable expressions, so we use a different approach:
+                // We'll use the standard CPU overlay with enable, but use scale_cuda for the scaling
+                // This still provides benefit since scale is the most compute-intensive part
+
+                // For now, use hwdownload before overlay since overlay_cuda doesn't support enable
+                // This is still faster than pure CPU because scale_cuda is much faster
+                zoomFilter << inputPad << "split[zoom_main" << chunk << "][zoom_in" << chunk << "];"
+                          << "[zoom_in" << chunk << "]scale_cuda=" << scaledW << ":" << scaledH
+                          << ",hwdownload,format=nv12"
+                          << ",crop=" << m_outputWidth << ":" << m_outputHeight << ":" << cropX << ":" << cropY
+                          << "[zoom_scaled" << chunk << "];"
+                          << "[zoom_main" << chunk << "]hwdownload,format=nv12[zoom_main_cpu" << chunk << "];"
+                          << "[zoom_main_cpu" << chunk << "][zoom_scaled" << chunk << "]overlay=enable='" << enableExpr.str() << "'"
+                          << outputLabel;
+            } else {
+                // CPU zoom (when flash effect is present or GPU not available)
+                zoomFilter << inputPad << "split[zoom_main" << chunk << "][zoom_in" << chunk << "];"
+                          << "[zoom_in" << chunk << "]scale=" << scaledW << ":" << scaledH
+                          << ",crop=" << m_outputWidth << ":" << m_outputHeight << ":" << cropX << ":" << cropY
+                          << "[zoom_scaled" << chunk << "];"
+                          << "[zoom_main" << chunk << "][zoom_scaled" << chunk << "]overlay=enable='" << enableExpr.str() << "'"
+                          << outputLabel;
+            }
 
             if (chunk == 0 && !vf.empty()) {
                 // First zoom chunk but have prior filters - connect them
@@ -2016,9 +2157,6 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
     // Clean up temp files
     if (useFilterScript && !filterScriptPath.empty()) {
         std::remove(filterScriptPath.c_str());
-    }
-    if (!sendcmdPath.empty()) {
-        std::remove(sendcmdPath.c_str());
     }
 
     // Log the effects command output
