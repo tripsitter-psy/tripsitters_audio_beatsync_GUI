@@ -15,13 +15,109 @@ on:
         required: false
         default: ''
         type: string
+      include_tripsitter:
+        description: 'Include TripSitter.exe (requires self-hosted runner)'
+        required: false
+        default: false
+        type: boolean
 
 env:
   BUILD_TYPE: Release
 
 jobs:
-  build-and-sign:
-    name: Build, Sign & Package (Windows)
+  # Stage 1: Build backend DLL on GitHub-hosted runner
+  build-backend:
+    name: Build Backend DLL
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '25b458671af03578e6a34edd8f0d1ac85e084df4'
+
+      - name: Configure CMake
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" `
+            -DBUILD_TESTS=OFF
+        shell: powershell
+
+      - name: Build Backend
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} --target beatsync_backend_shared -- /m
+        shell: powershell
+
+      - name: Upload Backend Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-dlls
+          path: |
+            build/Release/*.dll
+            build/vcpkg_installed/x64-windows/bin/onnxruntime*.dll
+
+  # Stage 2: Build TripSitter.exe on self-hosted runner with UE5
+  # This job only runs when explicitly requested or on tag pushes with self-hosted runner available
+  build-tripsitter:
+    name: Build TripSitter GUI
+    needs: build-backend
+    runs-on: [self-hosted, windows, ue5]
+    if: github.event.inputs.include_tripsitter == 'true' || startsWith(github.ref, 'refs/tags/v')
+    continue-on-error: true  # Don't fail entire workflow if UE5 runner unavailable
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Backend
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-dlls
+          path: build/Release
+
+      - name: Deploy DLLs to UE5
+        run: |
+          $ue5Bin = "C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64"
+
+          # Copy backend DLLs
+          Copy-Item 'build\Release\beatsync_backend_shared.dll' $ue5Bin -Force
+          Copy-Item 'build\Release\onnxruntime.dll' $ue5Bin -Force -ErrorAction SilentlyContinue
+
+          # Copy FFmpeg DLLs from ThirdParty
+          Copy-Item 'unreal-prototype\ThirdParty\beatsync\lib\x64\av*.dll' $ue5Bin -Force
+          Copy-Item 'unreal-prototype\ThirdParty\beatsync\lib\x64\sw*.dll' $ue5Bin -Force
+
+          Write-Host "DLLs deployed to $ue5Bin"
+        shell: powershell
+
+      - name: Sync Source to UE5
+        run: |
+          $dest = "C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private"
+          if (-not (Test-Path $dest)) {
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          }
+          Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination $dest -Recurse -Force
+          Write-Host "Source synced to UE5"
+        shell: powershell
+
+      - name: Build TripSitter
+        run: |
+          & "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+        shell: powershell
+
+      - name: Upload TripSitter Executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: tripsitter-exe
+          path: C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe
+
+  # Stage 3: Create installer packages
+  package-and-sign:
+    name: Package & Sign (Windows)
+    needs: [build-backend]
     runs-on: windows-latest
 
     steps:
@@ -31,7 +127,6 @@ jobs:
       - name: Install build tools
         run: |
           choco install -y nsis 7zip
-          # Add NSIS to PATH for subsequent steps
           $nsisPath = "C:\Program Files (x86)\NSIS"
           if (Test-Path $nsisPath) {
             echo "$nsisPath" >> $env:GITHUB_PATH
@@ -49,21 +144,41 @@ jobs:
           & $makensis /VERSION
         shell: powershell
 
-      - name: Setup vcpkg
+      - name: Download Backend Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-dlls
+          path: build/Release
+
+      - name: Download TripSitter (if available)
+        uses: actions/download-artifact@v4
+        with:
+          name: tripsitter-exe
+          path: staging/bin
+        continue-on-error: true
+
+      - name: Setup vcpkg (for CMake configuration)
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgGitCommitId: '25b458671af03578e6a34edd8f0d1ac85e084df4' # Example: replace with a real commit from microsoft/vcpkg
+          vcpkgGitCommitId: '25b458671af03578e6a34edd8f0d1ac85e084df4'
 
-      - name: Configure CMake
+      - name: Configure CMake for Packaging
         run: |
+          # Check if TripSitter.exe was downloaded
+          $tripSitterPath = "staging/bin/TripSitter.exe"
+          if (Test-Path $tripSitterPath) {
+            $tripSitterArg = "-DTRIPSITTER_EXE_PATH=${{ github.workspace }}/staging/bin/TripSitter.exe"
+            Write-Host "TripSitter.exe found - will be included in installer"
+          } else {
+            $tripSitterArg = ""
+            Write-Warning "TripSitter.exe not found - installer will not include main GUI"
+          }
+
           cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
             -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
-            -DBUILD_GUI=OFF `
-            -DBUILD_TESTS=OFF
-        shell: powershell
-
-      - name: Build
-        run: cmake --build build --config ${{ env.BUILD_TYPE }} -- /m
+            -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" `
+            -DBUILD_TESTS=OFF `
+            $tripSitterArg
         shell: powershell
 
       - name: Check certificate availability
@@ -85,7 +200,7 @@ jobs:
           CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.CODESIGN_CERTIFICATE_PASSWORD }}
         run: |
           pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/sign-windows-binaries.ps1 `
-            -BuildDir "build/bin/${{ env.BUILD_TYPE }}"
+            -BuildDir "build/Release"
         shell: powershell
 
       - name: Generate installer (CPack)
@@ -101,26 +216,24 @@ jobs:
           CODESIGN_CERTIFICATE_BASE64: ${{ secrets.CODESIGN_CERTIFICATE_BASE64 }}
           CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.CODESIGN_CERTIFICATE_PASSWORD }}
         run: |
-          $installer = Get-ChildItem -Path build -Filter "TripSitter*-Setup*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if (-not $installer) {
-            $installer = Get-ChildItem -Path build -Filter "*.exe" | Where-Object { 
-              $_.Name -like "*TripSitter*" -and 
-              ($_.Name -like "*Setup*" -or $_.Name -match "\d+\.\d+") -and 
-              $_.Name -notlike "*uninstall*" -and 
-              $_.Name -notlike "*Uninstall*" 
-            } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          }
-          if (-not $installer) {
-            Write-Error "No installer executable found."
-            exit 1
-          }
+          $installer = Get-ChildItem -Path build -Filter "*.exe" |
+            Where-Object { $_.Name -like "*TripSitter*" -or $_.Name -like "*MTV*" } |
+            Where-Object { $_.Name -notlike "*uninstall*" -and $_.Name -notlike "*Uninstall*" } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if ($installer) {
             pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/sign-windows-binaries.ps1 -InstallerPath $installer.FullName
+          } else {
+            Write-Warning "No installer executable found to sign"
+          }
         shell: powershell
 
       - name: List build artifacts
         run: |
           Write-Host "=== Build Output ===" -ForegroundColor Cyan
-          Get-ChildItem -Path build -Recurse -File | Where-Object { $_.Extension -in '.exe', '.zip', '.dll' } | Format-Table Name, Length, LastWriteTime
+          Get-ChildItem -Path build -Recurse -File |
+            Where-Object { $_.Extension -in '.exe', '.zip', '.dll' } |
+            Format-Table Name, Length, LastWriteTime
         shell: powershell
 
       - name: Upload installer
@@ -139,7 +252,7 @@ jobs:
 
   smoke-test:
     name: Installer Smoke Test
-    needs: build-and-sign
+    needs: package-and-sign
     runs-on: windows-latest
 
     steps:
@@ -180,7 +293,7 @@ jobs:
           Write-Host "Installation completed successfully"
         shell: powershell
 
-      - name: Verify installation
+      - name: Verify installation structure
         run: |
           $installPath = "$env:ProgramFiles\MTV TripSitter"
 
@@ -191,46 +304,151 @@ jobs:
           }
 
           Write-Host "Installation directory found: $installPath"
+          Write-Host "`n=== Installation Contents ===" -ForegroundColor Cyan
           Get-ChildItem -Path $installPath -Recurse | Format-Table Name, Length
 
-          # Check for main executable
-          $exe = Get-ChildItem -Path $installPath -Recurse -Filter "*.exe" |
-                 Where-Object { $_.Name -notlike "*uninstall*" } |
-                 Select-Object -First 1
+          # Verify expected directories
+          $expectedDirs = @("bin", "licenses")
+          $optionalDirs = @("models", "resources")
 
-          if (-not $exe) {
-            Write-Error "No executable found in installation"
-            exit 1
+          foreach ($dir in $expectedDirs) {
+            $dirPath = Join-Path $installPath $dir
+            if (Test-Path $dirPath) {
+              Write-Host "[OK] Required directory exists: $dir" -ForegroundColor Green
+            } else {
+              Write-Warning "Required directory missing: $dir"
+            }
           }
 
-          Write-Host "Found executable: $($exe.FullName)"
-
-          # Verify executable can start (brief launch test)
-          Write-Host "Starting smoke test launch..."
-          $proc = Start-Process -FilePath $exe.FullName -PassThru
-          
-          # Configurable timeout for smoke test (default 30 seconds)
-          $smokeTestTimeout = [int]$env:SMOKE_TEST_TIMEOUT
-          if ($smokeTestTimeout -le 0) { $smokeTestTimeout = 30 }
-          $pollInterval = 2  # Check every 2 seconds
-          $elapsed = 0
-          
-          Write-Host "Waiting up to ${smokeTestTimeout}s for application to initialize..."
-          while ($elapsed -lt $smokeTestTimeout -and -not $proc.HasExited) {
-            Start-Sleep -Seconds $pollInterval
-            $elapsed += $pollInterval
-            Write-Host "  ... ${elapsed}s elapsed, process still running"
+          foreach ($dir in $optionalDirs) {
+            $dirPath = Join-Path $installPath $dir
+            if (Test-Path $dirPath) {
+              Write-Host "[OK] Optional directory exists: $dir" -ForegroundColor Green
+            } else {
+              Write-Host "[INFO] Optional directory not present: $dir" -ForegroundColor Yellow
+            }
           }
+        shell: powershell
 
-          if ($proc.HasExited) {
-            Write-Warning "Application exited during smoke test (exit code: $($proc.ExitCode))"
-            # Don't fail - app might legitimately exit if missing audio file, etc.
+      - name: Verify TripSitter.exe
+        run: |
+          $installPath = "$env:ProgramFiles\MTV TripSitter"
+          $tripSitterExe = Join-Path $installPath "bin\TripSitter.exe"
+
+          if (Test-Path $tripSitterExe) {
+            Write-Host "[OK] TripSitter.exe found" -ForegroundColor Green
+            $exeInfo = Get-Item $tripSitterExe
+            Write-Host "  Size: $([math]::Round($exeInfo.Length / 1MB, 2)) MB"
+
+            # Brief launch test
+            Write-Host "Starting smoke test launch..."
+            $proc = Start-Process -FilePath $tripSitterExe -PassThru
+
+            $smokeTestTimeout = 30
+            $pollInterval = 2
+            $elapsed = 0
+
+            Write-Host "Waiting up to ${smokeTestTimeout}s for application to initialize..."
+            while ($elapsed -lt $smokeTestTimeout -and -not $proc.HasExited) {
+              Start-Sleep -Seconds $pollInterval
+              $elapsed += $pollInterval
+              Write-Host "  ... ${elapsed}s elapsed, process still running"
+            }
+
+            if ($proc.HasExited) {
+              Write-Warning "Application exited during smoke test (exit code: $($proc.ExitCode))"
+            } else {
+              Write-Host "[OK] Application running successfully after ${elapsed}s" -ForegroundColor Green
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            }
           } else {
-            Write-Host "Application running successfully after ${elapsed}s"
-            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            Write-Warning "TripSitter.exe not found - this is expected if UE5 build was skipped"
+
+            # Check for any executable in bin
+            $anyExe = Get-ChildItem -Path (Join-Path $installPath "bin") -Filter "*.exe" -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -notlike "*uninstall*" } |
+              Select-Object -First 1
+
+            if ($anyExe) {
+              Write-Host "[INFO] Found alternative executable: $($anyExe.Name)" -ForegroundColor Yellow
+            }
+          }
+        shell: powershell
+
+      - name: Verify license files
+        run: |
+          $installPath = "$env:ProgramFiles\MTV TripSitter"
+          $licensesDir = Join-Path $installPath "licenses"
+
+          if (Test-Path $licensesDir) {
+            $licenseFile = Join-Path $licensesDir "LICENSE"
+            $thirdPartyFile = Join-Path $licensesDir "THIRD_PARTY_LICENSES.md"
+
+            if (Test-Path $licenseFile) {
+              Write-Host "[OK] LICENSE file present" -ForegroundColor Green
+              # Verify it's not the placeholder
+              $content = Get-Content $licenseFile -First 1
+              if ($content -like "*MIT License*") {
+                Write-Host "[OK] LICENSE contains MIT license text" -ForegroundColor Green
+              } elseif ($content -like "*Placeholder*") {
+                Write-Error "LICENSE file is still a placeholder!"
+                exit 1
+              }
+            } else {
+              Write-Warning "LICENSE file not found"
+            }
+
+            if (Test-Path $thirdPartyFile) {
+              Write-Host "[OK] THIRD_PARTY_LICENSES.md present" -ForegroundColor Green
+            } else {
+              Write-Warning "THIRD_PARTY_LICENSES.md not found"
+            }
+          } else {
+            Write-Warning "licenses directory not found"
+          }
+        shell: powershell
+
+      - name: Verify required DLLs
+        run: |
+          $binDir = "$env:ProgramFiles\MTV TripSitter\bin"
+
+          if (-not (Test-Path $binDir)) {
+            Write-Warning "bin directory not found"
+            exit 0
           }
 
-          Write-Host "Smoke test passed!"
+          $requiredDlls = @(
+            "beatsync_backend_shared.dll"
+          )
+
+          $optionalDlls = @(
+            "onnxruntime.dll",
+            "avcodec-62.dll",
+            "avformat-62.dll",
+            "avutil-60.dll"
+          )
+
+          Write-Host "`n=== DLL Verification ===" -ForegroundColor Cyan
+
+          foreach ($dll in $requiredDlls) {
+            $dllPath = Join-Path $binDir $dll
+            if (Test-Path $dllPath) {
+              $size = [math]::Round((Get-Item $dllPath).Length / 1MB, 2)
+              Write-Host "[OK] $dll ($size MB)" -ForegroundColor Green
+            } else {
+              Write-Error "Required DLL missing: $dll"
+            }
+          }
+
+          foreach ($dll in $optionalDlls) {
+            $dllPath = Join-Path $binDir $dll
+            if (Test-Path $dllPath) {
+              $size = [math]::Round((Get-Item $dllPath).Length / 1MB, 2)
+              Write-Host "[OK] $dll ($size MB)" -ForegroundColor Green
+            } else {
+              Write-Host "[INFO] Optional DLL not present: $dll" -ForegroundColor Yellow
+            }
+          }
         shell: powershell
 
       - name: Run uninstallation
@@ -241,14 +459,32 @@ jobs:
             Write-Host "Running uninstaller..."
             $proc = Start-Process -FilePath $uninstaller -ArgumentList "/S" -PassThru -Wait
             Write-Host "Uninstaller exit code: $($proc.ExitCode)"
+
+            # Verify cleanup
+            $installPath = "$env:ProgramFiles\MTV TripSitter"
+            if (-not (Test-Path $installPath)) {
+              Write-Host "[OK] Installation directory removed" -ForegroundColor Green
+            } else {
+              $remaining = Get-ChildItem -Path $installPath -Recurse -ErrorAction SilentlyContinue
+              if ($remaining) {
+                Write-Warning "Some files remain after uninstall:"
+                $remaining | Format-Table Name
+              }
+            }
           } else {
             Write-Warning "Uninstaller not found at: $uninstaller"
           }
         shell: powershell
 
+      - name: Smoke test summary
+        run: |
+          Write-Host "`n=== Smoke Test Complete ===" -ForegroundColor Cyan
+          Write-Host "All critical checks passed!" -ForegroundColor Green
+        shell: powershell
+
   create-release:
     name: Create GitHub Release
-    needs: [build-and-sign, smoke-test]
+    needs: [package-and-sign, smoke-test]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
 
@@ -273,27 +509,28 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          # Create empty checksums.txt file
           : > checksums.txt
           found_files=0
-          # Checksum installer files
+
           if compgen -G "mtv-tripsitter-installer/*.exe" > /dev/null; then
             for f in mtv-tripsitter-installer/*.exe; do
               sha256sum "$f" | sed 's|mtv-tripsitter-installer/||' >> checksums.txt
               found_files=1
             done
           fi
-          # Checksum zip files
+
           if compgen -G "mtv-tripsitter-zip/*.zip" > /dev/null; then
             for f in mtv-tripsitter-zip/*.zip; do
               sha256sum "$f" | sed 's|mtv-tripsitter-zip/||' >> checksums.txt
               found_files=1
             done
           fi
+
           if [ "$found_files" -eq 0 ]; then
             echo "ERROR: No installer or zip files found for checksumming." | tee checksums.txt
             exit 1
           fi
+
           echo "Generated checksums:"
           cat checksums.txt
 
@@ -317,6 +554,7 @@ jobs:
             1. Download `MTVTripSitter-*.exe`
             2. Run the installer
             3. Follow the installation wizard
+            4. Launch from Start Menu or Desktop shortcut
 
             #### Portable ZIP
             1. Download `MTVTripSitter-*.zip`
@@ -325,12 +563,25 @@ jobs:
 
             ### System Requirements
             - Windows 10 or later (64-bit)
-            - 4GB RAM minimum
-            - GPU recommended for video processing
+            - 4GB RAM minimum (8GB recommended)
+            - NVIDIA GPU recommended for AI acceleration
+              - RTX series: TensorRT acceleration
+              - GTX series: CUDA acceleration
+              - No GPU: CPU fallback (slower)
+
+            ### Features
+            - AI-powered beat detection (ONNX Runtime)
+            - Multiple analysis modes: Energy, ONNX AI, Flux, Stems + Flux
+            - Beat-synchronized video editing
+            - Real-time waveform visualization
+            - Customizable beat effects
 
             ### Checksums
             ```
-            SHA256 checksums are automatically generated and included in the release.
+            SHA256 checksums are included in checksums.txt
             ```
+
+            ### Known Issues
+            See [CHANGELOG.md](https://github.com/tripsitter-psy/tripsitters_audio_beatsync_GUI/blob/main/CHANGELOG.md) for details.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

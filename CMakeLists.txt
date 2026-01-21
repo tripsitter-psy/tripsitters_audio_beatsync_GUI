@@ -18,6 +18,18 @@ else()
     set(TENSORRT_DLL_DIR "C:/TensorRT-10.9.0.34/lib" CACHE PATH "TensorRT DLL directory")
 endif()
 
+# AudioFlux DLL directories for installer (optional - for spectral analysis)
+set(AUDIOFLUX_DLL_DIR "" CACHE PATH "AudioFlux DLL directory")
+set(AUDIOFLUX_FFTW_DLL "" CACHE PATH "AudioFlux FFTW3 DLL path")
+
+# TripSitter.exe path (built separately by Unreal Engine)
+# Set via -DTRIPSITTER_EXE_PATH=... or env var
+if(DEFINED ENV{TRIPSITTER_EXE_PATH})
+    set(TRIPSITTER_EXE_PATH "$ENV{TRIPSITTER_EXE_PATH}" CACHE FILEPATH "Path to TripSitter.exe")
+else()
+    set(TRIPSITTER_EXE_PATH "C:/UE5_Source/UnrealEngine/Engine/Binaries/Win64/TripSitter.exe" CACHE FILEPATH "Path to TripSitter.exe")
+endif()
+
 # Configure NSIS installer template (run after BEATSYNC_VERSION is set so substitutions work)
 configure_file(
     installer/nsis_template.nsi.in
@@ -266,6 +278,13 @@ if(USE_AUDIOFLUX)
             src/audio/AudioFluxBeatDetector.cpp
         )
         add_definitions(-DUSE_AUDIOFLUX)
+
+        # Set AudioFlux DLL paths for installer
+        get_filename_component(AUDIOFLUX_LIB_DIR_FOR_INSTALLER "${AUDIOFLUX_LIBRARY}" DIRECTORY)
+        set(AUDIOFLUX_DLL_DIR "${AUDIOFLUX_LIB_DIR_FOR_INSTALLER}" CACHE PATH "AudioFlux DLL directory" FORCE)
+        if(AUDIOFLUX_ROOT)
+            set(AUDIOFLUX_FFTW_DLL "${AUDIOFLUX_ROOT}/python/audioflux/lib/libfftw3f-3.dll" CACHE FILEPATH "AudioFlux FFTW3 DLL path" FORCE)
+        endif()
     else()
         message(WARNING "AudioFlux not found (include: ${AUDIOFLUX_INCLUDE_DIR}, lib: ${AUDIOFLUX_LIBRARY}). Spectral analysis disabled.")
     endif()
@@ -368,13 +387,46 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/scripts/dist/demucs_separate.exe")
 endif()
 
 
+# Install TripSitter.exe (main GUI - built separately by Unreal Engine)
+if(EXISTS "${TRIPSITTER_EXE_PATH}")
+    install(PROGRAMS "${TRIPSITTER_EXE_PATH}" DESTINATION bin)
+    message(STATUS "TripSitter.exe found at ${TRIPSITTER_EXE_PATH} - will be included in installer")
+else()
+    message(WARNING "TripSitter.exe not found at ${TRIPSITTER_EXE_PATH} - installer will be incomplete")
+endif()
+
 # Install ONNX models if they exist (preferred method - no Python needed)
 if(EXISTS "${CMAKE_SOURCE_DIR}/models")
     install(DIRECTORY "${CMAKE_SOURCE_DIR}/models" DESTINATION .)
 endif()
 
+# Install UI resources (fonts, images)
+set(TRIPSITTER_RESOURCES_DIR "${CMAKE_SOURCE_DIR}/unreal-prototype/Source/TripSitter/Resources")
+if(EXISTS "${TRIPSITTER_RESOURCES_DIR}")
+    install(FILES
+        "${TRIPSITTER_RESOURCES_DIR}/wallpaper.png"
+        "${TRIPSITTER_RESOURCES_DIR}/TitleHeader.png"
+        "${TRIPSITTER_RESOURCES_DIR}/icon.png"
+        "${TRIPSITTER_RESOURCES_DIR}/Corpta.otf"
+        "${TRIPSITTER_RESOURCES_DIR}/TripSitter.ico"
+        DESTINATION resources
+        OPTIONAL
+    )
+endif()
+
+# Install license files
+install(FILES "${CMAKE_SOURCE_DIR}/LICENSE" DESTINATION licenses)
+if(EXISTS "${CMAKE_SOURCE_DIR}/THIRD_PARTY_LICENSES.md")
+    install(FILES "${CMAKE_SOURCE_DIR}/THIRD_PARTY_LICENSES.md" DESTINATION licenses)
+endif()
+
+# Install changelog
+if(EXISTS "${CMAKE_SOURCE_DIR}/CHANGELOG.md")
+    install(FILES "${CMAKE_SOURCE_DIR}/CHANGELOG.md" DESTINATION .)
+endif()
+
 # Also install the Python scripts as fallback (for users who have Python)
-install(FILES 
+install(FILES
     "${CMAKE_SOURCE_DIR}/scripts/beatnet_analyze.py"
     "${CMAKE_SOURCE_DIR}/scripts/demucs_separate.py"
     DESTINATION scripts
@@ -408,12 +460,12 @@ if(WIN32)
     if(EXISTS "${CMAKE_SOURCE_DIR}/assets/icon.ico")
         set(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}/assets/icon.ico")
         set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}/assets/icon.ico")
-        set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\beatsync.exe")
+        set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\TripSitter.exe")
     endif()
 
     # Start menu and desktop shortcuts
     set(CPACK_NSIS_CREATE_ICONS_EXTRA
-        "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk' '$INSTDIR\\\\bin\\\\beatsync.exe'"
+        "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk' '$INSTDIR\\\\bin\\\\TripSitter.exe'"
     )
     set(CPACK_NSIS_DELETE_ICONS_EXTRA
         "Delete '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk'"
