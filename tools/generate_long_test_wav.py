@@ -46,7 +46,9 @@ if __name__ == '__main__':
     if len(sys.argv) > 3:
         rate = int(sys.argv[3])
     import os
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    dirpath = os.path.dirname(out)
+    if dirpath:
+        os.makedirs(dirpath, exist_ok=True)
     print(f'Generating {out} ({dur}s @ {rate}Hz) ...')
     generate(out, dur, rate)
     print('Done')

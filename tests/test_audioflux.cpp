@@ -90,6 +90,7 @@ int main() {
             std::cout << "\n  SUCCESS: BPM is in expected range (110-130)" << std::endl;
         } else {
             std::cout << "\n  WARNING: BPM " << result.bpm << " is outside expected range" << std::endl;
+            return 1;
         }
 
     } catch (const std::exception& e) {
@@ -103,8 +104,10 @@ int main() {
     std::cout << "\n=== All tests passed! ===" << std::endl;
     return 0;
 
+
 #else
     std::cout << "AudioFlux support: DISABLED (USE_AUDIOFLUX not defined)" << std::endl;
-    return 1;
+    // Return 0 to indicate skipped, not failed
+    return 0;
 #endif
 }

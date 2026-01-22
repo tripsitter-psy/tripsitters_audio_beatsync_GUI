@@ -137,7 +137,6 @@ if ($env:GITHUB_REPOSITORY) {
             $hasGpu = $runners | Where-Object { $_.labels.name -contains 'gpu' }
             if ($hasGpu) { Write-Host "Found runner(s) with 'gpu' label." } else { Write-Warning "No runner with 'gpu' label found in repo runners." }
         } catch {
-            $errorMsg = $_.Exception.Message
             $statusCode = $null
             if ($_.Exception.Response) {
                 $statusCode = $_.Exception.Response.StatusCode
@@ -151,6 +150,30 @@ if ($env:GITHUB_REPOSITORY) {
     }
 } else {
     Write-Host "No GITHUB_REPOSITORY provided — skipping GitHub runner label check. Set GITHUB_REPOSITORY='owner/repo' to enable."
+}
+
+Write-Host "Validation done. Review warnings above and fix as needed."
+            $errorMsg = $_.Exception.Message
+            $statusCode = $null
+            if ($_.Exception.Response) {
+                $statusCode = $_.Exception.Response.StatusCode
+                $statusDesc = $_.Exception.Response.StatusDescription
+                if ($statusCode) {
+                    $errorMsg = "$errorMsg (status: $statusCode $statusDesc)"
+                }
+            }
+            Write-Warning "GitHub API request failed: $errorMsg"
+            $script:GitHubApiFailed = $true
+        }
+    }
+} else {
+    Write-Host "No GITHUB_REPOSITORY provided  skipping GitHub runner label check. Set GITHUB_REPOSITORY='owner/repo' to enable."
+}
+
+# Final error check for GitHub API failure
+if ($script:GitHubApiFailed) {
+    Write-Error "GitHub API check failed. Exiting with error."
+    exit 1
 }
 
 Write-Host "Validation done. Review warnings above and fix as needed."

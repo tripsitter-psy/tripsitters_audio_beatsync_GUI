@@ -14,7 +14,7 @@ void SEffectTimeline::Construct(const FArguments& InArgs)
 	OnRemoveRegion = InArgs._OnRemoveRegion;
 }
 
-void SEffectTimeline::SetEffectRegions(const TArray<FEffectRegion>* InRegions)
+void SEffectTimeline::SetEffectRegions(const TArray<FEffectRegion>& InRegions)
 {
 	EffectRegions = InRegions;
 	Invalidate(EInvalidateWidget::Paint);
@@ -88,13 +88,13 @@ float SEffectTimeline::TimeToPixel(double Time, float Width) const
 
 int32 SEffectTimeline::GetRegionAtPosition(float X, float Width) const
 {
-	if (!EffectRegions) return -1;
+	if (EffectRegions.Num() == 0) return -1;
 
 	double Time = PixelToTime(X, Width);
 
-	for (int32 i = EffectRegions->Num() - 1; i >= 0; --i)
+	for (int32 i = EffectRegions.Num() - 1; i >= 0; --i)
 	{
-		const FEffectRegion& Region = (*EffectRegions)[i];
+		const FEffectRegion& Region = EffectRegions[i];
 		if (Time >= Region.StartTime && Time <= Region.EndTime)
 		{
 			return i;
@@ -105,17 +105,17 @@ int32 SEffectTimeline::GetRegionAtPosition(float X, float Width) const
 
 bool SEffectTimeline::IsOverRegionStartHandle(int32 RegionIndex, float X, float Width) const
 {
-	if (!EffectRegions || !EffectRegions->IsValidIndex(RegionIndex)) return false;
+	if (!EffectRegions.IsValidIndex(RegionIndex)) return false;
 
-	float HandleX = TimeToPixel((*EffectRegions)[RegionIndex].StartTime, Width);
+	float HandleX = TimeToPixel(EffectRegions[RegionIndex].StartTime, Width);
 	return FMath::Abs(X - HandleX) <= (HandleWidth + HandleHitPadding);
 }
 
 bool SEffectTimeline::IsOverRegionEndHandle(int32 RegionIndex, float X, float Width) const
 {
-	if (!EffectRegions || !EffectRegions->IsValidIndex(RegionIndex)) return false;
+	if (!EffectRegions.IsValidIndex(RegionIndex)) return false;
 
-	float HandleX = TimeToPixel((*EffectRegions)[RegionIndex].EndTime, Width);
+	float HandleX = TimeToPixel(EffectRegions[RegionIndex].EndTime, Width);
 	return FMath::Abs(X - HandleX) <= (HandleWidth + HandleHitPadding);
 }
 
@@ -134,7 +134,7 @@ void SEffectTimeline::ShowContextMenu(const FGeometry& MyGeometry, const FPointe
 	{
 		// Context menu for existing effect region
 		SelectedRegionIndex = RegionIndex;
-		const FEffectRegion& Region = (*EffectRegions)[RegionIndex];
+		const FEffectRegion& Region = EffectRegions[RegionIndex];
 
 		MenuBuilder.BeginSection("EffectRegion", FText::FromString(Region.EffectName));
 
@@ -203,15 +203,26 @@ void SEffectTimeline::ShowContextMenu(const FGeometry& MyGeometry, const FPointe
 
 FReply SEffectTimeline::OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	if (!EffectRegions || Duration <= 0) return FReply::Unhandled();
+	// Duration check applies to all interactions
+	if (Duration <= 0) return FReply::Unhandled();
 
 	FVector2D LocalPos = MyGeometry.AbsoluteToLocal(MouseEvent.GetScreenSpacePosition());
 	float Width = MyGeometry.GetLocalSize().X;
 
+	// Right-click context menu works even with no regions (to add new ones)
+	if (MouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
+	{
+		ShowContextMenu(MyGeometry, MouseEvent);
+		return FReply::Handled();
+	}
+
+	// Left-click operations require existing regions
+	if (EffectRegions.Num() == 0) return FReply::Unhandled();
+
 	if (MouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
 		// Check handles first
-		for (int32 i = 0; i < EffectRegions->Num(); ++i)
+		for (int32 i = 0; i < EffectRegions.Num(); ++i)
 		{
 			if (IsOverRegionStartHandle(i, LocalPos.X, Width))
 			{
@@ -249,7 +260,7 @@ FReply SEffectTimeline::OnMouseButtonDown(const FGeometry& MyGeometry, const FPo
 			CurrentDragMode = EDragMode::DragMove;
 			DragRegionIndex = RegionIndex;
 			// Store offset from region start
-			DragStartOffset = PixelToTime(LocalPos.X, Width) - (*EffectRegions)[RegionIndex].StartTime;
+			DragStartOffset = PixelToTime(LocalPos.X, Width) - EffectRegions[RegionIndex].StartTime;
 			LastMousePos = LocalPos;
 			Invalidate(EInvalidateWidget::Paint);
 			if (OnRegionSelected.IsBound())
@@ -268,11 +279,6 @@ FReply SEffectTimeline::OnMouseButtonDown(const FGeometry& MyGeometry, const FPo
 		}
 		return FReply::Handled();
 	}
-	else if (MouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
-	{
-		ShowContextMenu(MyGeometry, MouseEvent);
-		return FReply::Handled();
-	}
 
 	return FReply::Unhandled();
 }
@@ -281,13 +287,13 @@ FReply SEffectTimeline::OnMouseButtonUp(const FGeometry& MyGeometry, const FPoin
 {
 	if (CurrentDragMode != EDragMode::None && DragRegionIndex >= 0)
 	{
-		if (EffectRegions && EffectRegions->IsValidIndex(DragRegionIndex))
+		if (EffectRegions.IsValidIndex(DragRegionIndex))
 		{
 			if (OnRegionChanged.IsBound())
 			{
 				OnRegionChanged.Execute(DragRegionIndex,
-					(*EffectRegions)[DragRegionIndex].StartTime,
-					(*EffectRegions)[DragRegionIndex].EndTime);
+					EffectRegions[DragRegionIndex].StartTime,
+					EffectRegions[DragRegionIndex].EndTime);
 			}
 		}
 
@@ -300,15 +306,15 @@ FReply SEffectTimeline::OnMouseButtonUp(const FGeometry& MyGeometry, const FPoin
 
 FReply SEffectTimeline::OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	if (!EffectRegions || Duration <= 0) return FReply::Unhandled();
+	if (EffectRegions.Num() == 0 || Duration <= 0) return FReply::Unhandled();
 
 	FVector2D LocalPos = MyGeometry.AbsoluteToLocal(MouseEvent.GetScreenSpacePosition());
 	float Width = MyGeometry.GetLocalSize().X;
 
-	if (CurrentDragMode == EDragMode::DragStart && EffectRegions->IsValidIndex(DragRegionIndex))
+	if (CurrentDragMode == EDragMode::DragStart && EffectRegions.IsValidIndex(DragRegionIndex))
 	{
 		double NewTime = PixelToTime(LocalPos.X, Width);
-		double EndTime = (*EffectRegions)[DragRegionIndex].EndTime;
+		double EndTime = EffectRegions[DragRegionIndex].EndTime;
 		double MinBound = FMath::Max(0.0, SelectionStart);
 		NewTime = FMath::Clamp(NewTime, MinBound, EndTime - 0.1);
 
@@ -320,10 +326,10 @@ FReply SEffectTimeline::OnMouseMove(const FGeometry& MyGeometry, const FPointerE
 		LastMousePos = LocalPos;
 		return FReply::Handled();
 	}
-	else if (CurrentDragMode == EDragMode::DragEnd && EffectRegions->IsValidIndex(DragRegionIndex))
+	else if (CurrentDragMode == EDragMode::DragEnd && EffectRegions.IsValidIndex(DragRegionIndex))
 	{
 		double NewTime = PixelToTime(LocalPos.X, Width);
-		double StartTime = (*EffectRegions)[DragRegionIndex].StartTime;
+		double StartTime = EffectRegions[DragRegionIndex].StartTime;
 		double EffectiveSelEnd = (SelectionEnd < 0) ? Duration : SelectionEnd;
 		NewTime = FMath::Clamp(NewTime, StartTime + 0.1, EffectiveSelEnd);
 
@@ -334,11 +340,11 @@ FReply SEffectTimeline::OnMouseMove(const FGeometry& MyGeometry, const FPointerE
 		LastMousePos = LocalPos;
 		return FReply::Handled();
 	}
-	else if (CurrentDragMode == EDragMode::DragMove && EffectRegions->IsValidIndex(DragRegionIndex))
+	else if (CurrentDragMode == EDragMode::DragMove && EffectRegions.IsValidIndex(DragRegionIndex))
 	{
 		double ClickTime = PixelToTime(LocalPos.X, Width);
 		double NewStart = ClickTime - DragStartOffset;
-		double RegionDuration = (*EffectRegions)[DragRegionIndex].EndTime - (*EffectRegions)[DragRegionIndex].StartTime;
+		double RegionDuration = EffectRegions[DragRegionIndex].EndTime - EffectRegions[DragRegionIndex].StartTime;
 		double NewEnd = NewStart + RegionDuration;
 
 		// Clamp to selection bounds
@@ -369,12 +375,12 @@ FReply SEffectTimeline::OnMouseMove(const FGeometry& MyGeometry, const FPointerE
 
 FCursorReply SEffectTimeline::OnCursorQuery(const FGeometry& MyGeometry, const FPointerEvent& CursorEvent) const
 {
-	if (!EffectRegions || Duration <= 0) return FCursorReply::Unhandled();
+	if (EffectRegions.Num() == 0 || Duration <= 0) return FCursorReply::Unhandled();
 
 	FVector2D LocalPos = MyGeometry.AbsoluteToLocal(CursorEvent.GetScreenSpacePosition());
 	float Width = MyGeometry.GetLocalSize().X;
 
-	for (int32 i = 0; i < EffectRegions->Num(); ++i)
+	for (int32 i = 0; i < EffectRegions.Num(); ++i)
 	{
 		if (IsOverRegionStartHandle(i, LocalPos.X, Width) || IsOverRegionEndHandle(i, LocalPos.X, Width))
 		{
@@ -460,14 +466,14 @@ int32 SEffectTimeline::OnPaint(const FPaintArgs& Args, const FGeometry& Allotted
 	LayerId++;
 
 	// Draw effect regions
-	if (EffectRegions)
+	if (EffectRegions.Num() > 0)
 	{
 		const float RegionTop = 4.0f;
 		const float RegionHeight = Height - 8.0f;
 		int MaxLayer = LayerId;
-		for (int32 i = 0; i < EffectRegions->Num(); ++i)
+		for (int32 i = 0; i < EffectRegions.Num(); ++i)
 		{
-			const FEffectRegion& Region = (*EffectRegions)[i];
+			const FEffectRegion& Region = EffectRegions[i];
 			if (!Region.bEnabled) continue;
 
 			float RegStartPx = TimeToPixel(Region.StartTime, Width);

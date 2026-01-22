@@ -17,6 +17,12 @@ FBeatsyncProcessingTask::FBeatsyncProcessingTask(const FBeatsyncProcessingParams
 
 FBeatsyncProcessingTask::~FBeatsyncProcessingTask()
 {
+    // Wait for work completion before destroying Writer to avoid use-after-free
+    while (!bWorkCompleted)
+    {
+        FPlatformProcess::Sleep(0.01f);
+    }
+
     // Invalidate progress guard so any in-flight callbacks won't attempt to call back into this object
     if (ProgressGuard) {
         ProgressGuard->AtomicSet(true);

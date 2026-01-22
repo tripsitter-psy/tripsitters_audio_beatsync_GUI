@@ -77,6 +77,7 @@ struct FStemConfig
 };
 
 // Number of stems (should match EStemType::Count)
+
 constexpr int32 STEM_COUNT = static_cast<int32>(EStemType::Count);
 
 /**

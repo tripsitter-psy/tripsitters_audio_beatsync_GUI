@@ -64,7 +64,7 @@ Thumbs.db
 models/*.onnx
 # Not tracked in git, not LFS. Remove this line and add to .gitattributes if you want to use Git LFS.
 tools/onnxruntime-official/
-assets/loading asset.gif
+assets/loading\ asset.gif
 vcpkg/
 unreal-prototype/Binaries/
 unreal-prototype/Intermediate/

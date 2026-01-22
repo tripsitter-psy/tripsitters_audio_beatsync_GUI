@@ -88,8 +88,8 @@ try {
         Pop-Location
     }
 
-    if ($scriptExitCode -eq 0) {
-        Write-Host "Done. If the helper crashed, consider running ProcDump to capture a full .dmp file."
+    if ($scriptExitCode -ne 0) {
+        Write-Host "If the helper crashed, consider running ProcDump to capture a full .dmp file."
     }
 } finally {
     # Always cleanup the extracted temp directory

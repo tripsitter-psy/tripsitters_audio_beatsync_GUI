@@ -1661,9 +1661,13 @@ void VideoWriter::logGpuCapabilities() const {
 }
 
 bool VideoWriter::shouldUseGpuForSegment() {
-    // Always use GPU - modern GPUs (8GB+ VRAM) can easily handle the load
-    // FFmpeg manages its own CUDA contexts per process and cleans up properly
-    // The periodic CPU fallback was overly conservative and hurt performance
+    // Periodically fall back to CPU to force FFmpeg to reset CUDA contexts and avoid resource leaks
+    // See header for details. This helps long-running jobs on some drivers.
+    std::lock_guard<std::recursive_mutex> lock(m_cacheMutex);
+    if (++m_segmentsSinceGpuReset >= GPU_RESET_INTERVAL) {
+        m_segmentsSinceGpuReset = 0;
+        return false; // Use CPU for this segment
+    }
     return true;
 }
 

@@ -776,14 +776,14 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateWaveformSection()
 						double EndTime = FMath::Min(Time + 5.0, Duration);
 						WaveformViewer->AddEffectRegion(EffectName, Time, EndTime, Color);
 						// Update effect timeline reference
-						EffectTimeline->SetEffectRegions(&WaveformViewer->GetEffectRegions());
+						   EffectTimeline->SetEffectRegions(WaveformViewer->GetEffectRegions());
 					}
 				})
 				.OnRemoveRegion_Lambda([this](int32 Index) {
 					if (WaveformViewer.IsValid())
 					{
 						WaveformViewer->RemoveEffectRegion(Index);
-						EffectTimeline->SetEffectRegions(&WaveformViewer->GetEffectRegions());
+							   EffectTimeline->SetEffectRegions(WaveformViewer->GetEffectRegions());
 					}
 				})
 				.OnRegionChanged_Lambda([this](int32 Index, double Start, double End) {
@@ -899,7 +899,7 @@ void STripSitterMainWidget::LoadWaveformFromAudio(const FString& FilePath)
 		{
 			EffectTimeline->SetTimeParameters(Duration, WaveformViewer->GetZoomLevel(), WaveformViewer->GetScrollPosition());
 			EffectTimeline->SetSelectionRange(WaveformViewer->GetSelectionStart(), WaveformViewer->GetSelectionEnd());
-			EffectTimeline->SetEffectRegions(&WaveformViewer->GetEffectRegions());
+			EffectTimeline->SetEffectRegions(WaveformViewer->GetEffectRegions());
 		}
 	}
 	else
@@ -919,7 +919,7 @@ void STripSitterMainWidget::LoadWaveformFromAudio(const FString& FilePath)
 			{
 				EffectTimeline->SetTimeParameters(Duration, WaveformViewer->GetZoomLevel(), WaveformViewer->GetScrollPosition());
 				EffectTimeline->SetSelectionRange(WaveformViewer->GetSelectionStart(), WaveformViewer->GetSelectionEnd());
-				EffectTimeline->SetEffectRegions(&WaveformViewer->GetEffectRegions());
+				EffectTimeline->SetEffectRegions(WaveformViewer->GetEffectRegions());
 			}
 		}
 		else
@@ -1791,6 +1791,7 @@ FReply STripSitterMainWidget::OnBrowseVideoClicked()
 		}
 	}
 #else
+#if PLATFORM_WINDOWS
 	OPENFILENAMEW ofn;
 	WCHAR szFile[MAX_PATH] = { 0 };
 	ZeroMemory(&ofn, sizeof(ofn));
@@ -1810,6 +1811,17 @@ FReply STripSitterMainWidget::OnBrowseVideoClicked()
 		bIsMultiClip = false;
 		VideoPathBox->SetText(FText::FromString(VideoPath));
 	}
+#else
+	// Non-Windows fallback: log and clear video paths
+	UE_LOG(LogTemp, Warning, TEXT("Open file dialog is not supported on this platform."));
+	VideoPath.Empty();
+	VideoPaths.Empty();
+	bIsMultiClip = false;
+	if (VideoPathBox)
+	{
+		VideoPathBox->SetText(FText::GetEmpty());
+	}
+#endif
 #endif
 	return FReply::Handled();
 }

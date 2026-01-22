@@ -4,8 +4,8 @@
 #include "Widgets/SLeafWidget.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 
-// Forward declare effect region from SWaveformViewer
-struct FEffectRegion;
+// Effect region struct from SWaveformViewer
+#include "SWaveformViewer.h"
 
 DECLARE_DELEGATE_ThreeParams(FOnEffectTimelineRegionChanged, int32 /*RegionIndex*/, double /*Start*/, double /*End*/);
 DECLARE_DELEGATE_OneParam(FOnEffectTimelineRegionSelected, int32 /*RegionIndex*/);
@@ -31,8 +31,8 @@ public:
 
 	void Construct(const FArguments& InArgs);
 
-	// Set effect regions data (reference to waveform viewer's effect regions)
-	void SetEffectRegions(const TArray<FEffectRegion>* InRegions);
+	// Set effect regions data (copy from waveform viewer's effect regions)
+	void SetEffectRegions(const TArray<FEffectRegion>& InRegions);
 
 	// Set time parameters to sync with waveform viewer
 	void SetTimeParameters(double InDuration, float InZoomLevel, double InScrollPosition);
@@ -58,10 +58,8 @@ public:
 	virtual FCursorReply OnCursorQuery(const FGeometry& MyGeometry, const FPointerEvent& CursorEvent) const override;
 
 protected:
-	// EffectRegions is a non-owning raw pointer to external TArray<FEffectRegion> data.
-	// Caller is responsible for ensuring the pointed-to array outlives this SEffectTimeline widget.
-	// To avoid dangling pointers, call SetEffectRegions(nullptr) before destroying SEffectTimeline or the referenced array.
-	const TArray<FEffectRegion>* EffectRegions = nullptr;
+	// EffectRegions is a local copy of the effect regions for safe access.
+	TArray<FEffectRegion> EffectRegions;
 
 	// Time parameters (synced with waveform viewer)
 	double Duration = 0.0;

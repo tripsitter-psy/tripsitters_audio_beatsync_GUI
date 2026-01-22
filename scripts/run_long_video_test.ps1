@@ -23,18 +23,20 @@ if (-not (Test-Path $Audio)) {
 }
 
 # Start background GPU logging (every 10s)
-$gpuLog = "build/gpu_log.csv"
-if (Test-Path $gpuLog) { Remove-Item $gpuLog }
+
+$gpuLogPath = Join-Path (Resolve-Path .) "build/gpu_log.csv"
+if (Test-Path $gpuLogPath) { Remove-Item $gpuLogPath }
 $job = Start-Job -Name NvidiaLog -ScriptBlock {
+    param($gpuLogPath)
     while ($true) {
         try {
-            nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used --format=csv,noheader,nounits >> build/gpu_log.csv
+            nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used --format=csv,noheader,nounits >> $gpuLogPath
         } catch {
             # ignore if nvidia-smi not present
         }
         Start-Sleep -Seconds 10
     }
-}
+} -ArgumentList $gpuLogPath
 
 # Add FFmpeg to PATH if we have a local build (optionally)
 $ffmpegDir = "C:\ffmpeg-dev"
@@ -44,6 +46,7 @@ if (Test-Path $ffmpegDir) {
 }
 
 # Run beatsync create video (capture output)
+
 $stdout = "build/long_video_stdout.log"
 $stderr = "build/long_video_stderr.log"
 if (Test-Path $stdout) { Remove-Item $stdout }
@@ -58,16 +61,26 @@ $cmds = @(
 )
 
 $exitCode = 1
+
+$proc = $null
 foreach ($cmd in $cmds) {
     Write-Host "Running: $cmd"
-    Write-Host "----- BEGIN OUTPUT -----" | Out-File -FilePath $stdout -Encoding utf8 -Append
-    $pinfo = @{ FilePath = 'powershell'; ArgumentList = "-NoProfile -Command $cmd"; RedirectStandardOutput = $stdout; RedirectStandardError = $stderr; Wait = $true }
+    Add-Content -Path $stdout -Value "----- BEGIN OUTPUT -----"
+
+    $tempOut = [System.IO.Path]::GetTempFileName()
     try {
-        # Use Start-Process to capture exit code
-        Start-Process -FilePath powershell -ArgumentList "-NoProfile -Command $cmd" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr | Out-Null
-        $exitCode = $LASTEXITCODE
+        $proc = Start-Process -FilePath powershell -ArgumentList "-NoProfile -Command $cmd" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempOut -RedirectStandardError $stderr
+        $exitCode = $proc.ExitCode
     } catch {
-        $exitCode = $LASTEXITCODE
+        if ($proc -and $proc.ExitCode -ne $null) {
+            $exitCode = $proc.ExitCode
+        } else {
+            $exitCode = 1
+        }
+    }
+    if (Test-Path $tempOut) {
+        Add-Content -Path $stdout -Value (Get-Content $tempOut)
+        Remove-Item $tempOut -Force
     }
 
     Write-Host "Command exit code: $exitCode"

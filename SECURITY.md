@@ -10,8 +10,13 @@ This repository contains some vendor-supplied and legacy files with non-HTTPS (h
 
 ### tools/onnxruntime-official/onnxruntime-win-x64-1.18.1/ThirdPartyNotices.txt
 - http://3rdpartysource.microsoft.com
-- http://homes.cs.washington.edu/~moreau/ (possibly outdated)
-- http://homes.cs.washington.edu/~haichen/ (possibly outdated)
+<!--
+	The following URLs are allowlisted because they are referenced in vendor-supplied legal/provenance files (ThirdPartyNotices.txt).
+	As of Jan 2026, both URLs are not actively maintained but are still required for legal compliance and provenance tracking.
+	If the vendor updates or removes these URLs, this allowlist should be revisited.
+-->
+- http://homes.cs.washington.edu/~moreau/ (required for provenance; site may be outdated)
+- http://homes.cs.washington.edu/~haichen/ (required for provenance; site may be outdated)
 - (Google Code Search URL removed - defunct service)
 
 ### src/backend/tracing.cpp

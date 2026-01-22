@@ -256,7 +256,7 @@ void FBeatsyncProcessingTask::DoWork()
 
     ReportProgress(0.2f, FString::Printf(TEXT("Found %d beats at %.1f BPM"), BeatGrid.Beats.Num(), BeatGrid.BPM));
 
-    if (bCancelRequested)
+    if (IsCancelled())
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");

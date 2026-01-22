@@ -283,10 +283,10 @@ void FBeatsyncProcessingTask::DoWork()
 
     if (!bSuccess)
     {
-        FString ErrorMsg = FBeatsyncLoader::GetVideoLastError(Writer);
         Result.bSuccess = false;
         Result.ErrorMessage = ErrorMsg.IsEmpty() ? TEXT("Failed to cut video") : ErrorMsg;
         if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
+        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
         FBeatsyncLoader::DestroyVideoWriter(Writer);
         Writer = nullptr;
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
@@ -373,6 +373,8 @@ void FBeatsyncProcessingTask::DoWork()
         // Invalidate temp paths so later cleanup does not attempt to delete files that were moved
         TempVideoPath.Empty();
         CurrentVideoPath.Empty();
+        // Set result flag for mux failure so caller can detect partial success
+        Result.bAudioMuxFailed = true;
         bSuccess = true; // Consider it a partial success
         if (Span) FBeatsyncLoader::SpanAddEvent(Span, TEXT("audio-mux-failed"));
     }

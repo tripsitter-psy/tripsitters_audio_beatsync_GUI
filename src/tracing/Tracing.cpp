@@ -105,14 +105,15 @@ void InitTracing(const std::string& outfile) {
             bool need_stop_flusher = (g_flush_mode == TracingFlushMode::Periodic);
             std::unique_ptr<std::ofstream> local_out;
             if (need_stop_flusher) {
-                lk.unlock();
-                SetTracingFlushMode(TracingFlushMode::Never); // Stop flusher
-                lk.lock();
+                // Hold lock, stop flusher after releasing lock below
             }
             local_out = std::move(g_out);
             g_outfile_path.clear();
-            // Release lock before flushing/closing
+            // Release lock before flushing/closing and stopping flusher
             lk.unlock();
+            if (need_stop_flusher) {
+                SetTracingFlushMode(TracingFlushMode::Never); // Stop flusher
+            }
             if (local_out) {
                 local_out->flush();
                 local_out->close();

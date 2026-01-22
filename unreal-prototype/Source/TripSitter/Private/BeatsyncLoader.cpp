@@ -391,7 +391,8 @@ bool FBeatsyncLoader::AnalyzeAudio(void* Analyzer, const FString& FilePath, FBea
     if (!GApi.analyze_audio || !Analyzer) return false;
 
     bs_beatgrid_t CGrid = {};
-    int Result = GApi.analyze_audio(Analyzer, TCHAR_TO_UTF8(*FilePath), &CGrid);
+    FTCHARToUTF8 Utf8Path(*FilePath);
+    int Result = GApi.analyze_audio(Analyzer, Utf8Path.Get(), &CGrid);
 
     bool bSuccess = false;
     if (Result == 0 && CGrid.beats && CGrid.count > 0) {
@@ -405,6 +406,13 @@ bool FBeatsyncLoader::AnalyzeAudio(void* Analyzer, const FString& FilePath, FBea
     // Always free the beatgrid if beats were allocated, regardless of Result
     if (CGrid.beats && GApi.free_beatgrid) {
         GApi.free_beatgrid(&CGrid);
+    }
+
+    // Return GProgressCallbacksEvent to pool if allocated
+    if (GProgressCallbacksEvent != nullptr) {
+        // Drain any active callbacks if needed (GActiveProgressCallbacks)
+        FPlatformProcess::ReturnSynchEventToPool(GProgressCallbacksEvent);
+        GProgressCallbacksEvent = nullptr;
     }
 
     return bSuccess;

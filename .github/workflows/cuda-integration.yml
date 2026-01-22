@@ -102,6 +102,14 @@ jobs:
           path: build/Testing
 
       - name: Summary
+        run: |
+          echo "## CUDA Integration Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This is a GATED test for GPU-accelerated ONNX inference." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment variables:**" >> $GITHUB_STEP_SUMMARY
+          echo "- \`BEATSYNC_ONNX_USE_CUDA=1\` enables CUDA provider" >> $GITHUB_STEP_SUMMARY
+          echo "- Without this, tests use CPU-only inference" >> $GITHUB_STEP_SUMMARY
         shell: bash
         run: |
           echo "## CUDA Integration Test Results" >> $GITHUB_STEP_SUMMARY
@@ -111,3 +119,4 @@ jobs:
           echo "**Environment variables:**" >> $GITHUB_STEP_SUMMARY
           echo "- \`BEATSYNC_ONNX_USE_CUDA=1\` enables CUDA provider" >> $GITHUB_STEP_SUMMARY
           echo "- Without this, tests use CPU-only inference" >> $GITHUB_STEP_SUMMARY
+

@@ -70,14 +70,15 @@ cmake --build build --config Release --target beatsync_backend_shared
 
 ```powershell
 
+
 # Copy source to engine
 Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "$env:UE_ENGINE_PATH\Engine\Source\Programs\TripSitter\Private\" -Recurse -Force
 
 # Build
-& "$env:UE5_ROOT\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+& "$env:UE_ENGINE_PATH\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
 
-**Output**: `$env:UE5_ROOT\Engine\Binaries\Win64\TripSitter.exe`
+**Output**: `$env:UE_ENGINE_PATH\Engine\Binaries\Win64\TripSitter.exe`
 
 ---
 
@@ -171,11 +172,12 @@ Available execution providers can be queried via `bs_ai_get_providers()`.
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets -DAUDIOFLUX_ROOT="C:/audioFlux"
 cmake --build build --config Release --target beatsync_backend_shared
 Copy-Item 'build\Release\beatsync_backend_shared.dll' 'unreal-prototype\ThirdParty\beatsync\lib\x64\' -Force
-Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "$env:UE5_ROOT\Engine\Source\Programs\TripSitter\Private\" -Recurse -Force
-& "$env:UE5_ROOT\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "$env:UE_ENGINE_PATH\Engine\Source\Programs\TripSitter\Private\" -Recurse -Force
+& "$env:UE_ENGINE_PATH\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 
 # Run TripSitter
-& "$env:UE5_ROOT\Engine\Binaries\Win64\TripSitter.exe"
+& "$env:UE_ENGINE_PATH\Engine\Binaries\Win64\TripSitter.exe"
 
 # Run tests
 cmake --build build --config Release --target test_backend_api

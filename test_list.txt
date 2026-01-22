@@ -1,0 +1,51 @@
+All available test cases:
+  AI availability check
+      [ai][backend][onnx]
+  AI providers query
+      [ai][backend][onnx]
+  AI GPU status with null analyzer
+      [ai][backend][gpu]
+  AI GPU status with valid analyzer
+      [ai][backend][gpu]
+  AI analyzer null config
+      [ai][backend][null]
+  AI analyzer missing beat model path
+      [ai][backend]
+  AI analyzer with nonexistent model
+      [ai][backend]
+  AI analyzer destruction null is safe
+      [ai][backend][null]
+  AI result free null is safe
+      [ai][backend][memory]
+  AI result free empty struct
+      [ai][backend][memory]
+  AI result free with null members
+      [ai][backend][memory]
+  AI analyze file null handling
+      [ai][backend][null]
+  AI analyze samples null handling
+      [ai][backend][null]
+  AI analyze quick null handling
+      [ai][backend][null]
+  AI get last error with null
+      [ai][backend][null]
+  AI get model info with null
+      [ai][backend][null]
+  AI config default values
+      [ai][backend][config]
+  AI config with all options
+      [ai][backend][config]
+  AI result structure layout
+      [ai][backend][result]
+  AI progress callback invocation
+      [ai][backend][callback]
+  AI progress callback with null user data
+      [ai][backend][callback][null]
+  AI progress callback cancellation
+      [ai][backend][callback]
+  AI full pipeline integration
+      [ai][backend][integration]
+  AI create/destroy stress test
+      [ai][backend][cleanup]
+24 test cases
+

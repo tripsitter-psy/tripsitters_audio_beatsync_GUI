@@ -167,6 +167,7 @@ if (-not $SkipBackend) {
 # Stage 2: Deploy DLLs
 Write-Step "Stage 2: Deploying DLLs"
 
+$ContinueOnDeployFailure = $false
 $deployScript = Join-Path $ScriptDir "deploy_tripsitter.ps1"
 if (Test-Path $deployScript) {
     if ($DryRun) {
@@ -175,6 +176,9 @@ if (Test-Path $deployScript) {
         & $deployScript
         if ($LASTEXITCODE -ne 0) {
             Write-Warning "DLL deployment had issues - check output above"
+            if (-not $ContinueOnDeployFailure) {
+                exit $LASTEXITCODE
+            }
         } else {
             Write-Success "DLLs deployed successfully"
         }

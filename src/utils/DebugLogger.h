@@ -1,7 +1,8 @@
-#pragma once
 
+#pragma once
 #include <string>
 #include <mutex>
+#include <fstream>
 
 namespace BeatSync {
 

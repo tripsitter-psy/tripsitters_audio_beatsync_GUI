@@ -130,7 +130,14 @@ $proc.add_ErrorDataReceived({ if ($_.Data) { $script:stderr += $_.Data + "`n" } 
 $proc.Start() | Out-Null
 $proc.BeginOutputReadLine()
 $proc.BeginErrorReadLine()
-$proc.WaitForExit()
+
+# Wait for process with timeout (e.g., 30 min = 1800000 ms)
+$timeoutMillis = 1800000
+if (-not $proc.WaitForExit($timeoutMillis)) {
+    Write-Host "ERROR: Build process timed out after $($timeoutMillis/60000) minutes. Killing process..." -ForegroundColor Red
+    $proc.Kill()
+    $proc.WaitForExit()
+}
 
 Write-Host $script:stdout
 if ($script:stderr) { Write-Host $script:stderr -ForegroundColor Yellow }

@@ -79,28 +79,50 @@ def main():
             print(f"Exporting to ONNX (input shape: {dummy_input.shape})...")
 
             if args.export_full:
-                # Export full model with all outputs
-                dynamic_axes = {
-                    'spectrogram': {0: 'batch', 3: 'time'},
-                    'beat_activation': {0: 'batch', 1: 'time'},
-                    'downbeat_activation': {0: 'batch', 1: 'time'},
-                    'segment_activation': {0: 'batch', 1: 'time'},
-                    'segment_labels': {0: 'batch', 1: 'segments'}
-                }
-                output_names = ['beat_activation', 'downbeat_activation',
-                               'segment_activation', 'segment_labels']
-            else:
-                # Export encoder only for beat/downbeat
-                dynamic_axes = {
-                    'spectrogram': {0: 'batch', 3: 'time'},
-                    'embeddings': {0: 'batch', 1: 'time'}
-                }
-                output_names = ['embeddings']
+
+            # Always export with the same output schema for interface consistency
+            output_names = [
+                'beat_activation', 'downbeat_activation',
+                'segment_activation', 'segment_labels',
+                'tempo_logits', 'embeddings'
+            ]
+            dynamic_axes = {
+                'spectrogram': {0: 'batch', 3: 'time'},
+                'beat_activation': {0: 'batch', 1: 'time'},
+                'downbeat_activation': {0: 'batch', 1: 'time'},
+                'segment_activation': {0: 'batch', 1: 'time'},
+                'segment_labels': {0: 'batch', 1: 'segments'},
+                'tempo_logits': {0: 'batch', 1: 'classes'},
+                'embeddings': {0: 'batch', 1: 'time'}
+            }
+
+            # Ensure model returns all outputs (real or placeholder) for ONNX export
+            def get_all_outputs(model, dummy_input, export_full):
+                outputs = model(dummy_input)
+                # If not full export, fill with zeros for missing outputs
+                if not export_full:
+                    import torch
+                    # outputs: embeddings only, so fill others
+                    batch = dummy_input.shape[0]
+                    time = dummy_input.shape[3]
+                    segments = 1
+                    classes = 1
+                    zeros = lambda *shape: torch.zeros(*shape, dtype=outputs.dtype, device=outputs.device)
+                    # Return tuple in output_names order
+                    return (
+                        zeros(batch, time),  # beat_activation
+                        zeros(batch, time),  # downbeat_activation
+                        zeros(batch, time),  # segment_activation
+                        zeros(batch, segments),  # segment_labels
+                        zeros(batch, classes),  # tempo_logits
+                        outputs  # embeddings
+                    )
+                return outputs
 
             torch.onnx.export(
-                model,
+                lambda x: get_all_outputs(model, x, args.export_full),
                 dummy_input,
-                args.out,
+                out_path,
                 export_params=True,
                 opset_version=args.opset,
                 do_constant_folding=True,
@@ -363,10 +385,11 @@ def main():
             'tempo_logits': {0: 'batch'}
         }
 
+
         torch.onnx.export(
             model,
             dummy_input,
-            args.out,
+            out_path,
             export_params=True,
             opset_version=args.opset,
             do_constant_folding=True,

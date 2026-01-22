@@ -12,27 +12,44 @@ extern "C" {
 #include "mir/onset_algorithm.h"
 }
 
-// Helper: resample audio to target sample rate (simple linear interpolation)
+// Helper: resample audio to target sample rate (band-limited, anti-aliased)
+// TODO: Replace with libsamplerate or a proper polyphase/sinc resampler for production use.
 static std::vector<float> resampleAudio(const std::vector<float>& input, int inputRate, int outputRate) {
     if (inputRate == outputRate) return input;
-
+#ifdef HAVE_LIBSAMPLERATE
+    // Example using libsamplerate (not linked by default):
+    std::vector<float> output;
+    SRC_DATA srcData;
+    srcData.data_in = input.data();
+    srcData.input_frames = static_cast<long>(input.size());
+    double ratio = static_cast<double>(outputRate) / inputRate;
+    size_t outputSize = static_cast<size_t>(input.size() * ratio);
+    output.resize(outputSize);
+    srcData.data_out = output.data();
+    srcData.output_frames = static_cast<long>(outputSize);
+    srcData.src_ratio = ratio;
+    srcData.end_of_input = 1;
+    int err = src_simple(&srcData, SRC_SINC_BEST_QUALITY, 1);
+    if (err != 0) throw std::runtime_error("libsamplerate error: " + std::string(src_strerror(err)));
+    output.resize(srcData.output_frames_gen);
+    return output;
+#else
+    // Fallback: simple linear interpolation (not recommended for production)
     double ratio = static_cast<double>(outputRate) / inputRate;
     size_t outputSize = static_cast<size_t>(input.size() * ratio);
     std::vector<float> output(outputSize);
-
     for (size_t i = 0; i < outputSize; ++i) {
         double srcPos = i / ratio;
         size_t srcIdx = static_cast<size_t>(srcPos);
         double frac = srcPos - srcIdx;
-
         if (srcIdx + 1 < input.size()) {
             output[i] = static_cast<float>(input[srcIdx] * (1.0 - frac) + input[srcIdx + 1] * frac);
         } else if (srcIdx < input.size()) {
             output[i] = input[srcIdx];
         }
     }
-
     return output;
+#endif
 }
 
 AudioFluxBeatDetector::AudioFluxBeatDetector() {}
@@ -177,21 +194,25 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
     if (progress && !progress(0.5f, "Detecting beats...")) return result;
 
     // Adaptive threshold based on envelope statistics - use lower percentile for better sensitivity
+
     std::vector<float> sortedEnv = result.onsetEnvelope;
     std::sort(sortedEnv.begin(), sortedEnv.end());
 
-    // Use 75th percentile as base threshold (captures more beats than median)
-    size_t p75Idx = static_cast<size_t>(sortedEnv.size() * 0.75);
-    size_t p25Idx = static_cast<size_t>(sortedEnv.size() * 0.25);
-    float p75 = sortedEnv[p75Idx];
-    float p25 = sortedEnv[p25Idx];
-    float iqr = p75 - p25;  // Interquartile range
-
-    // Lower threshold: 25th percentile + 0.5 * IQR (more sensitive than before)
-    float adaptiveThreshold = p25 + 0.5f * iqr;
-
+    float adaptiveThreshold = 0.0f;
+    float maxEnv = sortedEnv.empty() ? 0.0f : sortedEnv.back();
+    if (sortedEnv.size() < 4) {
+        // Fallback: use mean or a fraction of max if not enough data for percentiles
+        float meanEnv = sortedEnv.empty() ? 0.0f : std::accumulate(sortedEnv.begin(), sortedEnv.end(), 0.0f) / sortedEnv.size();
+        adaptiveThreshold = std::max(meanEnv, maxEnv * 0.12f); // fallback: mean or 12% of max
+    } else {
+        size_t p75Idx = std::min(sortedEnv.size() - 1, static_cast<size_t>(sortedEnv.size() * 0.75));
+        size_t p25Idx = std::min(sortedEnv.size() - 1, static_cast<size_t>(sortedEnv.size() * 0.25));
+        float p75 = sortedEnv[p75Idx];
+        float p25 = sortedEnv[p25Idx];
+        float iqr = p75 - p25;  // Interquartile range
+        adaptiveThreshold = p25 + 0.5f * iqr;
+    }
     // Ensure threshold isn't too low (avoid noise) or too high (miss beats)
-    float maxEnv = sortedEnv.back();
     adaptiveThreshold = std::max(adaptiveThreshold, maxEnv * 0.08f);  // At least 8% of max
     adaptiveThreshold = std::min(adaptiveThreshold, maxEnv * 0.25f);  // At most 25% of max
 

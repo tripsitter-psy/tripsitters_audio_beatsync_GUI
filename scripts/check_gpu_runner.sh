@@ -51,26 +51,12 @@ else
 fi
 
 
+echo "Validation done. Review warnings above and fix as needed."
+
 # Optional GitHub runner check (requires GITHUB_TOKEN and GITHUB_REPOSITORY in OWNER/REPO form)
-  if ! command -v jq >/dev/null 2>&1; then
-    echo "ERROR: jq is required but not installed. Please install jq." >&2
-    exit 1
-  fi
-  echo "Checking GitHub self-hosted runners for repo: $GITHUB_REPOSITORY"
-  api="https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners"
-  RUNNERS_JSON=$(mktemp) || { echo "Failed to create temp file"; exit 1; }
-  trap "rm -f \"$RUNNERS_JSON\"" EXIT
-  GITHUB_API_OK=true
-  if curl -fS --max-time 20 -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "$api" >"$RUNNERS_JSON"; then
-    echo "Runners in repo (name => labels):"
-    jq -r '.runners[] | "\(.name) => \(.labels | map(.name) | join(", "))"' "$RUNNERS_JSON" || true
-    if jq -e '.runners | any(.labels[]?.name == "gpu")' "$RUNNERS_JSON" >/dev/null 2>&1; then
-      echo "Found runner with 'gpu' label."
-    else
 if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
   if ! command -v jq >/dev/null 2>&1; then
     echo "WARNING: jq is not installed. Skipping GitHub runner check for GPU label."
-    SKIP_GITHUB_RUNNER_CHECK=1
   else
     echo "Checking GitHub self-hosted runners for repo: $GITHUB_REPOSITORY"
     api="https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners"
@@ -83,15 +69,17 @@ if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
       if jq -e '.runners | any(.labels[]?.name == "gpu")' "$RUNNERS_JSON" >/dev/null 2>&1; then
         echo "Found runner with 'gpu' label."
       else
-      echo "WARNING: No runner with 'gpu' label found in repo runners." >&2
+        echo "WARNING: No runner with 'gpu' label found in repo runners." >&2
+      fi
+    else
+      echo "WARNING: Failed to query GitHub API for runners." >&2
+      GITHUB_API_OK=false
     fi
-  else
-    echo "WARNING: Failed to query GitHub API for runners." >&2
-    GITHUB_API_OK=false
   fi
 else
-  echo "No GITHUB_TOKEN/GITHUB_REPOSITORY set — skipping GitHub runner label check. Set GITHUB_REPOSITORY='owner/repo' and export GITHUB_TOKEN to enable."
+  echo "No GITHUB_TOKEN/GITHUB_REPOSITORY set; skipping GitHub runner label check. Set GITHUB_REPOSITORY='owner/repo' and export GITHUB_TOKEN to enable."
 fi
+
 
 echo "Validation done. Review warnings above and fix as needed."
 

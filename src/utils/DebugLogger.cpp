@@ -1,9 +1,11 @@
 #include "DebugLogger.h"
 
-#include <iostream>
 #include <fstream>
+#include <iostream>
 #include <mutex>
 #include <cstdlib>
+
+#include <filesystem>
 
 namespace BeatSync {
 
@@ -13,17 +15,12 @@ DebugLogger& DebugLogger::getInstance() {
 }
 
 DebugLogger::DebugLogger() : logFile_(nullptr), initialized_(false) {
-    // Initialize on first access (lazy initialization)
-    static std::once_flag initFlag;
-    std::call_once(initFlag, [this]() {
-        // Get temp directory
-        const char* tempDir = std::getenv("TEMP");
-        if (!tempDir) tempDir = std::getenv("TMP");
-        if (!tempDir) tempDir = "C:\\Temp";
-
-        std::string logPath = std::string(tempDir) + "\\beatsync_debug.log";
-        logFile_ = new std::ofstream(logPath, std::ios::out | std::ios::app);
-
+    // Use portable temp directory and path joining
+    try {
+        namespace fs = std::filesystem;
+        fs::path tempDir = fs::temp_directory_path();
+        fs::path logPath = tempDir / "beatsync_debug.log";
+        logFile_ = new std::ofstream(logPath.string(), std::ios::out | std::ios::app);
         if (logFile_->is_open()) {
             *logFile_ << "[BeatSync] Debug log started at " << logPath << std::endl;
             initialized_ = true;
@@ -31,7 +28,10 @@ DebugLogger::DebugLogger() : logFile_(nullptr), initialized_(false) {
             delete logFile_;
             logFile_ = nullptr;
         }
-    });
+    } catch (...) {
+        logFile_ = nullptr;
+        initialized_ = false;
+    }
 }
 
 DebugLogger::~DebugLogger() {

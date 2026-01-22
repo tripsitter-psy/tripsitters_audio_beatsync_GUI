@@ -112,12 +112,24 @@ bool FBeatsyncLoader::Initialize()
         DllPath = FPaths::Combine(FPaths::ProjectPluginsDir(), TEXT("TripSitterUE"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("lib"), Subdir, Filename);
     }
 
+    // Convert to absolute path for packaged builds
+    DllPath = FPaths::ConvertRelativePathToFull(DllPath);
+
     if (!FPaths::FileExists(DllPath)) {
         UE_LOG(LogTemp, Error, TEXT("Beatsync library not found at: %s"), *DllPath);
         return false;
     }
 
+    // Use recommended DLL load pattern for reliable resolution
+    FString DllFolder = FPaths::GetPath(DllPath);
+    void* PrevDir = nullptr;
+#if PLATFORM_WINDOWS
+    PrevDir = FPlatformProcess::PushDllDirectory(*DllFolder);
+#endif
     GApi.DllHandle = FPlatformProcess::GetDllHandle(*DllPath);
+#if PLATFORM_WINDOWS
+    FPlatformProcess::PopDllDirectory(PrevDir);
+#endif
     if (!GApi.DllHandle) {
         UE_LOG(LogTemp, Error, TEXT("Failed to load Beatsync library: %s"), *DllPath);
         return false;

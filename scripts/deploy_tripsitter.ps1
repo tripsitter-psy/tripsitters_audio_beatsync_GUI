@@ -133,10 +133,10 @@ $copyOrder = @(
     )}
 )
 
+    $allOk = $true
 foreach ($group in $copyOrder) {
     Write-Header $group.Name
     $isOptional = $group.Optional -eq $true
-
     foreach ($dll in $group.DLLs) {
         # Look up in RequiredDLLs first, then OptionalDLLs
         $dllInfo = $RequiredDLLs[$dll]
@@ -157,7 +157,8 @@ foreach ($group in $copyOrder) {
             if ($isOptional) {
                 Write-Host "  [SKIP] $dll - Optional, source not found" -ForegroundColor Gray
             } else {
-                Write-Host "  [SKIP] $dll - Source not found: $sourcePath" -ForegroundColor Yellow
+                Write-Host "  [ERROR] $dll - Required DLL source not found: $sourcePath" -ForegroundColor Red
+                $allOk = $false
             }
             continue
         }
@@ -177,6 +178,12 @@ foreach ($group in $copyOrder) {
             Write-Host "  [COPIED] $dll ($size MB)" -ForegroundColor Green
         }
     }
+}
+
+# Abort deployment if any required DLLs were missing
+if (-not $allOk) {
+    Write-Host "Deployment failed: One or more required DLLs were missing." -ForegroundColor Red
+    exit 1
 }
 
 # Final verification

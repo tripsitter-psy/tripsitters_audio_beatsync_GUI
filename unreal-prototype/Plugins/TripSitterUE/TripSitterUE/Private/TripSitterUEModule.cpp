@@ -48,6 +48,13 @@ static void CallBackendInitTracing(const FString& ServiceName)
     // Attempt to locate the backend shared library (same logic as BeatsyncLoader)
     FString DllPath = GetBeatsyncDllPath();
 
+    // Prevent double-load or leak: free previous handle if already loaded
+    if (BeatsyncDllHandle)
+    {
+        FPlatformProcess::FreeDllHandle(BeatsyncDllHandle);
+        BeatsyncDllHandle = nullptr;
+    }
+
     BeatsyncDllHandle = FPlatformProcess::GetDllHandle(*DllPath);
     if (!BeatsyncDllHandle) {
         UE_LOG(LogTemp, Warning, TEXT("TripSitterUEModule: Unable to find beatsync backend DLL at %s"), *DllPath);

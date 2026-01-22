@@ -188,6 +188,7 @@ struct OnnxStemSeparator::Impl {
             int wlen = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, NULL, 0);
             std::wstring widePath(wlen, 0);
             MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, &widePath[0], wlen);
+            if (wlen > 0) widePath.resize(wlen - 1); // Remove trailing null
             session = std::make_unique<Ort::Session>(*env, widePath.c_str(), *sessionOptions);
 #else
             session = std::make_unique<Ort::Session>(*env, path.c_str(), *sessionOptions);
@@ -559,8 +560,10 @@ struct OnnxStemSeparator::Impl {
 
                             // Bounds checking for stemData access
                             if (leftIdx >= totalOutputSize || rightIdx >= totalOutputSize) {
-                                debugLog("[BeatSync] Warning: Stem data index out of bounds, skipping sample");
-                                continue;
+                                debugLog("[BeatSync] Warning: Stem data index out of bounds, zero-filling remaining samples");
+                                // Zero-fill the rest of stemSegment from i to end
+                                std::fill(stemSegment.begin() + i * 2, stemSegment.end(), 0.0f);
+                                break;
                             }
 
                             stemSegment[i * 2] = stemData[leftIdx];                    // Left

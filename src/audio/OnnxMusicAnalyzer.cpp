@@ -1,10 +1,5 @@
-#include "OnnxBeatDetector.h"
-// Ensure OnnxBeatDetector translation unit is linked
-namespace {
-    struct LinkOnnxBeatDetector {
-        LinkOnnxBeatDetector() { BeatSync::ensureOnnxBeatDetectorIsLinked(); }
-    } g_linkOnnxBeatDetector;
-}
+// #include "OnnxBeatDetector.h"
+// NOTE: OnnxBeatDetector registration must be ensured by explicit call to BeatSync::ensureOnnxBeatDetectorIsLinked() from main() or your library init routine, or by using linker flags (e.g., --whole-archive).
 /**
  * @file OnnxMusicAnalyzer.cpp
  * @brief Unified music analysis pipeline combining stem separation and beat detection
@@ -48,12 +43,13 @@ struct OnnxMusicAnalyzer::Impl {
         config = cfg;
 
         // Load stem separator if path provided and enabled
+        std::string stemErrorMsg;
         if (cfg.useStemSeparation && !cfg.stemModelPath.empty()) {
             stemSeparator = std::make_unique<OnnxStemSeparator>();
             if (stemSeparator->loadModel(cfg.stemModelPath, cfg.stemConfig)) {
                 stemSeparatorLoaded = true;
             } else {
-                lastError = "Failed to load stem separator: " + stemSeparator->getLastError();
+                stemErrorMsg = "Failed to load stem separator: " + stemSeparator->getLastError();
                 stemSeparator = nullptr;
                 stemSeparatorLoaded = false;
                 // Continue without stem separation
@@ -78,7 +74,13 @@ struct OnnxMusicAnalyzer::Impl {
             return false;
         }
 
-        return beatDetectorLoaded;
+        // Only set lastError if both failed; otherwise clear it
+        if (!beatDetectorLoaded) {
+            // lastError already set above for beat detector
+            return false;
+        }
+        lastError.clear();
+        return true;
     }
 
     std::vector<float> monoToStereo(const std::vector<float>& mono) {
@@ -171,6 +173,7 @@ struct OnnxMusicAnalyzer::Impl {
 
                     // Debug: analyze drums audio statistics
                     float drumsMin = 1e9f, drumsMax = -1e9f, drumsSum = 0.0f;
+                    size_t count = audioForBeatDetection.size();
                     for (float v : audioForBeatDetection) {
                         drumsMin = std::min(drumsMin, v);
                         drumsMax = std::max(drumsMax, v);
@@ -178,9 +181,12 @@ struct OnnxMusicAnalyzer::Impl {
                     }
                     {
                         std::ostringstream oss;
-                        oss << "[BeatSync] Drums mono audio: samples=" << audioForBeatDetection.size()
-                            << " min=" << drumsMin << " max=" << drumsMax
-                            << " meanAbs=" << (drumsSum / audioForBeatDetection.size());
+                        oss << "[BeatSync] Drums mono audio: samples=" << count
+                            << " min=" << drumsMin << " max=" << drumsMax;
+                        if (count)
+                            oss << " meanAbs=" << (drumsSum / count);
+                        else
+                            oss << " meanAbs=N/A";
                         debugLog(oss.str());
                     }
                 } else {

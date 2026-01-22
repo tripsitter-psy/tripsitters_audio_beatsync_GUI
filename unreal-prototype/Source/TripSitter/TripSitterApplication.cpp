@@ -25,6 +25,7 @@ bool FTripSitterApplication::Initialize()
     if (!Renderer.IsValid())
     {
         UE_LOG(LogTemp, Error, TEXT("TripSitterApplication: Failed to create standalone renderer."));
+        FSlateApplication::Shutdown();
         return false;
     }
     FSlateApplication::Get().InitializeRenderer(Renderer.ToSharedRef());

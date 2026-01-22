@@ -67,7 +67,7 @@ function Sync-ToEngine {
         $EngineSource = Get-EngineSourcePath
         if (-not $EngineSource) {
             Write-Error "Engine source path could not be resolved. Aborting sync."
-            return
+            exit 1
         }
         Write-Host "Syncing from Repo to Engine..." -ForegroundColor Cyan
         Write-Host "  From: $RepoSource\Private\" -ForegroundColor Gray
@@ -167,7 +167,7 @@ function Sync-ToRepo {
     $EngineSource = Get-EngineSourcePath
     if (-not $EngineSource) {
         Write-Error "Engine source path could not be resolved. Aborting sync."
-        return
+        exit 1
     }
     $failedWrites = 0
     Write-Host "Syncing from Engine to Repo..." -ForegroundColor Cyan
