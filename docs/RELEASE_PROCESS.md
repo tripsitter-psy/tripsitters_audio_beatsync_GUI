@@ -16,10 +16,10 @@ The release pipeline automates:
 
 ### Creating a Release
 
-1. **Tag the release**:
+1. **Tag the release (e.g., 1.0.0)**:
    ```bash
-   git tag v0.2.0
-   git push origin v0.2.0
+   git tag 1.0.0
+   git push origin 1.0.0
    ```
 
 2. The `windows-release.yml` workflow automatically:

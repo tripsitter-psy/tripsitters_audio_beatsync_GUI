@@ -23,57 +23,88 @@ public class TripSitter : ModuleRules
             "Slate",
             "SlateCore",
             "StandaloneRenderer",
-            "ImageWrapper"
+            "ImageWrapper",
+            "TripSitterUE" // Plugin dependency
         });
 
-        // Beatsync backend DLL path - relative to Engine folder
-        // The DLL will need to be deployed alongside the executable
+        // Beatsync backend DLL path - conventional ThirdParty location under Engine/Binaries
+        // This follows UE's standard pattern for third-party binaries and ensures proper
+        // packaging/deployment. The DLL will be staged alongside the executable at runtime.
         string archFolder = "x64"; // Default
         if (Target.Architecture == UnrealArch.Arm64)
         {
             archFolder = "arm64";
         }
-        string BeatsyncLib = Path.Combine(EngineDirectory, "Source", "Programs", "TripSitter", "ThirdParty", "beatsync", "lib", archFolder);
+        string BeatsyncLib = Path.Combine(EngineDirectory, "Binaries", "ThirdParty", "Beatsync", archFolder);
 
         if (!Directory.Exists(BeatsyncLib))
         {
-            System.Console.WriteLine($"[TripSitter.Build.cs] WARNING: BeatsyncLib directory not found: {BeatsyncLib}");
+            Log.TraceError("TripSitter: BeatsyncLib directory not found: {0}", BeatsyncLib);
+            throw new BuildException("BeatsyncLib is required but not found at: " + BeatsyncLib);
         }
-        else
+
+        // Robust parent-directory resolution for include path
+        var beatsyncLibDir = new DirectoryInfo(BeatsyncLib);
+        var parentDir = beatsyncLibDir.Parent?.Parent;
+        if (parentDir == null)
         {
-            // Robust parent-directory resolution for include path
-            var beatsyncLibDir = new System.IO.DirectoryInfo(BeatsyncLib);
-            var parentDir = beatsyncLibDir.Parent?.Parent;
-            if (parentDir != null)
+            Log.TraceError("TripSitter: Could not resolve parent directories for BeatsyncLib: {0}", BeatsyncLib);
+            throw new BuildException("Could not resolve include path for BeatsyncLib at: " + BeatsyncLib);
+        }
+
+        var includePath = Path.Combine(parentDir.FullName, "include");
+        if (!Directory.Exists(includePath))
+        {
+            Log.TraceError("TripSitter: Beatsync include directory not found: {0}", includePath);
+            throw new BuildException("Beatsync include directory is required but not found at: " + includePath);
+        }
+        PublicIncludePaths.Add(includePath);
+
+        if (Target.Platform == UnrealTargetPlatform.Win64)
+        {
+            var libPath = Path.Combine(BeatsyncLib, "beatsync_backend_shared.lib");
+            var dllPath = Path.Combine(BeatsyncLib, "beatsync_backend_shared.dll");
+
+            if (!File.Exists(libPath))
             {
-                var includePath = System.IO.Path.Combine(parentDir.FullName, "include");
-                PublicIncludePaths.Add(includePath);
+                Log.TraceError("TripSitter: Import library not found: {0}", libPath);
+                throw new BuildException("Beatsync import library is required but not found at: " + libPath);
             }
-            else
+            if (!File.Exists(dllPath))
             {
-                System.Console.WriteLine($"[TripSitter.Build.cs] ERROR: Could not resolve parent directories for BeatsyncLib: {BeatsyncLib}");
+                Log.TraceError("TripSitter: DLL not found: {0}", dllPath);
+                throw new BuildException("Beatsync DLL is required but not found at: " + dllPath);
             }
 
-            if (Target.Platform == UnrealTargetPlatform.Win64)
+            PublicAdditionalLibraries.Add(libPath);
+            RuntimeDependencies.Add(dllPath);
+        }
+        else if (Target.Platform == UnrealTargetPlatform.Mac)
+        {
+            var dylibPath = Path.Combine(BeatsyncLib, "libbeatsync_backend_shared.dylib");
+
+            if (!File.Exists(dylibPath))
             {
-                PublicAdditionalLibraries.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.lib"));
-                RuntimeDependencies.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.dll"));
+                Log.TraceError("TripSitter: dylib not found: {0}", dylibPath);
+                throw new BuildException("Beatsync dylib is required but not found at: " + dylibPath);
             }
-            else if (Target.Platform == UnrealTargetPlatform.Mac)
+
+            PublicAdditionalLibraries.Add(dylibPath);
+            // For macOS app bundles, stage the dylib in Contents/Frameworks for @rpath resolution
+            RuntimeDependencies.Add("$(BinaryOutputDir)/../Frameworks/libbeatsync_backend_shared.dylib", dylibPath, StagedFileType.NonUFS);
+        }
+        else if (Target.Platform == UnrealTargetPlatform.Linux)
+        {
+            var soPath = Path.Combine(BeatsyncLib, "libbeatsync_backend_shared.so");
+
+            if (!File.Exists(soPath))
             {
-                var dylibPath = Path.Combine(BeatsyncLib, "libbeatsync_backend_shared.dylib");
-                PublicAdditionalLibraries.Add(dylibPath);
-                // Stage the dylib for packaging next to the executable
-                RuntimeDependencies.Add(dylibPath);
-                // For macOS app bundles, the dylib should be placed in Contents/Frameworks for @rpath resolution
-                // Use $(BinaryOutputDir)/../Frameworks/ for proper staging relative to the executable
-                RuntimeDependencies.Add("$(BinaryOutputDir)/../Frameworks/libbeatsync_backend_shared.dylib", dylibPath, StagedFileType.NonUFS);
+                Log.TraceError("TripSitter: Shared library not found: {0}", soPath);
+                throw new BuildException("Beatsync shared library is required but not found at: " + soPath);
             }
-            else if (Target.Platform == UnrealTargetPlatform.Linux)
-            {
-                PublicAdditionalLibraries.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.so"));
-                RuntimeDependencies.Add(Path.Combine(BeatsyncLib, "beatsync_backend_shared.so"));
-            }
+
+            PublicAdditionalLibraries.Add(soPath);
+            RuntimeDependencies.Add(soPath);
         }
     }
 }

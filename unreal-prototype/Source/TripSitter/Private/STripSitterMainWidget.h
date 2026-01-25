@@ -154,8 +154,8 @@ private:
 	float ZoomIntensity = 0.1f;
 	float VignetteStrength = 0.3f;
 	float TransitionDuration = 0.5f;
-	int32 ColorPresetIndex = 0;
-	int32 TransitionType = 0;
+	EColorPreset ColorPreset = EColorPreset::Warm;
+	ETransitionType TransitionType = ETransitionType::Fade;
 
 	// Stem configurations (Kick, Snare, HiHat, Synth)
 	TStaticArray<FStemConfig, STEM_COUNT> StemConfigs;

@@ -44,6 +44,8 @@ typedef struct bs_beatgrid_t {
 // AudioAnalyzer
 BEATSYNC_API void* bs_create_audio_analyzer();
 BEATSYNC_API void bs_destroy_audio_analyzer(void* analyzer);
+// Returns the last error message for the analyzer, or NULL/empty string if none
+BEATSYNC_API const char* bs_get_analyzer_last_error(void* analyzer);
 // Set BPM hint for beat detection (0 = auto-detect, >0 = use this BPM for evenly-spaced beats)
 BEATSYNC_API void bs_set_bpm_hint(void* analyzer, double bpm);
 // Returns 0 on success, non-zero on error. On success, outGrid is filled and must be freed with bs_free_beatgrid

@@ -91,7 +91,7 @@ Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "$en
 & "$env:UE_ENGINE_PATH\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
 
-Output: `%UE_ENGINE_PATH%\Engine\Binaries\Win64\TripSitter.exe`
+Output: `$env:UE_ENGINE_PATH\Engine\Binaries\Win64\TripSitter.exe`
 
 ### Deploy All DLLs to TripSitter
 

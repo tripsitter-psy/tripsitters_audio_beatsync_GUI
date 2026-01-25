@@ -40,6 +40,21 @@ using bs_video_apply_effects_t = int (*)(void*, const char*, const char*, const 
 using bs_video_extract_frame_t = int (*)(const char*, double, unsigned char**, int*, int*);
 using bs_free_frame_data_t = void (*)(unsigned char*);
 
+// AI Types
+using bs_create_ai_analyzer_t = void* (*)(const bs_ai_config_t*);
+using bs_destroy_ai_analyzer_t = void (*)(void*);
+using bs_ai_analyze_file_t = int (*)(void*, const char*, bs_ai_result_t*, void(*)(double, void*), void*);
+using bs_ai_analyze_quick_t = int (*)(void*, const char*, bs_ai_result_t*, void(*)(double, void*), void*);
+using bs_free_ai_result_t = void (*)(bs_ai_result_t*);
+using bs_ai_get_last_error_t = const char* (*)(void*);
+using bs_ai_is_available_t = int (*)();
+using bs_ai_get_providers_t = const char* (*)();
+
+// AudioFlux Types
+using bs_audioflux_is_available_t = int (*)();
+using bs_audioflux_analyze_t = int (*)(const char*, bs_ai_result_t*, void(*)(double, void*), void*);
+using bs_audioflux_analyze_with_stems_t = int (*)(const char*, const char*, bs_ai_result_t*, void(*)(double, void*), void*);
+
 using bs_initialize_tracing_t = int (*)(const char*);
 using bs_shutdown_tracing_t = void (*)();
 using bs_start_span_t = void* (*)(const char*);
@@ -73,6 +88,21 @@ struct FBeatsyncApi
 
     bs_video_extract_frame_t video_extract_frame = nullptr;
     bs_free_frame_data_t free_frame_data = nullptr;
+
+    // AI
+    bs_create_ai_analyzer_t create_ai_analyzer = nullptr;
+    bs_destroy_ai_analyzer_t destroy_ai_analyzer = nullptr;
+    bs_ai_analyze_file_t ai_analyze_file = nullptr;
+    bs_ai_analyze_quick_t ai_analyze_quick = nullptr;
+    bs_free_ai_result_t free_ai_result = nullptr;
+    bs_ai_get_last_error_t ai_get_last_error = nullptr;
+    bs_ai_is_available_t ai_is_available = nullptr;
+    bs_ai_get_providers_t ai_get_providers = nullptr;
+
+    // AudioFlux
+    bs_audioflux_is_available_t audioflux_is_available = nullptr;
+    bs_audioflux_analyze_t audioflux_analyze = nullptr;
+    bs_audioflux_analyze_with_stems_t audioflux_analyze_with_stems = nullptr;
 
     bs_initialize_tracing_t initialize_tracing = nullptr;
     bs_shutdown_tracing_t shutdown_tracing = nullptr;
@@ -162,6 +192,21 @@ bool FBeatsyncLoader::Initialize()
     GApi.video_extract_frame = (bs_video_extract_frame_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_extract_frame"));
     GApi.free_frame_data = (bs_free_frame_data_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_frame_data"));
 
+    // AI
+    GApi.create_ai_analyzer = (bs_create_ai_analyzer_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_create_ai_analyzer"));
+    GApi.destroy_ai_analyzer = (bs_destroy_ai_analyzer_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_destroy_ai_analyzer"));
+    GApi.ai_analyze_file = (bs_ai_analyze_file_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_analyze_file"));
+    GApi.ai_analyze_quick = (bs_ai_analyze_quick_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_analyze_quick"));
+    GApi.free_ai_result = (bs_free_ai_result_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_ai_result"));
+    GApi.ai_get_last_error = (bs_ai_get_last_error_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_get_last_error"));
+    GApi.ai_is_available = (bs_ai_is_available_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_is_available"));
+    GApi.ai_get_providers = (bs_ai_get_providers_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_get_providers"));
+
+    // AudioFlux
+    GApi.audioflux_is_available = (bs_audioflux_is_available_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_audioflux_is_available"));
+    GApi.audioflux_analyze = (bs_audioflux_analyze_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_audioflux_analyze"));
+    GApi.audioflux_analyze_with_stems = (bs_audioflux_analyze_with_stems_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_audioflux_analyze_with_stems"));
+
     // Tracing functions (optional)
     GApi.initialize_tracing = (bs_initialize_tracing_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_initialize_tracing"));
     GApi.shutdown_tracing = (bs_shutdown_tracing_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_shutdown_tracing"));
@@ -209,51 +254,50 @@ FString FBeatsyncLoader::ResolveFFmpegPath()
     return p ? FString(UTF8_TO_TCHAR(p)) : FString();
 }
 
-void* FBeatsyncLoader::CreateAnalyzer()
+FAnalyzerHandle FBeatsyncLoader::CreateAnalyzer()
 {
-    if (!GApi.create_analyzer) return nullptr;
-    return GApi.create_analyzer();
+    if (!GApi.create_analyzer) return FAnalyzerHandle{nullptr};
+    return FAnalyzerHandle{GApi.create_analyzer()};
 }
 
-void FBeahandle) return;
-    if (!tsyncLoader::DestroyAnalyzer(void* handle)
+void FBeatsyncLoader::DestroyAnalyzer(FAnalyzerHandle handle)
 {
     if (!GApi.destroy_analyzer) return;
-    GApi.destroy_analyzer(handle);
+    GApi.destroy_analyzer(handle.Ptr);
 }
 
-void* FBeatsyncLoader::CreateVideoWriter()
+FVideoWriterHandle FBeatsyncLoader::CreateVideoWriter()
 {
-    if (!GApi.create_writer) return nullptr;
-    return GApi.create_writer();
+    if (!GApi.create_writer) return FVideoWriterHandle{nullptr};
+    return FVideoWriterHandle{GApi.create_writer()};
 }
 
-void FBeatsyncLoader::DestroyVideoWriter(void* writer)
+void FBeatsyncLoader::DestroyVideoWriter(FVideoWriterHandle writer)
 {
-    if (!writer) return;
+    if (!writer.IsValid()) return;
 
     // Remove any callback data for this writer
     {
         FScopeLock Lock(&GCallbackStorageMutex);
-        GCallbackStorage.Remove(writer);
+        GCallbackStorage.Remove(writer.Ptr);
     }
 
     if (GApi.destroy_writer)
     {
-        GApi.destroy_writer(writer);
+        GApi.destroy_writer(writer.Ptr);
     }
 }
 
-bool FBeatsyncLoader::AnalyzeAudio(void* handle, const FString& path, FBeatGrid& outGrid)
-{handle) return false;
-    if (!
+bool FBeatsyncLoader::AnalyzeAudio(FAnalyzerHandle handle, const FString& path, FBeatGrid& outGrid)
+{
+    if (!handle.IsValid()) return false;
     if (!GApi.analyze_audio) return false;
 
     // Prepare C beatgrid
     bs_beatgrid_t grid = {};
 
     FTCHARToUTF8 PathUtf8(*path);
-    int res = GApi.analyze_audio(handle, PathUtf8.Get(), &grid);
+    int res = GApi.analyze_audio(handle.Ptr, PathUtf8.Get(), &grid);
     if (res != 0) return false;
 
     outGrid.BPM = grid.bpm;
@@ -267,14 +311,14 @@ bool FBeatsyncLoader::AnalyzeAudio(void* handle, const FString& path, FBeatGrid&
     return true;
 }
 
-FString FBeatsyncLoader::GetVideoLastError(void* writer)
+FString FBeatsyncLoader::GetVideoLastError(FVideoWriterHandle writer)
 {
     if (!GApi.video_get_last_error) return FString();
-    const char* p = GApi.video_get_last_error(writer);
+    const char* p = GApi.video_get_last_error(writer.Ptr);
     return p ? FString(UTF8_TO_TCHAR(p)) : FString();
 }
 
-void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
+void FBeatsyncLoader::SetProgressCallback(FVideoWriterHandle writer, FProgressCb cb)
 {
     if (!GApi.video_set_progress) return;
 
@@ -310,41 +354,41 @@ void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
         FScopeLock Lock(&GCallbackStorageMutex);
 
         // Remove any existing callback for this writer
-        GCallbackStorage.Remove(writer);
+        GCallbackStorage.Remove(writer.Ptr);
 
         if (cb)
         {
             // Store the callback data using shared ownership
             auto data = MakeShared<CallbackData>();
             data->Func = cb;
-            GCallbackStorage.Add(writer, data);
-            userPtr = GCallbackStorage[writer].Get();
+            GCallbackStorage.Add(writer.Ptr, data);
+            userPtr = GCallbackStorage[writer.Ptr].Get();
         }
     }  // Lock released here before DLL call
 
     // Call DLL outside the lock to prevent deadlock
     if (cb)
     {
-        GApi.video_set_progress(writer, trampoline, userPtr);
+        GApi.video_set_progress(writer.Ptr, trampoline, userPtr);
     }
     else
     {
         // Unregister callback
-        GApi.video_set_progress(writer, nullptr, nullptr);
+        GApi.video_set_progress(writer.Ptr, nullptr, nullptr);
     }
 }
 
-bool FBeatsyncLoader::CutVideoAtBeats(void* writer, const FString& inputVideo, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration)
+bool FBeatsyncLoader::CutVideoAtBeats(FVideoWriterHandle writer, const FString& inputVideo, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration)
 {
     if (!GApi.video_cut_at_beats) return false;
 
     FTCHARToUTF8 inputConverter(*inputVideo);
     FTCHARToUTF8 outputConverter(*outputVideo);
-    int res = GApi.video_cut_at_beats(writer, inputConverter.Get(), beatTimes.GetData(), (size_t)beatTimes.Num(), outputConverter.Get(), clipDuration);
+    int res = GApi.video_cut_at_beats(writer.Ptr, inputConverter.Get(), beatTimes.GetData(), (size_t)beatTimes.Num(), outputConverter.Get(), clipDuration);
     return res == 0;
 }
 
-bool FBeatsyncLoader::CutVideoAtBeatsMulti(void* writer, const TArray<FString>& inputVideos, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration)
+bool FBeatsyncLoader::CutVideoAtBeatsMulti(FVideoWriterHandle writer, const TArray<FString>& inputVideos, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration)
 {
     if (!GApi.video_cut_at_beats_multi) return false;
 
@@ -359,18 +403,22 @@ bool FBeatsyncLoader::CutVideoAtBeatsMulti(void* writer, const TArray<FString>& 
     }
 
     FTCHARToUTF8 outputConverter(*outputVideo);
-    int res = GApi.video_cut_at_beats_multi(writer, arr.GetData(), (size_t)arr.Num(), beatTimes.GetData(), (size_t)beatTimes.Num(), outputConverter.Get(), clipDuration);
+    int res = GApi.video_cut_at_beats_multi(writer.Ptr, arr.GetData(), (size_t)arr.Num(), beatTimes.GetData(), (size_t)beatTimes.Num(), outputConverter.Get(), clipDuration);
     return res == 0;
 }
 
-void FBeatsyncLoader::SetEffectsConfig(void* writer, const FEffectsConfig& config)
+void FBeatsyncLoader::SetEffectsConfig(FVideoWriterHandle writer, const FEffectsConfig& config)
 {
     if (!GApi.video_set_effects) return;
 
+    // Convert enum values to lowercase strings for C API
+    FString TransitionTypeStr = TransitionTypeToString(config.TransitionType);
+    FString ColorPresetStr = ColorPresetToString(config.ColorPreset);
+
     // Create persistent converters for string fields - these RAII objects keep the
     // ANSI buffers alive until after the API call completes
-    auto TransitionTypeUtf8 = StringCast<UTF8CHAR>(*config.TransitionType);
-    auto ColorPresetUtf8 = StringCast<UTF8CHAR>(*config.ColorPreset);
+    auto TransitionTypeUtf8 = StringCast<UTF8CHAR>(*TransitionTypeStr);
+    auto ColorPresetUtf8 = StringCast<UTF8CHAR>(*ColorPresetStr);
 
     bs_effects_config_t cfg;
 
@@ -389,24 +437,24 @@ void FBeatsyncLoader::SetEffectsConfig(void* writer, const FEffectsConfig& confi
     cfg.effectStartTime = config.EffectStartTime;
     cfg.effectEndTime = config.EffectEndTime;
 
-    int err = GApi.video_set_effects(writer, &cfg);
+    int err = GApi.video_set_effects(writer.Ptr, &cfg);
     if (err != 0) {
         FString LastError = GetVideoLastError(writer);
         UE_LOG(LogTemp, Error, TEXT("SetEffectsConfig failed: %s (code %d)"), *LastError, err);
     }
 }
 
-bool FBeatsyncLoader::ApplyEffects(void* writer, const FString& inputVideo, const FString& outputVideo, const TArray<double>& beatTimes)
+bool FBeatsyncLoader::ApplyEffects(FVideoWriterHandle writer, const FString& inputVideo, const FString& outputVideo, const TArray<double>& beatTimes)
 {
     if (!GApi.video_apply_effects) return false;
 
     FTCHARToUTF8 inConv(*inputVideo);
     FTCHARToUTF8 outConv(*outputVideo);
-    int res = GApi.video_apply_effects(writer, inConv.Get(), outConv.Get(), beatTimes.GetData(), (size_t)beatTimes.Num());
+    int res = GApi.video_apply_effects(writer.Ptr, inConv.Get(), outConv.Get(), beatTimes.GetData(), (size_t)beatTimes.Num());
     return res == 0;
 }
 
-bool FBeatsyncLoader::AddAudioTrack(void* writer, const FString& inputVideo, const FString& audioFile, const FString& outputVideo, bool trimToShortest, double audioStart, double audioEnd)
+bool FBeatsyncLoader::AddAudioTrack(FVideoWriterHandle writer, const FString& inputVideo, const FString& audioFile, const FString& outputVideo, bool trimToShortest, double audioStart, double audioEnd)
 {
     if (!GApi.video_add_audio) return false;
 
@@ -416,7 +464,7 @@ bool FBeatsyncLoader::AddAudioTrack(void* writer, const FString& inputVideo, con
     FTCHARToUTF8 AudioFileUtf8(*audioFile);
     FTCHARToUTF8 OutputVideoUtf8(*outputVideo);
 
-    int res = GApi.video_add_audio(writer, InputVideoUtf8.Get(), AudioFileUtf8.Get(), OutputVideoUtf8.Get(), trimToShortest ? 1 : 0, audioStart, audioEnd);
+    int res = GApi.video_add_audio(writer.Ptr, InputVideoUtf8.Get(), AudioFileUtf8.Get(), OutputVideoUtf8.Get(), trimToShortest ? 1 : 0, audioStart, audioEnd);
     return res == 0;
 }
 
@@ -457,29 +505,213 @@ bool FBeatsyncLoader::ExtractFrame(const FString& videoPath, double timestamp, T
     return true;
 }
 
-FBeatsyncLoader::SpanHandle FBeatsyncLoader::StartSpan(const FString& name)
+FSpanHandle FBeatsyncLoader::StartSpan(const FString& name)
 {
-    if (!GApi.start_span) return nullptr;
+    if (!GApi.start_span) return FSpanHandle{nullptr};
     FTCHARToUTF8 TempName(*name);
-    return GApi.start_span(TempName.Get());
+    return FSpanHandle{GApi.start_span(TempName.Get())};
 }
 
-void FBeatsyncLoader::EndSpan(SpanHandle h)
+void FBeatsyncLoader::EndSpan(FSpanHandle h)
 {
     if (!GApi.end_span) return;
-    GApi.end_span(h);
+    GApi.end_span(h.Ptr);
 }
 
-void FBeatsyncLoader::SpanSetError(SpanHandle h, const FString& msg)
+void FBeatsyncLoader::SpanSetError(FSpanHandle h, const FString& msg)
 {
     if (!GApi.span_set_error) return;
     FTCHARToUTF8 TempMsg(*msg);
-    GApi.span_set_error(h, TempMsg.Get());
+    GApi.span_set_error(h.Ptr, TempMsg.Get());
 }
 
-void FBeatsyncLoader::SpanAddEvent(SpanHandle h, const FString& ev)
+void FBeatsyncLoader::SpanAddEvent(FSpanHandle h, const FString& ev)
 {
     if (!GApi.span_add_event) return;
     FTCHARToUTF8 TempEv(*ev);
-    GApi.span_add_event(h, TempEv.Get());
+    GApi.span_add_event(h.Ptr, TempEv.Get());
+}
+
+// =============================================================================
+// Waveform Analysis
+// =============================================================================
+
+bool FBeatsyncLoader::GetWaveform(FAnalyzerHandle handle, const FString& path, TArray<float>& outPeaks, double& outDuration)
+{
+    if (!handle.IsValid() || !GApi.get_waveform) return false;
+
+    float* peaks = nullptr;
+    size_t count = 0;
+    FTCHARToUTF8 PathUtf8(*path);
+
+    int res = GApi.get_waveform(handle.Ptr, PathUtf8.Get(), &peaks, &count, &outDuration);
+    if (res != 0) return false;
+
+    outPeaks.Empty();
+    if (peaks && count > 0)
+    {
+        outPeaks.Append(peaks, count);
+    }
+    if (GApi.free_waveform) GApi.free_waveform(peaks);
+    return true;
+}
+
+bool FBeatsyncLoader::GetWaveformBands(FAnalyzerHandle handle, const FString& path, TArray<float>& outBass, TArray<float>& outMid, TArray<float>& outHigh, double& outDuration)
+{
+    // Not implemented in C API yet
+    return false;
+}
+
+// =============================================================================
+// AI Analysis
+// =============================================================================
+
+bool FBeatsyncLoader::IsAIAvailable()
+{
+    if (!GApi.ai_is_available) return false;
+    return GApi.ai_is_available() != 0;
+}
+
+FString FBeatsyncLoader::GetAIProviders()
+{
+    if (!GApi.ai_get_providers) return TEXT("");
+    const char* p = GApi.ai_get_providers();
+    return p ? FString(UTF8_TO_TCHAR(p)) : TEXT("");
+}
+
+FAIAnalyzerHandle FBeatsyncLoader::CreateAIAnalyzer(const FAIConfig& Config)
+{
+    if (!GApi.create_ai_analyzer) return {nullptr};
+
+    FTCHARToUTF8 BeatStr(*Config.BeatModelPath);
+    FTCHARToUTF8 StemStr(*Config.StemModelPath);
+
+    bs_ai_config_t c = {};
+    c.beat_model_path = BeatStr.Get();
+    c.stem_model_path = Config.StemModelPath.IsEmpty() ? nullptr : StemStr.Get();
+    c.use_stem_separation = Config.bEnableStemSeparation ? 1 : 0;
+    c.use_drums_for_beats = Config.bEnableDrumsForBeats ? 1 : 0;
+    c.use_gpu = Config.bEnableGPU ? 1 : 0;
+    c.gpu_device_id = Config.GPUDeviceId;
+    c.beat_threshold = Config.BeatThreshold;
+    c.downbeat_threshold = Config.DownbeatThreshold;
+
+    return {GApi.create_ai_analyzer(&c)};
+}
+
+void FBeatsyncLoader::DestroyAIAnalyzer(FAIAnalyzerHandle Handle)
+{
+    if (!Handle.IsValid() || !GApi.destroy_ai_analyzer) return;
+    GApi.destroy_ai_analyzer(Handle.Ptr);
+}
+
+static void ConvertToFAIResult(const bs_ai_result_t& In, FAIResult& Out)
+{
+    Out.BPM = In.bpm;
+    Out.Duration = In.duration;
+    Out.Beats.Empty();
+    if (In.beats && In.beat_count > 0) Out.Beats.Append(In.beats, In.beat_count);
+    Out.Downbeats.Empty();
+    if (In.downbeats && In.downbeat_count > 0) Out.Downbeats.Append(In.downbeats, In.downbeat_count);
+    
+    // Segments
+    Out.Segments.Empty();
+    if (In.segments && In.segment_count > 0)
+    {
+        for (size_t i = 0; i < In.segment_count; ++i)
+        {
+            FMusicSegment Seg;
+            Seg.Time = In.segments[i].time;
+            Seg.Duration = In.segments[i].duration;
+            Seg.Label = In.segments[i].label ? FString(UTF8_TO_TCHAR(In.segments[i].label)) : FString();
+            Out.Segments.Add(Seg);
+        }
+    }
+}
+
+bool FBeatsyncLoader::AIAnalyzeFile(FAIAnalyzerHandle Analyzer, const FString& FilePath, FAIResult& OutResult)
+{
+    if (!Analyzer.IsValid() || !GApi.ai_analyze_file) return false;
+
+    FTCHARToUTF8 PathStr(*FilePath);
+    bs_ai_result_t res = {};
+    // Progress callback support omitted for brevity, passing nullptr
+    int ret = GApi.ai_analyze_file(Analyzer.Ptr, PathStr.Get(), &res, nullptr, nullptr);
+
+    if (ret == 0)
+    {
+        ConvertToFAIResult(res, OutResult);
+        if (GApi.free_ai_result) GApi.free_ai_result(&res);
+        return true;
+    }
+    return false;
+}
+
+bool FBeatsyncLoader::AIAnalyzeQuick(FAIAnalyzerHandle Analyzer, const FString& FilePath, FAIResult& OutResult)
+{
+    if (!Analyzer.IsValid() || !GApi.ai_analyze_quick) return false;
+
+    FTCHARToUTF8 PathStr(*FilePath);
+    bs_ai_result_t res = {};
+    int ret = GApi.ai_analyze_quick(Analyzer.Ptr, PathStr.Get(), &res, nullptr, nullptr);
+
+    if (ret == 0)
+    {
+        ConvertToFAIResult(res, OutResult);
+        if (GApi.free_ai_result) GApi.free_ai_result(&res);
+        return true;
+    }
+    return false;
+}
+
+FString FBeatsyncLoader::GetAILastError(FAIAnalyzerHandle Analyzer)
+{
+    if (!GApi.ai_get_last_error) return TEXT("");
+    const char* p = GApi.ai_get_last_error(Analyzer.Ptr);
+    return p ? FString(UTF8_TO_TCHAR(p)) : TEXT("");
+}
+
+// =============================================================================
+// AudioFlux Analysis
+// =============================================================================
+
+bool FBeatsyncLoader::IsAudioFluxAvailable()
+{
+    if (!GApi.audioflux_is_available) return false;
+    return GApi.audioflux_is_available() != 0;
+}
+
+bool FBeatsyncLoader::AudioFluxAnalyze(const FString& FilePath, FAIResult& OutResult)
+{
+    if (!GApi.audioflux_analyze) return false;
+
+    FTCHARToUTF8 PathStr(*FilePath);
+    bs_ai_result_t res = {};
+    int ret = GApi.audioflux_analyze(PathStr.Get(), &res, nullptr, nullptr);
+
+    if (ret == 0)
+    {
+        ConvertToFAIResult(res, OutResult);
+        if (GApi.free_ai_result) GApi.free_ai_result(&res);
+        return true;
+    }
+    return false;
+}
+
+bool FBeatsyncLoader::AudioFluxAnalyzeWithStems(const FString& FilePath, const FString& StemModelPath, FAIResult& OutResult)
+{
+    if (!GApi.audioflux_analyze_with_stems) return false;
+
+    FTCHARToUTF8 PathStr(*FilePath);
+    FTCHARToUTF8 ModelStr(*StemModelPath);
+    bs_ai_result_t res = {};
+    int ret = GApi.audioflux_analyze_with_stems(PathStr.Get(), ModelStr.Get(), &res, nullptr, nullptr);
+
+    if (ret == 0)
+    {
+        ConvertToFAIResult(res, OutResult);
+        if (GApi.free_ai_result) GApi.free_ai_result(&res);
+        return true;
+    }
+    return false;
 }

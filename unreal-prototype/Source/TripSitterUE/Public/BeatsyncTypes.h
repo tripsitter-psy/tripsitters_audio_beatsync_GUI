@@ -3,6 +3,60 @@
 #include "CoreMinimal.h"
 #include "BeatsyncTypes.generated.h"
 
+/**
+ * Video transition types for beat-synced effects
+ */
+UENUM(BlueprintType)
+enum class ETransitionType : uint8
+{
+    Fade UMETA(DisplayName = "Fade"),
+    Wipe UMETA(DisplayName = "Wipe"),
+    Dissolve UMETA(DisplayName = "Dissolve"),
+    Zoom UMETA(DisplayName = "Zoom")
+};
+
+/**
+ * Color grading presets for video processing
+ */
+UENUM(BlueprintType)
+enum class EColorPreset : uint8
+{
+    Warm UMETA(DisplayName = "Warm"),
+    Cool UMETA(DisplayName = "Cool"),
+    Vintage UMETA(DisplayName = "Vintage"),
+    Vibrant UMETA(DisplayName = "Vibrant")
+};
+
+/**
+ * Convert ETransitionType to lowercase string for C API
+ */
+inline FString TransitionTypeToString(ETransitionType Type)
+{
+    switch (Type)
+    {
+        case ETransitionType::Fade: return TEXT("fade");
+        case ETransitionType::Wipe: return TEXT("wipe");
+        case ETransitionType::Dissolve: return TEXT("dissolve");
+        case ETransitionType::Zoom: return TEXT("zoom");
+        default: return TEXT("fade");
+    }
+}
+
+/**
+ * Convert EColorPreset to lowercase string for C API
+ */
+inline FString ColorPresetToString(EColorPreset Preset)
+{
+    switch (Preset)
+    {
+        case EColorPreset::Warm: return TEXT("warm");
+        case EColorPreset::Cool: return TEXT("cool");
+        case EColorPreset::Vintage: return TEXT("vintage");
+        case EColorPreset::Vibrant: return TEXT("vibrant");
+        default: return TEXT("warm");
+    }
+}
+
 USTRUCT(BlueprintType)
 struct FBeatGrid
 {
@@ -27,7 +81,7 @@ struct FEffectsConfig
     bool bEnableTransitions = false;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BeatSync|Transitions")
-    FString TransitionType = TEXT("fade");
+    ETransitionType TransitionType = ETransitionType::Fade;
 
     // Backend uses double, but Blueprint only supports float; default matches backend (0.3)
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BeatSync|Transitions", meta = (ClampMin = "0.0", ClampMax = "2.0"))
@@ -37,7 +91,7 @@ struct FEffectsConfig
     bool bEnableColorGrade = false;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BeatSync|Color")
-    FString ColorPreset = TEXT("warm");
+    EColorPreset ColorPreset = EColorPreset::Warm;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BeatSync|Vignette")
     bool bEnableVignette = false;

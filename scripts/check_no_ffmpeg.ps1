@@ -15,10 +15,11 @@ $forbiddenPatterns = @("avcodec*.dll", "avformat*.dll", "avutil*.dll", "swresamp
 $found = $false
 
 foreach ($pattern in $forbiddenPatterns) {
-    $matches = Get-ChildItem -Path $ReleaseDir -Filter $pattern -ErrorAction SilentlyContinue
-    if ($matches) {
-        foreach ($file in $matches) {
-            Write-Error "Found prohibited FFmpeg DLL in build output: $($file.Name). This implies vcpkg or another process copied the wrong FFmpeg version."
+    $foundFiles = Get-ChildItem -Path $ReleaseDir -Filter $pattern -Recurse -ErrorAction SilentlyContinue
+    if ($foundFiles) {
+        foreach ($file in $foundFiles) {
+            Write-Warning "Removing prohibited FFmpeg DLL from build output: $($file.Name). This implies vcpkg or another process copied the wrong FFmpeg version."
+            Remove-Item $file.FullName -Force
             $found = $true
         }
     }

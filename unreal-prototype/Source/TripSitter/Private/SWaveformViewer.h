@@ -31,11 +31,17 @@ struct FStemBeats
 // Effect region for applying effects to specific time ranges
 struct FEffectRegion
 {
+    FGuid Id = FGuid::NewGuid();
 	FString EffectName;
 	double StartTime = 0.0;
 	double EndTime = 0.0;
 	FLinearColor Color = FLinearColor(0.5f, 0.0f, 1.0f, 0.3f); // Purple tint
 	bool bEnabled = true;
+
+    bool operator==(const FEffectRegion& Other) const
+    {
+        return Id == Other.Id;
+    }
 };
 
 /**
@@ -85,6 +91,10 @@ public:
 	void RemoveBeatAtTime(double Time, double Tolerance = 0.05);
 	void RemoveBeatAtIndex(int32 Index);
 	const TArray<double>& GetBeatTimes() const { return BeatTimes; }
+
+    // Effect region management
+    // Removed duplicate RemoveEffectRegion(int32 Index);
+    void RemoveEffectRegionById(const FGuid& Id);
 
 	// Stem beat management
 	void SetStemBeatTimes(EStemType Stem, const TArray<double>& InBeatTimes);

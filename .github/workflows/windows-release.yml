@@ -416,8 +416,8 @@ jobs:
           $binDir = "$env:ProgramFiles\MTV TripSitter\bin"
 
           if (-not (Test-Path $binDir)) {
-            Write-Warning "bin directory not found"
-            exit 0
+            Write-Error "bin directory not found - installer may be incomplete"
+            exit 1
           }
 
           $requiredDlls = @(

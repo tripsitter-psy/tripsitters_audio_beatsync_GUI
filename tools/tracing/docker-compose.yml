@@ -14,12 +14,20 @@ services:
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.143.0
+    container_name: otel-collector
     command: ["--config", "/etc/otel-collector-config.yaml"]
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
     ports:
       - "4317:4317" # OTLP gRPC
       - "4318:4318" # OTLP HTTP
+      - "13133:13133" # Health check
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     depends_on:
       jaeger:
         condition: service_healthy

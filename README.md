@@ -33,7 +33,8 @@ The project consists of two main components:
 
 - CMake 3.20+
 - Visual Studio 2022 (MSVC - Microsoft Visual C++ compiler)
-- Unreal Engine 5 (UE5 - source build)
+- Unreal Engine 5 — installed or source build (e.g., from Epic Launcher or GitHub)
+  - *Note:* If using an installed engine, you don't need to rebuild the engine itself. See the [Unreal Prototype README](unreal-prototype/README.md) for details on generating project files.
 
 ### Dependencies (via vcpkg)
 

@@ -33,8 +33,8 @@ if (Get-Command docker -ErrorAction SilentlyContinue) {
     $job = Start-Job {
         try {
             $tempFile = [System.IO.Path]::GetTempFileName()
-            $args = @("run", "--rm", "--gpus", "all", $using:CudaImage, "nvidia-smi")
-            $process = Start-Process -FilePath "docker" -ArgumentList $args -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempFile
+            $dockerArgs = @("run", "--rm", "--gpus", "all", $using:CudaImage, "nvidia-smi")
+            $process = Start-Process -FilePath "docker" -ArgumentList $dockerArgs -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempFile
             $output = Get-Content $tempFile -Raw
             Remove-Item $tempFile -ErrorAction SilentlyContinue
             return @{ ExitCode = $process.ExitCode; Output = $output }

@@ -20,20 +20,27 @@ def generate(path='build/tmp/gpu_stress.wav', duration=600, rate=22050):
         wf.setnchannels(1)
         wf.setsampwidth(2)  # 16-bit
         wf.setframerate(rate)
-        for i in range(nframes):
-            t = i / float(rate)
-            # linear sweep
-            frac = t / float(duration)
-            freq = freq0 + (freq1 - freq0) * frac
-            sample = amplitude * math.sin(2.0 * math.pi * freq * t)
-            # small added noise to avoid pure tone
-            # no external RNG to keep deterministic
-            noise = 0.001 * math.sin(2.0 * math.pi * 1234.0 * t)
-            val = sample + noise
-            # clamp
-            val = max(-0.9999, min(0.9999, val))
-            intv = int(val * 32767.0)
-            wf.writeframes(struct.pack('<h', intv))
+        chunk_size = rate * 1  # 1 second chunks for efficiency
+        for start_idx in range(0, nframes, chunk_size):
+            end_idx = min(start_idx + chunk_size, nframes)
+            chunk_data = []
+            for i in range(start_idx, end_idx):
+                t = i / float(rate)
+                # linear sweep
+                frac = t / float(duration)
+                freq = freq0 + (freq1 - freq0) * frac
+                sample = amplitude * math.sin(2.0 * math.pi * freq * t)
+                # small added noise to avoid pure tone
+                # no external RNG to keep deterministic
+                noise = 0.001 * math.sin(2.0 * math.pi * 1234.0 * t)
+                val = sample + noise
+                # clamp
+                val = max(-0.9999, min(0.9999, val))
+                intv = int(val * 32767.0)
+                chunk_data.append(intv)
+            
+            # Pack entire chunk at once
+            wf.writeframes(struct.pack('<' + 'h' * len(chunk_data), *chunk_data))
 
 if __name__ == '__main__':
     out = 'build/tmp/gpu_stress.wav'

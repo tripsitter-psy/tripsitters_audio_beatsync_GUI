@@ -14,6 +14,7 @@ struct bs_beatgrid_t {
 using bs_resolve_ffmpeg_path_t = const char* (*)();
 using bs_create_audio_analyzer_t = void* (*)();
 using bs_destroy_audio_analyzer_t = void (*)(void*);
+using bs_get_analyzer_last_error_t = const char* (*)(void*);
 using bs_set_bpm_hint_t = void (*)(void*, double);
 using bs_analyze_audio_t = int (*)(void*, const char*, bs_beatgrid_t*);
 using bs_free_beatgrid_t = void (*)(bs_beatgrid_t*);
@@ -110,6 +111,7 @@ struct FBeatsyncApi
     bs_resolve_ffmpeg_path_t resolve_ffmpeg = nullptr;
     bs_create_audio_analyzer_t create_analyzer = nullptr;
     bs_destroy_audio_analyzer_t destroy_analyzer = nullptr;
+    bs_get_analyzer_last_error_t get_analyzer_last_error = nullptr;
     bs_set_bpm_hint_t set_bpm_hint = nullptr;
     bs_analyze_audio_t analyze_audio = nullptr;
     bs_free_beatgrid_t free_beatgrid = nullptr;
@@ -241,6 +243,7 @@ bool FBeatsyncLoader::Initialize()
     // Load all function pointers
     GApi.resolve_ffmpeg = (bs_resolve_ffmpeg_path_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_resolve_ffmpeg_path"));
     GApi.create_analyzer = (bs_create_audio_analyzer_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_create_audio_analyzer"));
+    GApi.get_analyzer_last_error = (bs_get_analyzer_last_error_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_get_analyzer_last_error"));
     GApi.destroy_analyzer = (bs_destroy_audio_analyzer_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_destroy_audio_analyzer"));
     GApi.set_bpm_hint = (bs_set_bpm_hint_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_set_bpm_hint"));
     GApi.analyze_audio = (bs_analyze_audio_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_analyze_audio"));
@@ -400,6 +403,13 @@ void FBeatsyncLoader::DestroyAnalyzer(void* Handle)
         GApi.destroy_analyzer(Handle);
     }
 }
+FString FBeatsyncLoader::GetAnalyzerLastError(void* Analyzer)
+{
+    if (!GApi.get_analyzer_last_error || !Analyzer) return FString();
+    const char* Err = GApi.get_analyzer_last_error(Analyzer);
+    return Err ? FString(UTF8_TO_TCHAR(Err)) : FString();
+}
+
 
 void FBeatsyncLoader::SetBPMHint(void* Analyzer, double BPM)
 {
@@ -593,8 +603,7 @@ bool FBeatsyncLoader::ConcatenateVideos(const TArray<FString>& Inputs, const FSt
     int Result = GApi.video_concatenate(InputPtrsStable.GetData(), InputPtrsStable.Num(), UTF8Output.Get());
     return Result == 0;
 }
-FTCHARToUTF8 Utf8(*FilePath);
-    int Result = GApi.get_waveform(Analyzer, Utf8.Get(
+
 bool FBeatsyncLoader::GetWaveform(void* Analyzer, const FString& FilePath, TArray<float>& OutPeaks, double& OutDuration)
 {
     if (!GApi.get_waveform) {
@@ -655,8 +664,6 @@ bool FBeatsyncLoader::GetWaveformBands(void* Analyzer, const FString& FilePath,
     UE_LOG(LogTemp, Log, TEXT("TripSitter: Loading frequency-band waveform from: %s"), *FilePath);
 
     bs_waveform_bands_t Bands = {};
-FTCHARToUTF8 Utf8(*FilePath);
-    int Result = GApi.get_waveform_bands(Analyzer, Utf8.Get(
     int Result = GApi.get_waveform_bands(Analyzer, TCHAR_TO_UTF8(*FilePath), &Bands);
 
     UE_LOG(LogTemp, Log, TEXT("TripSitter: get_waveform_bands returned %d, Count=%llu, Duration=%.2f"),
@@ -728,9 +735,13 @@ void FBeatsyncLoader::SetEffectsConfig(void* Handle, const FEffectsConfig& Confi
 {
     if (!GApi.video_set_effects_config || !Handle) return;
 
+    // Convert enum values to lowercase strings for C API
+    FString TransitionTypeStr = TransitionTypeToString(Config.TransitionType);
+    FString ColorPresetStr = ColorPresetToString(Config.ColorPreset);
+
     // Convert FStrings to UTF8 - need to keep them alive during the call
-    FTCHARToUTF8 TransitionTypeUtf8(*Config.TransitionType);
-    FTCHARToUTF8 ColorPresetUtf8(*Config.ColorPreset);
+    FTCHARToUTF8 TransitionTypeUtf8(*TransitionTypeStr);
+    FTCHARToUTF8 ColorPresetUtf8(*ColorPresetStr);
 
     bs_effects_config_t CConfig = {};
     CConfig.enableTransitions = Config.bEnableTransitions ? 1 : 0;
@@ -874,9 +885,9 @@ void FBeatsyncLoader::DestroyAIAnalyzer(void* Handle)
 bool FBeatsyncLoader::AIAnalyzeFile(void* Analyzer, const FString& FilePath, FAIResult& OutResult)
 {
     if (!GApi.ai_analyze_file || !Analyzer) return false;
-FTCHARToUTF8 Utf8(*FilePath);
-    int Result = GApi.ai_analyze_file(Analyzer, Utf8.Get(
-    bs_ai_result_t CResult = {};
+    FTCHARToUTF8 Utf8(*FilePath);
+    
+    bs_ai_result_t CResult = {0};
     int Result = GApi.ai_analyze_file(Analyzer, TCHAR_TO_UTF8(*FilePath), &CResult, nullptr, nullptr);
 
     if (Result == 0) {
@@ -909,8 +920,6 @@ FTCHARToUTF8 Utf8(*FilePath);
 bool FBeatsyncLoader::AIAnalyzeQuick(void* Analyzer, const FString& FilePath, FAIResult& OutResult)
 {
     if (!GApi.ai_analyze_quick || !Analyzer) return false;
-FTCHARToUTF8 Utf8(*FilePath);
-    int Result = GApi.ai_analyze_quick(Analyzer, Utf8.Get(
     bs_ai_result_t CResult = {};
     int Result = GApi.ai_analyze_quick(Analyzer, TCHAR_TO_UTF8(*FilePath), &CResult, nullptr, nullptr);
 
@@ -1110,8 +1119,6 @@ bool FBeatsyncLoader::AudioFluxAnalyze(const FString& FilePath, FAIResult& OutRe
     }
 
     UE_LOG(LogTemp, Log, TEXT("AudioFlux: Starting analysis of %s"), *FilePath);
-FTCHARToUTF8 Utf8(*FilePath);
-    int Result = GApi.audioflux_analyze(Utf8.Get(
     bs_ai_result_t CResult = {};
     UE_LOG(LogTemp, Log, TEXT("AudioFlux: Calling bs_audioflux_analyze..."));
     int Result = GApi.audioflux_analyze(TCHAR_TO_UTF8(*FilePath), &CResult, nullptr, nullptr);

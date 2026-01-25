@@ -10,14 +10,96 @@ struct FBeatGrid
     double Duration = 0.0;
 };
 
+/**
+ * Video transition types for beat-synced effects
+ */
+enum class ETransitionType : uint8
+{
+    Fade,
+    Wipe,
+    Dissolve,
+    Zoom
+};
+
+/**
+ * Color grading presets for video processing
+ */
+enum class EColorPreset : uint8
+{
+    Warm,
+    Cool,
+    Vintage,
+    Vibrant
+};
+
+/**
+ * Convert ETransitionType to lowercase string for C API
+ */
+inline FString TransitionTypeToString(ETransitionType Type)
+{
+    switch (Type)
+    {
+        case ETransitionType::Fade: return TEXT("fade");
+        case ETransitionType::Wipe: return TEXT("wipe");
+        case ETransitionType::Dissolve: return TEXT("dissolve");
+        case ETransitionType::Zoom: return TEXT("zoom");
+        default: return TEXT("fade");
+    }
+}
+
+/**
+ * Convert ETransitionType to display string for UI
+ */
+inline FString TransitionTypeToDisplayString(ETransitionType Type)
+{
+    switch (Type)
+    {
+        case ETransitionType::Fade: return TEXT("Fade");
+        case ETransitionType::Wipe: return TEXT("Wipe");
+        case ETransitionType::Dissolve: return TEXT("Dissolve");
+        case ETransitionType::Zoom: return TEXT("Zoom");
+        default: return TEXT("Fade");
+    }
+}
+
+/**
+ * Convert EColorPreset to lowercase string for C API
+ */
+inline FString ColorPresetToString(EColorPreset Preset)
+{
+    switch (Preset)
+    {
+        case EColorPreset::Warm: return TEXT("warm");
+        case EColorPreset::Cool: return TEXT("cool");
+        case EColorPreset::Vintage: return TEXT("vintage");
+        case EColorPreset::Vibrant: return TEXT("vibrant");
+        default: return TEXT("warm");
+    }
+}
+
+/**
+ * Convert EColorPreset to display string for UI
+ */
+inline FString ColorPresetToDisplayString(EColorPreset Preset)
+{
+    switch (Preset)
+    {
+        case EColorPreset::Warm: return TEXT("Warm");
+        case EColorPreset::Cool: return TEXT("Cool");
+        case EColorPreset::Vintage: return TEXT("Vintage");
+        case EColorPreset::Vibrant: return TEXT("Vibrant");
+        default: return TEXT("Warm");
+    }
+}
+
 // Effects configuration for video processing
 struct FEffectsConfig
 {
     bool bEnableTransitions = false;
-    FString TransitionType = TEXT("Fade");
+    ETransitionType TransitionType = ETransitionType::Fade;
     double TransitionDuration = 0.5;
     bool bEnableColorGrade = false;
-    FString ColorPreset = TEXT("Warm");
+    EColorPreset ColorPreset = EColorPreset::Warm;
     bool bEnableVignette = false;
     double VignetteStrength = 0.3;
     bool bEnableBeatFlash = false;
@@ -67,6 +149,7 @@ public:
     // Audio Analysis
     static void* CreateAnalyzer();
     static void DestroyAnalyzer(void* Handle);
+    static FString GetAnalyzerLastError(void* Analyzer);
     static void SetBPMHint(void* Analyzer, double BPM);  // 0 = auto-detect, >0 = use this BPM
     static bool AnalyzeAudio(void* Analyzer, const FString& FilePath, FBeatGrid& OutGrid);
 

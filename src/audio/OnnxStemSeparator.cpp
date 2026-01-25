@@ -190,9 +190,13 @@ struct OnnxStemSeparator::Impl {
             // Load model
 #ifdef _WIN32
             int wlen = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, NULL, 0);
-            std::wstring widePath(wlen, 0);
+            if (wlen <= 0) {
+                lastError = "Failed to convert model path to wide string";
+                return false;
+            }
+            std::wstring widePath(static_cast<size_t>(wlen), 0);
             MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, &widePath[0], wlen);
-            if (wlen > 0) widePath.resize(wlen - 1); // Remove trailing null
+            widePath.resize(static_cast<size_t>(wlen) - 1); // Remove trailing null
             session = std::make_unique<Ort::Session>(*env, widePath.c_str(), *sessionOptions);
 #else
             session = std::make_unique<Ort::Session>(*env, path.c_str(), *sessionOptions);

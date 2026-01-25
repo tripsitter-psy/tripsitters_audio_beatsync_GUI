@@ -319,7 +319,7 @@ void STripSitterMainWidget::Construct(const FArguments& InArgs)
 						+ SVerticalBox::Slot()
 						.AutoHeight()
 						.HAlign(HAlign_Center)
-						.Padding(0, 5)
+						.Padding(FMargin(0, 5))
 						[
 							TitleImageBrush.IsValid() ?
 							StaticCastSharedRef<SWidget>(
@@ -361,7 +361,7 @@ void STripSitterMainWidget::Construct(const FArguments& InArgs)
 
 						+ SVerticalBox::Slot()
 						.AutoHeight()
-						.Padding(0, 5)
+						.Padding(FMargin(0, 5))
 						[
 							SNew(SSeparator)
 							.ColorAndOpacity(NeonCyan)
@@ -476,7 +476,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateFileSection()
 	return SNew(SVerticalBox)
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 5)
+		.Padding(FMargin(0, 5))
 		[
 			SNew(STextBlock)
 			.Text(FText::FromString(TEXT("FILE SELECTION")))
@@ -487,7 +487,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateFileSection()
 		// Audio File
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 8)
+		.Padding(FMargin(0, 8))
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
@@ -530,7 +530,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateFileSection()
 		// Video File/Folder
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 8)
+		.Padding(FMargin(0, 8))
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
@@ -596,7 +596,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateFileSection()
 		// Output File
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 8)
+		.Padding(FMargin(0, 8))
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
@@ -638,7 +638,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateWaveformSection()
 	return SNew(SVerticalBox)
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 5)
+		.Padding(FMargin(0, 5))
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
@@ -719,7 +719,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateWaveformSection()
 
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 8)
+		.Padding(FMargin(0, 8))
 		[
 			SNew(SBox)
 			.HeightOverride(150)
@@ -870,8 +870,8 @@ void STripSitterMainWidget::LoadWaveformFromAudio(const FString& FilePath)
 		return;
 	}
 
-	void* Analyzer = FBeatsyncLoader::CreateAnalyzer();
-	if (!Analyzer)
+	FAnalyzerHandle Analyzer = FBeatsyncLoader::CreateAnalyzer();
+	if (!Analyzer.IsValid())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("TripSitter: Failed to create analyzer for waveform"));
 		return;
@@ -935,7 +935,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 		// Header row with title and buttons
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 5)
+		.Padding(FMargin(0, 5))
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
@@ -1001,7 +1001,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 		// BPM adjustment row
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 5)
+		.Padding(FMargin(0, 5))
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
@@ -1076,7 +1076,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 8)
+		.Padding(FMargin(0, 8))
 		[
 			SNew(SHorizontalBox)
 			// Beat Rate
@@ -1156,7 +1156,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 8)
+		.Padding(FMargin(0, 8))
 		[
 			SNew(SHorizontalBox)
 			// Resolution
@@ -1240,7 +1240,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateEffectsSection()
 	return SNew(SVerticalBox)
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 5)
+		.Padding(FMargin(0, 5))
 		[
 			SNew(STextBlock)
 			.Text(FText::FromString(TEXT("VISUAL EFFECTS")))
@@ -1250,7 +1250,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateEffectsSection()
 
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 8)
+		.Padding(FMargin(0, 8))
 		[
 			SNew(SHorizontalBox)
 			// Vignette
@@ -1317,7 +1317,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateEffectsSection()
 		// Sliders
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 8)
+		.Padding(FMargin(0, 8))
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
@@ -1358,12 +1358,12 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateEffectsSection()
 				]
 				+ SVerticalBox::Slot()
 				.AutoHeight()
-				.Padding(0, 4, 0, 0)
+				.Padding(FMargin(0, 4, 0, 0))
 				[
 					SNew(SSlider)
 					.Value_Lambda([this] { return ZoomIntensity; })
 					.SliderBarColor(FLinearColor(0.3f, 0.3f, 0.3f))
-					.SliderHandleColor(NeonBlue)
+					.SliderHandleColor(NeonCyan)
 					.OnValueChanged_Lambda([this](float Value) {
 						ZoomIntensity = Value;
 					})
@@ -1377,7 +1377,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateTransitionsSection()
 	return SNew(SVerticalBox)
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 5)
+		.Padding(FMargin(0, 5))
 		[
 			SNew(STextBlock)
 			.Text(FText::FromString(TEXT("TRANSITIONS")))
@@ -1387,7 +1387,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateTransitionsSection()
 
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 8)
+		.Padding(FMargin(0, 8))
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
@@ -1427,12 +1427,16 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateTransitionsSection()
 						return SNew(STextBlock).Text(FText::FromString(*Item));
 					})
 					.OnSelectionChanged_Lambda([this](TSharedPtr<FString> Item, ESelectInfo::Type) {
-						TransitionType = TransitionOptions.Find(Item);
+						int32 Index = TransitionOptions.Find(Item);
+						if (Index == 0) TransitionType = ETransitionType::Fade;
+						else if (Index == 1) TransitionType = ETransitionType::Dissolve;
+						else if (Index == 2) TransitionType = ETransitionType::Wipe;
+						else if (Index == 3) TransitionType = ETransitionType::Zoom;
 					})
 					[
 						SNew(STextBlock)
 						.Text_Lambda([this]() {
-							return FText::FromString(TransitionOptions.IsValidIndex(TransitionType) ? *TransitionOptions[TransitionType] : TEXT("Select..."));
+							return FText::FromString(TransitionTypeToDisplayString(TransitionType));
 						})
 					]
 				]
@@ -1490,7 +1494,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateControlSection()
 		// Progress bar
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 5)
+		.Padding(FMargin(0, 5))
 		[
 			SAssignNew(ProgressBar, SProgressBar)
 			.Percent(Progress)
@@ -1500,7 +1504,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateControlSection()
 		// Status & ETA
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(0, 8)
+		.Padding(FMargin(0, 8))
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
@@ -1882,7 +1886,7 @@ FReply STripSitterMainWidget::OnBrowseVideoFolderClicked()
 			}
 		}
 	}
-#else
+#elif PLATFORM_WINDOWS
 	// Windows native folder browser for standalone builds
 	BROWSEINFOW bi = { 0 };
 	bi.lpszTitle = L"Select Video Folder";
@@ -1908,6 +1912,10 @@ FReply STripSitterMainWidget::OnBrowseVideoFolderClicked()
 		}
 		CoTaskMemFree(pidl);
 	}
+#else
+	// Non-Windows platforms: folder browsing not supported in standalone builds
+	UE_LOG(LogTemp, Warning, TEXT("TripSitter: Folder browsing not available on this platform in standalone mode"));
+	VideoPathBox->SetText(FText::FromString(TEXT("Folder browsing unavailable - enter path manually")));
 #endif
 	return FReply::Handled();
 }
@@ -2028,8 +2036,8 @@ void STripSitterMainWidget::AnalyzeStemFile(int32 StemIndex)
 		return;
 	}
 
-	void* Analyzer = FBeatsyncLoader::CreateAnalyzer();
-	if (!Analyzer)
+	FAnalyzerHandle Analyzer = FBeatsyncLoader::CreateAnalyzer();
+	if (!Analyzer.IsValid())
 	{
 		StatusText = TEXT("ERROR: Failed to create analyzer");
 		if (StatusTextBlock.IsValid()) StatusTextBlock->SetText(FText::FromString(StatusText));
@@ -2307,10 +2315,10 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 		}
 
 		// Create AI analyzer
-		void* AIAnalyzer = FBeatsyncLoader::CreateAIAnalyzer(AIConfig);
-		if (!AIAnalyzer)
+		FAIAnalyzerHandle AIAnalyzer = FBeatsyncLoader::CreateAIAnalyzer(AIConfig);
+		if (!AIAnalyzer.IsValid())
 		{
-			FString Error = FBeatsyncLoader::GetAILastError(nullptr);
+			FString Error = FBeatsyncLoader::GetAILastError(AIAnalyzer);
 			StatusText = FString::Printf(TEXT("ERROR: Failed to create AI analyzer - %s"), *Error);
 			UE_LOG(LogTemp, Error, TEXT("TripSitter: Failed to create AI analyzer: %s"), *Error);
 			if (StatusTextBlock.IsValid())
@@ -2639,29 +2647,9 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	Params.EffectsConfig.TransitionDuration = TransitionDuration;
 	Params.EffectsConfig.EffectBeatDivisor = 1 << static_cast<int32>(BeatRate);
 
-	// Map color preset index to string
-	if (ColorPresetOptions.IsValidIndex(ColorPresetIndex))
-	{
-		Params.EffectsConfig.ColorPreset = *ColorPresetOptions[ColorPresetIndex];
-		FString Lower = Params.EffectsConfig.ColorPreset.ToLower();
-		Params.EffectsConfig.ColorPreset = Lower;
-	}
-	else
-	{
-		Params.EffectsConfig.ColorPreset = TEXT("warm");
-	}
-
-	// Map transition type index to string
-	if (TransitionOptions.IsValidIndex(TransitionType))
-	{
-		Params.EffectsConfig.TransitionType = *TransitionOptions[TransitionType];
-		FString Lower = Params.EffectsConfig.TransitionType.ToLower();
-		Params.EffectsConfig.TransitionType = Lower;
-	}
-	else
-	{
-		Params.EffectsConfig.TransitionType = TEXT("fade");
-	}
+	// Use enum values directly (conversion to string happens in BeatsyncLoader)
+	Params.EffectsConfig.ColorPreset = ColorPreset;
+	Params.EffectsConfig.TransitionType = TransitionType;
 
 	// Get effect region from waveform viewer (if any effect regions are defined)
 	// Use the first effect region that matches enabled effects, or the whole selection range
@@ -3037,3 +3025,4 @@ void STripSitterMainWidget::UpdatePreviewTexture(const TArray<uint8>& RGBData, i
 }
 
 #undef LOCTEXT_NAMESPACE
+

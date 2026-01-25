@@ -384,10 +384,14 @@ void FBeatsyncLoader::SetEffectsConfig(void* writer, const FEffectsConfig& confi
         return;
     }
 
+    // Convert enum values to lowercase strings for C API
+    FString TransitionTypeStr = TransitionTypeToString(config.TransitionType);
+    FString ColorPresetStr = ColorPresetToString(config.ColorPreset);
+
     // Create persistent UTF-8 converters for string fields - these RAII objects keep the
     // UTF8 buffers alive until after the API call completes
-    FTCHARToUTF8 TransitionTypeUtf8(*config.TransitionType);
-    FTCHARToUTF8 ColorPresetUtf8(*config.ColorPreset);
+    FTCHARToUTF8 TransitionTypeUtf8(*TransitionTypeStr);
+    FTCHARToUTF8 ColorPresetUtf8(*ColorPresetStr);
 
     bs_effects_config_t cfg;
 

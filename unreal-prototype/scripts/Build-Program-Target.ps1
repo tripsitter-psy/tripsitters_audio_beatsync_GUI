@@ -151,6 +151,9 @@ if (-not $proc.WaitForExit($timeoutMillis)) {
     exit 1
 }
 
+# Wait indefinitely for remaining output streams to flush
+$proc.WaitForExit()
+
 Write-Host $script:stdout
 if ($script:stderr) { Write-Host $script:stderr -ForegroundColor Yellow }
 

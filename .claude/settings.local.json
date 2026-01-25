@@ -42,10 +42,7 @@
       "Bash(C:/UE5_Source/UnrealEngine/Engine/Build/BatchFiles/Build.bat:*)",
       "Bash(makensis:*)",
       "Bash(cpack:*)",
-      "Bash(powershell -Command:*)",
-      "Bash(Get-ChildItem -Path \"$env:USERPROFILE\\\\Desktop\\\\TripSitterBuild\\\\Windows\" -ErrorAction SilentlyContinue)",
-      "Bash(Select-Object Name, Length)",
-      "Bash(powershell.exe:*)"
+      "Bash(powershell -Command \"Get-ChildItem -Path \\\"$env:USERPROFILE\\\\Desktop\\\\TripSitterBuild\\\\Windows\\\" -ErrorAction SilentlyContinue | Select-Object Name, Length\")"
     ]
   }
 }

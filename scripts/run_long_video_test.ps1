@@ -20,6 +20,14 @@ Write-Host "Starting long video test: $Audio -> $OutputVideo (duration $Duration
 if (-not (Test-Path $Audio)) {
     Write-Host "Audio file missing: $Audio. Generating..."
     python tools/generate_long_test_wav.py $Audio $DurationSeconds
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Failed to generate audio file (exit code $LASTEXITCODE)" -ForegroundColor Red
+        exit 1
+    }
+    if (-not (Test-Path $Audio)) {
+        Write-Host "ERROR: Audio file was not created at $Audio" -ForegroundColor Red
+        exit 1
+    }
 }
 
 # Start background GPU logging (every 10s)
@@ -49,6 +57,8 @@ $stdout = "build/long_video_stdout.log"
 $stderr = "build/long_video_stderr.log"
 if (Test-Path $stdout) { Remove-Item $stdout }
 if (Test-Path $stderr) { Remove-Item $stderr }
+# Create empty stderr file for append operations
+New-Item -ItemType File -Path $stderr -Force | Out-Null
 
 $exe = "./build/bin/Release/beatsync.exe"
 # Try a few variants if CLI supports different flags
@@ -66,11 +76,12 @@ foreach ($cmd in $cmds) {
     Add-Content -Path $stdout -Value "----- BEGIN OUTPUT -----"
 
     $tempOut = [System.IO.Path]::GetTempFileName()
+    $tempErr = [System.IO.Path]::GetTempFileName()
     try {
-        # Using -FilePath to executable allows direct exit code capture. 
+        # Using -FilePath to executable allows direct exit code capture.
         # But since $cmd has args and escaping, nested powershell is used.
         # We append "; exit `$LASTEXITCODE" to ensure the wrapper returns the real code.
-        $proc = Start-Process -FilePath powershell -ArgumentList "-NoProfile -Command $cmd; exit `$LASTEXITCODE" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempOut -RedirectStandardError $stderr
+        $proc = Start-Process -FilePath powershell -ArgumentList "-NoProfile -Command $cmd; exit `$LASTEXITCODE" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempOut -RedirectStandardError $tempErr
         $exitCode = $proc.ExitCode
     } catch {
         if ($proc -and $proc.ExitCode -ne $null) {
@@ -78,14 +89,19 @@ foreach ($cmd in $cmds) {
         } else {
             $exitCode = 1
         }
+    } finally {
+        # Always clean up temp files - append content first, then delete
+        if (Test-Path $tempOut) {
+            Add-Content -Path $stdout -Value (Get-Content $tempOut)
+            Remove-Item $tempOut -Force
+        }
+        if (Test-Path $tempErr) {
+            # Append this attempt's stderr to the main stderr file
+            Add-Content -Path $stderr -Value "----- ATTEMPT: $cmd -----"
+            Add-Content -Path $stderr -Value (Get-Content $tempErr)
+            Remove-Item $tempErr -Force
+        }
     }
-    if (Test-Path $tempOut) {
-        Add-Content -Path $stdout -Value (Get-Content $tempOut)
-        Remove-Item $tempOut -Force
-    }
-
-    # Append any stderr content instead of overwriting, if needed by the test logic (stderr file already redirected above)
-    # The redirection flags on Start-Process handle the file writing.
 
     Write-Host "Command exit code: $exitCode"
     if ($exitCode -eq 0 -and (Test-Path $OutputVideo)) {

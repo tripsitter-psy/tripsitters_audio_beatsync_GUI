@@ -12,10 +12,20 @@ FBeatsyncProcessingTask::FBeatsyncProcessingTask(const FBeatsyncProcessingParams
     , OnComplete(InCompleteDelegate)
     , SharedCancelFlag(MakeShared<FThreadSafeBool>(false))
 {
+    // Create event for synchronization between DoWork and destructor
+    WorkCompletedEvent = FPlatformProcess::GetSynchEventFromPool(true); // ManualReset = true
 }
 
 FBeatsyncProcessingTask::~FBeatsyncProcessingTask()
 {
+    // Wait for DoWork to complete before destroying resources it may be using
+    // This prevents race conditions where destructor runs while DoWork is still accessing Writer
+    if (WorkCompletedEvent && !bWorkCompleted)
+    {
+        // Give DoWork a reasonable time to finish (5 seconds max)
+        WorkCompletedEvent->Wait(5000);
+    }
+
     // Clean up the video writer if it was created
     if (Writer)
     {
@@ -23,6 +33,13 @@ FBeatsyncProcessingTask::~FBeatsyncProcessingTask()
         FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
         FBeatsyncLoader::DestroyVideoWriter(Writer);
         Writer = nullptr;
+    }
+
+    // Return the event to the pool
+    if (WorkCompletedEvent)
+    {
+        FPlatformProcess::ReturnSynchEventToPool(WorkCompletedEvent);
+        WorkCompletedEvent = nullptr;
     }
 }
 
@@ -60,6 +77,7 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        SignalWorkComplete();
         return;
     }
 
@@ -73,6 +91,7 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        SignalWorkComplete();
         return;
     }
 
@@ -228,6 +247,7 @@ void FBeatsyncProcessingTask::DoWork()
                 AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
                     LocalOnComplete.ExecuteIfBound(Result);
                 });
+                SignalWorkComplete();
                 return;
             }
 
@@ -244,6 +264,7 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        SignalWorkComplete();
         return;
     }
 
@@ -260,6 +281,7 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        SignalWorkComplete();
         return;
     }
 
@@ -355,6 +377,7 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        SignalWorkComplete();
         return;
     }
 
@@ -376,6 +399,22 @@ void FBeatsyncProcessingTask::DoWork()
     });
 
     // Step 4: Cut video at beats
+    // Validate that we have beats to cut at
+    if (FilteredBeats.Num() == 0)
+    {
+        Result.bSuccess = false;
+        Result.ErrorMessage = TEXT("No beats found in selection range");
+        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
+        FBeatsyncLoader::DestroyVideoWriter(Writer);
+        Writer = nullptr;
+        auto LocalOnComplete = OnComplete;
+        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+            LocalOnComplete.ExecuteIfBound(Result);
+        });
+        SignalWorkComplete();
+        return;
+    }
+
     ReportProgress(0.25f, TEXT("Cutting video at beats..."));
 
     double ClipDuration = FilteredBeats.Num() > 1 ? (FilteredBeats[1] - FilteredBeats[0]) : 1.0;
@@ -388,8 +427,8 @@ void FBeatsyncProcessingTask::DoWork()
         TempDir = FPlatformProcess::UserTempDir();
     }
     FString TempBaseName = FString::Printf(TEXT("TripSitter_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    FString TempVideoPath = FPaths::Combine(TempDir, TempBaseName + TEXT("_video.mp4"));
-    FString TempEffectsPath = FPaths::Combine(TempDir, TempBaseName + TEXT("_effects.mp4"));
+    TempVideoPath = FPaths::Combine(TempDir, TempBaseName + TEXT("_video.mp4"));
+    TempEffectsPath = FPaths::Combine(TempDir, TempBaseName + TEXT("_effects.mp4"));
 
     UE_LOG(LogTemp, Log, TEXT("TripSitter: Using temp directory: %s"), *TempDir);
 
@@ -498,6 +537,7 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        SignalWorkComplete();
         return;
     }
 
@@ -514,6 +554,7 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        SignalWorkComplete();
         return;
     }
 
@@ -540,7 +581,7 @@ void FBeatsyncProcessingTask::DoWork()
         }
     }
 
-    if (bCancelRequested)
+    if (IsCancelled())
     {
         FBeatsyncLoader::SetProgressCallback(Writer, nullptr);  // Clear callback before destroy to prevent UAF
         FBeatsyncLoader::DestroyVideoWriter(Writer);
@@ -553,6 +594,7 @@ void FBeatsyncProcessingTask::DoWork()
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
+        SignalWorkComplete();
         return;
     }
 
@@ -565,10 +607,18 @@ void FBeatsyncProcessingTask::DoWork()
     if (!bSuccess)
     {
         UE_LOG(LogTemp, Warning, TEXT("TripSitter: Audio muxing failed, using video-only output"));
-        // Fall back to video-only output
-        IFileManager::Get().Move(*Params.OutputPath, *CurrentVideoPath, true, true);
-        Result.bAudioMuxFailed = true;  // Mark partial success so UI can warn user
-        bSuccess = true; // Consider it a partial success
+        // Fall back to video-only output - check if Move succeeds
+        if (IFileManager::Get().Move(*Params.OutputPath, *CurrentVideoPath, true, true))
+        {
+            Result.bAudioMuxFailed = true;  // Mark partial success so UI can warn user
+            bSuccess = true; // Consider it a partial success
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("TripSitter: Failed to move video to output path"));
+            Result.bSuccess = false;
+            Result.ErrorMessage = TEXT("Failed to create output file");
+        }
     }
 
     // Clean up temp files
@@ -599,4 +649,5 @@ void FBeatsyncProcessingTask::DoWork()
     AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
         LocalOnComplete.ExecuteIfBound(Result);
     });
+    SignalWorkComplete();
 }

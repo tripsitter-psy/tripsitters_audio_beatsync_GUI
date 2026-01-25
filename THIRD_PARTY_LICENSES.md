@@ -9,13 +9,15 @@ MTV TripSitter includes software from the following third-party projects.
 **License:** LGPL 2.1 or later (with optional GPL components)
 **Website:** https://ffmpeg.org/
 **Used for:** Audio/video decoding, encoding, and processing
+**Linking:** Dynamically linked (DLLs/Shared Libraries)
 
 ```
 FFmpeg is free software licensed under the LGPL or GPL depending on your choice of
 configuration options. If you use FFmpeg or its constituent libraries, you must adhere
 to the terms of the licenses.
 
-This software uses libraries from the FFmpeg project under the LGPLv2.1.
+This software uses dynamically linked libraries from the FFmpeg project under the LGPLv2.1.
+We do not statically link FFmpeg. Users can replace the FFmpeg DLLs with their own versions.
 See https://www.ffmpeg.org/legal.html for more information.
 ```
 
@@ -125,6 +127,30 @@ SOFTWARE.
 **License:** GPL 2 or later (or commercial license)
 **Website:** https://www.fftw.org/
 **Used for:** Fast Fourier Transform computations in AudioFlux
+**Status:** GPL version currently assumed.
+
+**Important License Note:**
+FFTW3 is licensed under the **GPL**, which is a strong copyleft license. This imposes restrictions on distributing this software if it is linked against the GPL version of FFTW3.
+- **Development/Personal Use:** You may use the GPL version locally.
+- **Distribution:** If you distribute binaries of this software linked against the GPL version of FFTW3, **the entire application must be released under the GPL**.
+- **Commercial Use:** To distribute this software under a proprietary license (or without source code), you must either:
+    1. Purchase a commercial license for FFTW3 from MIT, OR
+    2. Disable AudioFlux support in the build configuration (see below), OR
+    3. Not distribute the FFTW3 DLLs and require the end-user to provide them (dynamic linking).
+
+**Build Configuration:**
+To build without AudioFlux/FFTW3 (avoids GPL concerns for commercial distribution):
+```powershell
+# Option 1: Do not set AUDIOFLUX_ROOT (AudioFlux will not be found)
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
+
+# Option 2: Explicitly disable via empty path
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DAUDIOFLUX_ROOT=""
+```
+
+When built without AudioFlux, the "Flux" and "Stems + Flux" analysis modes will be unavailable and the app will use energy-based beat detection instead.
+
+By default, the `AUDIOFLUX_ROOT` option enables AudioFlux/FFTW3 if the path is valid. Please verify your licensing status before distributing binaries.
 
 ```
 FFTW is free software; you can redistribute it and/or modify it under the terms

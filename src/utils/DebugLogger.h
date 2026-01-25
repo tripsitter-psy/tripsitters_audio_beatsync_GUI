@@ -20,13 +20,14 @@ private:
     DebugLogger();
     ~DebugLogger();
 
-    // Prevent copying
+    // Prevent copying and moving
     DebugLogger(const DebugLogger&) = delete;
     DebugLogger& operator=(const DebugLogger&) = delete;
+    DebugLogger(DebugLogger&&) = delete;
+    DebugLogger& operator=(DebugLogger&&) = delete;
 
     std::mutex mutex_;
-    std::ofstream* logFile_;
-    bool initialized_;
+    std::ofstream logFile_;
 };
 
 } // namespace BeatSync

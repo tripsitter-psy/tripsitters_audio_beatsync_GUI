@@ -480,7 +480,7 @@ def main():
                         print(f"  Failed to load {name}.bias: {e}")
 
             # Load TCN block weights
-            for i, block_w in enumerate(weights['tcn_blocks']):
+            for i, block_w in enumerate(weights.get('tcn_blocks', [])):
                 if i >= len(model.tcn_blocks):
                     break
                 if 'weights' in block_w and block_w['weights'] is not None:

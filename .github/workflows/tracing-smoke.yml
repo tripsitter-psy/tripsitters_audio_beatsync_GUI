@@ -46,7 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install CMake
-        uses: lukka/get-cmake@latest
+        uses: lukka/get-cmake@v3.30.1
         with:
           cmakeVersion: '3.30.1'
       - name: Configure (with tracing)

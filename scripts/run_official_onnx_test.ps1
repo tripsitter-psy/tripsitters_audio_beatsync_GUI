@@ -9,7 +9,7 @@ param(
     [string]$Version = "1.23.2"
 )
 
-$baseUrl = "https://github.com/microsoft/onnxruntime/releases/download/v$Version/" 
+$baseUrl = "https://github.com/microsoft/onnxruntime/releases/download/v$Version/"
 # Common file name pattern - may need adjustment per release
 $zipName = "onnxruntime-win-x64-$Version.zip"
 $url = $baseUrl + $zipName
@@ -30,7 +30,14 @@ if (!(Test-Path $zipPath) -or (Get-Item $zipPath).Length -eq 0) {
     exit 1
 }
 
-if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force -ErrorAction Stop }
+if (Test-Path $outDir) {
+    try {
+        Remove-Item $outDir -Recurse -Force -ErrorAction Stop
+    } catch {
+        Write-Warning "Failed to remove existing directory $outDir : $($_.Exception.Message)"
+        # Continue anyway - extraction will overwrite
+    }
+}
 
 Write-Host "Extracting to $outDir"
 try {

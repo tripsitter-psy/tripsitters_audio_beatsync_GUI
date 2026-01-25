@@ -113,6 +113,7 @@ private:
     FThreadSafeBool bWorkCompleted;  // Set when DoWork finishes, used for destructor synchronization
     FEvent* WorkCompletedEvent = nullptr;  // Signaled when DoWork finishes, destructor waits on this
     void* Writer = nullptr;
+    FCriticalSection WriterMutex;
     FString TempVideoPath;
     FString TempEffectsPath;
 

@@ -117,7 +117,7 @@ TSharedPtr<SWindow> FTripSitterApplication::CreateMainWindow()
     Window->SetContent(Content.ToSharedRef());
 
     // Handle window close
-    Window->SetOnWindowClosed(FOnWindowClosed::CreateSP(this, &FTripSitterApplication::OnWindowClosed));
+    Window->SetOnWindowClosed(FOnWindowClosed::CreateRaw(this, &FTripSitterApplication::OnWindowClosed));
 
     return Window;
 }

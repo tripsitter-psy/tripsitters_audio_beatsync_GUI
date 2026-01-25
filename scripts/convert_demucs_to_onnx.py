@@ -115,10 +115,17 @@ def main():
                 verbose=False
             )
 
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError) as e:
+            # Expected export-related errors - fall back to lightweight model
             print(f"ERROR exporting Demucs: {e}", file=sys.stderr)
             print("\nDemucs models can be complex to export. Creating lightweight alternative...")
             USE_DEMUCS = False
+        except Exception as e:
+            # Unexpected errors (disk/permission/memory) - log full traceback and re-raise
+            import traceback
+            print(f"FATAL ERROR exporting Demucs: {e}", file=sys.stderr)
+            print(traceback.format_exc(), file=sys.stderr)
+            raise
 
     if not USE_DEMUCS:
         print("Creating lightweight stem separator architecture...")

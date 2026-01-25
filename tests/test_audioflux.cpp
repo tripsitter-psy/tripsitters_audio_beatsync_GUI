@@ -10,6 +10,9 @@
 #include "../src/audio/AudioFluxBeatDetector.h"
 #endif
 
+// Mathematical constant for better precision than hardcoded literals
+constexpr double PI = 3.14159265358979323846;
+
 // Simple test tone generator
 std::vector<float> generateTestTone(int sampleRate, double duration, double freq) {
     size_t numSamples = static_cast<size_t>(sampleRate * duration);
@@ -18,7 +21,7 @@ std::vector<float> generateTestTone(int sampleRate, double duration, double freq
     for (size_t i = 0; i < numSamples; ++i) {
         double t = static_cast<double>(i) / sampleRate;
         // Generate a simple sine wave with some clicks at beat positions
-        samples[i] = 0.3f * std::sin(2.0 * 3.14159265 * freq * t);
+        samples[i] = 0.3f * std::sin(2.0 * PI * freq * t);
 
         // Add clicks every 0.5 seconds (120 BPM)
         double beatTime = std::fmod(t, 0.5);

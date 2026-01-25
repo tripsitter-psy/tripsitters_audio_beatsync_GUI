@@ -94,11 +94,15 @@ if(BUILD_TESTS)
 
     # AudioFlux test (if AudioFlux is available)
     # Note: test_audioflux.cpp is a standalone test with its own main(), not a Catch2 test
-    if(USE_AUDIOFLUX)
+    if(USE_AUDIOFLUX AND (AUDIOFLUX_INCLUDE_DIR OR (DEFINED AUDIOFLUX_ROOT AND NOT "${AUDIOFLUX_ROOT}" STREQUAL "")))
         add_executable(test_audioflux
             test_audioflux.cpp
         )
-        target_include_directories(test_audioflux PRIVATE ${CMAKE_SOURCE_DIR}/src ${AUDIOFLUX_ROOT}/include)
+        if(AUDIOFLUX_INCLUDE_DIR)
+            target_include_directories(test_audioflux PRIVATE ${CMAKE_SOURCE_DIR}/src ${AUDIOFLUX_INCLUDE_DIR})
+        else()
+             target_include_directories(test_audioflux PRIVATE ${CMAKE_SOURCE_DIR}/src ${AUDIOFLUX_ROOT}/include)
+        endif()
         target_link_libraries(test_audioflux PRIVATE beatsync_backend_static avformat avcodec avutil swresample swscale avfilter)
         add_test(NAME audioflux COMMAND test_audioflux)
         set_tests_properties(audioflux PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")

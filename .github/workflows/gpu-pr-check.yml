@@ -4,7 +4,7 @@ permissions:
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, labeled]
 
 jobs:
   detect-gpu-changes:
@@ -16,10 +16,12 @@ jobs:
 
       - name: Detect GPU-related changes
         id: detect
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           # Script exits 0 if GPU changes detected, 1 if no GPU changes
           # We capture the result in an output variable for clarity
-          if python3 tools/check_gpu_changes.py --base "${{ github.event.pull_request.base.ref }}"; then
+          if python3 tools/check_gpu_changes.py --base "$BASE_REF"; then
             echo "gpu_changes=true" >> $GITHUB_OUTPUT
           else
             echo "gpu_changes=false" >> $GITHUB_OUTPUT

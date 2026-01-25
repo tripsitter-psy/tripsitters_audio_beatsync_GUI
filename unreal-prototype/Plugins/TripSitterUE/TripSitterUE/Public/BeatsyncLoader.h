@@ -15,10 +15,32 @@
 // CreateVideoWriter/DestroyVideoWriter, SetProgressCallback, CutVideoAtBeats/CutVideoAtBeatsMulti,
 // ApplyEffects, SetEffectsConfig, AddAudioTrack, ExtractFrame, StartSpan/EndSpan/SpanSetError/SpanAddEvent, IsInitialized.
 
+// Handle types for type safety
+struct FAnalyzerHandle {
+    void* Ptr = nullptr;
+    bool IsValid() const { return Ptr != nullptr; }
+};
+
+struct FVideoWriterHandle {
+    void* Ptr = nullptr;
+    bool IsValid() const { return Ptr != nullptr; }
+};
+
+struct FSpanHandle {
+    void* Ptr = nullptr;
+    bool IsValid() const { return Ptr != nullptr; }
+};
+
+struct FAIAnalyzerHandle {
+    void* Ptr = nullptr;
+    bool IsValid() const { return Ptr != nullptr; }
+};
+
 class TRIPSITTERUE_API FBeatsyncLoader
 {
 public:
     static bool Initialize();
+
 
     /**
      * @brief Shuts down the BeatsyncLoader and clears all registered progress callback storage.
@@ -41,34 +63,82 @@ public:
     static FString ResolveFFmpegPath();
 
     // Analyzer
-    static void* CreateAnalyzer();
-    static void DestroyAnalyzer(void* handle);
-    static bool AnalyzeAudio(void* handle, const FString& path, FBeatGrid& outGrid);
+    static FAnalyzerHandle CreateAnalyzer();
+    static void DestroyAnalyzer(FAnalyzerHandle handle);
+    static bool AnalyzeAudio(FAnalyzerHandle handle, const FString& path, FBeatGrid& outGrid);
+
+    // Waveform Analysis
+    static bool GetWaveform(FAnalyzerHandle handle, const FString& path, TArray<float>& outPeaks, double& outDuration);
+    static bool GetWaveformBands(FAnalyzerHandle handle, const FString& path, TArray<float>& outBass, TArray<float>& outMid, TArray<float>& outHigh, double& outDuration);
+
+    // AI Analysis
+    static bool IsAIAvailable();
+    static FString GetAIProviders();
+    static FAIAnalyzerHandle CreateAIAnalyzer(const FAIConfig& Config);
+    static void DestroyAIAnalyzer(FAIAnalyzerHandle Handle);
+    static bool AIAnalyzeFile(FAIAnalyzerHandle Analyzer, const FString& FilePath, FAIResult& OutResult);
+    static bool AIAnalyzeQuick(FAIAnalyzerHandle Analyzer, const FString& FilePath, FAIResult& OutResult);
+    static FString GetAILastError(FAIAnalyzerHandle Analyzer);
+
+    // AudioFlux Analysis
+    static bool IsAudioFluxAvailable();
+    static bool AudioFluxAnalyze(const FString& FilePath, FAIResult& OutResult);
+    static bool AudioFluxAnalyzeWithStems(const FString& FilePath, const FString& StemModelPath, FAIResult& OutResult);
 
     // Video writer
-    static void* CreateVideoWriter();
-    static void DestroyVideoWriter(void* writer);
-    static FString GetVideoLastError(void* writer);
+    static FVideoWriterHandle CreateVideoWriter();
+    static void DestroyVideoWriter(FVideoWriterHandle writer);
+    static FString GetVideoLastError(FVideoWriterHandle writer);
 
     using FProgressCb = TFunction<void(double)>;
-    static void SetProgressCallback(void* writer, FProgressCb cb);
+    static void SetProgressCallback(FVideoWriterHandle writer, FProgressCb cb);
 
-    static bool CutVideoAtBeats(void* writer, const FString& inputVideo, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration);
-    static bool CutVideoAtBeatsMulti(void* writer, const TArray<FString>& inputVideos, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration);
-    static bool ApplyEffects(void* writer, const FString& inputVideo, const FString& outputVideo, const TArray<double>& beatTimes);
-    static void SetEffectsConfig(void* writer, const FEffectsConfig& config);
-    static bool AddAudioTrack(void* writer, const FString& inputVideo, const FString& audioFile, const FString& outputVideo, bool trimToShortest, double audioStart, double audioEnd);
+    static bool CutVideoAtBeats(FVideoWriterHandle writer, const FString& inputVideo, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration);
+    static bool CutVideoAtBeatsMulti(FVideoWriterHandle writer, const TArray<FString>& inputVideos, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration);
+    static bool ApplyEffects(FVideoWriterHandle writer, const FString& inputVideo, const FString& outputVideo, const TArray<double>& beatTimes);
+    static void SetEffectsConfig(FVideoWriterHandle writer, const FEffectsConfig& config);
+    static bool AddAudioTrack(FVideoWriterHandle writer, const FString& inputVideo, const FString& audioFile, const FString& outputVideo, bool trimToShortest, double audioStart, double audioEnd);
 
     // Frame extraction
     // Note: ExtractFrame copies data to TArray and frees the C buffer internally
     static bool ExtractFrame(const FString& videoPath, double timestamp, TArray<uint8>& outRgb24, int32& outWidth, int32& outHeight);
 
     // Tracing helpers (opaque handles managed by backend)
-    using SpanHandle = void*;
-    static SpanHandle StartSpan(const FString& name);
-    static void EndSpan(SpanHandle h);
-    static void SpanSetError(SpanHandle h, const FString& msg);
-    static void SpanAddEvent(SpanHandle h, const FString& ev);
+    //
+    // FSpanHandle wraps an opaque pointer to a backend span object.
+    // Callers should use FSpanHandle::IsValid() to check validity before use,
+    // though the span functions are null-safe and will silently no-op on invalid handles.
+
+    /**
+     * @brief Starts a new tracing span with the given name.
+     * @param name The name/label for this span (e.g., "VideoProcessing", "AudioAnalysis").
+     * @return A valid FSpanHandle on success, or an invalid handle (Ptr == nullptr) on failure
+     *         (e.g., if tracing is not initialized or backend unavailable).
+     *         Callers may check IsValid() but are not required to - passing an invalid handle
+     *         to other span functions is safe (they will no-op).
+     */
+    static FSpanHandle StartSpan(const FString& name);
+
+    /**
+     * @brief Ends a tracing span and records its duration.
+     * @param h The span handle returned by StartSpan. Null-safe: if h is invalid (nullptr),
+     *          this function is a no-op and returns immediately without error.
+     */
+    static void EndSpan(FSpanHandle h);
+
+    /**
+     * @brief Marks a span as having encountered an error.
+     * @param h The span handle. Null-safe: no-op if invalid.
+     * @param msg The error message to record in the span.
+     */
+    static void SpanSetError(FSpanHandle h, const FString& msg);
+
+    /**
+     * @brief Adds a timestamped event to a span.
+     * @param h The span handle. Null-safe: no-op if invalid.
+     * @param ev The event name/description to record.
+     */
+    static void SpanAddEvent(FSpanHandle h, const FString& ev);
 
     static bool IsInitialized();
 

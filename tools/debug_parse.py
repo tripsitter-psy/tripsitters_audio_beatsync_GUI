@@ -9,9 +9,15 @@ Parses and extracts beat timing data from a JSON file (e.g., ONNX model output) 
 import sys
 import json
 
-filename = 'tests/fixtures/test_audio.onnx.json'
+# Check command line arguments
+if len(sys.argv) > 2:
+    print(f"Usage: {sys.argv[0]} [filename]", file=sys.stderr)
+    sys.exit(1)
+
+filename = sys.argv[1] if len(sys.argv) == 2 else 'tests/fixtures/test_audio.onnx.json'
+
 try:
-    with open(filename) as f:
+    with open(filename, encoding='utf-8') as f:
         s = f.read()
 except (FileNotFoundError, OSError) as e:
     print(f"Error: Could not open file '{filename}': {e}", file=sys.stderr)

@@ -351,28 +351,28 @@ FReply SEffectTimeline::OnMouseMove(const FGeometry& MyGeometry, const FPointerE
 		double MinBound = FMath::Max(0.0, SelectionStart);
 		double EffectiveSelEnd = (SelectionEnd < 0) ? Duration : SelectionEnd;
 
-		// If the region is larger than the available selection range, snap to full range
+		// If the region is larger than the available selection range, preserve duration and don't allow move
 		double AvailableRange = EffectiveSelEnd - MinBound;
 		if (RegionDuration >= AvailableRange) {
-			// Snap to available range
-			NewStart = MinBound;
-			NewEnd = EffectiveSelEnd;
-		} else {
-			if (NewStart < MinBound)
-			{
-				NewStart = MinBound;
-				NewEnd = NewStart + RegionDuration;
-			}
-			if (NewEnd > EffectiveSelEnd)
-			{
-				NewEnd = EffectiveSelEnd;
-				NewStart = NewEnd - RegionDuration;
-			}
-
-			// Final clamps to ensure values are within bounds
-			NewStart = FMath::Clamp(NewStart, MinBound, EffectiveSelEnd - RegionDuration);
-			NewEnd = FMath::Clamp(NewEnd, MinBound + RegionDuration, EffectiveSelEnd);
+			// Region doesn't fit - preserve original duration, don't allow move
+			LastMousePos = LocalPos;
+			return FReply::Handled();
 		}
+
+		if (NewStart < MinBound)
+		{
+			NewStart = MinBound;
+			NewEnd = NewStart + RegionDuration;
+		}
+		if (NewEnd > EffectiveSelEnd)
+		{
+			NewEnd = EffectiveSelEnd;
+			NewStart = NewEnd - RegionDuration;
+		}
+
+		// Final clamps to ensure values are within bounds
+		NewStart = FMath::Clamp(NewStart, MinBound, EffectiveSelEnd - RegionDuration);
+		NewEnd = FMath::Clamp(NewEnd, MinBound + RegionDuration, EffectiveSelEnd);
 
 		if (OnRegionChanged.IsBound())
 		{

@@ -386,7 +386,8 @@ def main():
             'downbeat_activation': {0: 'batch', 1: 'time'},
             'segment_activation': {0: 'batch', 1: 'time'},
             'segment_labels': {0: 'batch', 1: 'time'},
-            'tempo_logits': {0: 'batch'}
+            'tempo_logits': {0: 'batch'},
+            'embeddings': {0: 'batch', 1: 'time'}
         }
 
 
@@ -399,7 +400,7 @@ def main():
             do_constant_folding=True,
             input_names=['spectrogram'],
             output_names=['beat_activation', 'downbeat_activation',
-                         'segment_activation', 'segment_labels', 'tempo_logits'],
+                         'segment_activation', 'segment_labels', 'tempo_logits', 'embeddings'],
             dynamic_axes=dynamic_axes
         )
 

@@ -164,17 +164,17 @@ public:
     }
 
     BeatGrid analyze(const std::vector<float>& samples, int sampleRate, ProgressCallback progress = nullptr) {
-        if (!m_impl) return BeatGrid();
+        if (!isLoaded()) return BeatGrid();
         return analyzeImpl(samples, sampleRate, progress);
     }
 
     OnnxAnalysisResult analyzeDetailed(const std::vector<float>& samples, int sampleRate, ProgressCallback progress = nullptr) {
-        if (!m_impl) return OnnxAnalysisResult();
+        if (!isLoaded()) return OnnxAnalysisResult();
         return analyzeDetailedImpl(samples, sampleRate, progress);
     }
 
     std::vector<double> processChunk(const std::vector<float>& chunk) {
-        if (!m_impl) return {};
+        if (!isLoaded()) return {};
         return processChunkImpl(chunk);
     }
 

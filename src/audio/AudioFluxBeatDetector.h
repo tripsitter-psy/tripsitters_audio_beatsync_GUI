@@ -54,7 +54,7 @@ private:
 
     // Internal methods
     STFTResult computeSTFT(const std::vector<float>& samples, int& numFrames);
-    std::vector<float> computeOnsetEnvelope(const STFTResult& stftResult, int fftStride);
+    std::vector<float> computeOnsetEnvelope(const float* stftReal, const float* stftImag, int numFrames, int numBins, int fftStride);
     std::vector<double> pickPeaks(const std::vector<float>& envelope, float threshold);
     std::vector<double> fillBeatGaps(const std::vector<double>& beats, double duration);
     double estimateBPM(const std::vector<double>& beats, double duration);

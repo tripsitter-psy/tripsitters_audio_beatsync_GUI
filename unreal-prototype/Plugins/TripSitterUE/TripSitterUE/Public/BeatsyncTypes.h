@@ -2,6 +2,58 @@
 
 #include "CoreMinimal.h"
 
+/**
+ * Video transition types for beat-synced effects
+ */
+enum class ETransitionType : uint8
+{
+    Fade,
+    Wipe,
+    Dissolve,
+    Zoom
+};
+
+/**
+ * Color grading presets for video processing
+ */
+enum class EColorPreset : uint8
+{
+    Warm,
+    Cool,
+    Vintage,
+    Vibrant
+};
+
+/**
+ * Convert ETransitionType to lowercase string for C API
+ */
+inline FString TransitionTypeToString(ETransitionType Type)
+{
+    switch (Type)
+    {
+        case ETransitionType::Fade: return TEXT("fade");
+        case ETransitionType::Wipe: return TEXT("wipe");
+        case ETransitionType::Dissolve: return TEXT("dissolve");
+        case ETransitionType::Zoom: return TEXT("zoom");
+        default: return TEXT("fade");
+    }
+}
+
+/**
+ * Convert EColorPreset to lowercase string for C API
+ */
+inline FString ColorPresetToString(EColorPreset Preset)
+{
+    switch (Preset)
+    {
+        case EColorPreset::Warm: return TEXT("warm");
+        case EColorPreset::Cool: return TEXT("cool");
+        case EColorPreset::Vintage: return TEXT("vintage");
+        case EColorPreset::Vibrant: return TEXT("vibrant");
+        default: return TEXT("warm");
+    }
+}
+
 struct FBeatGrid
 {
     TArray<double> Beats;
@@ -12,11 +64,11 @@ struct FBeatGrid
 struct FEffectsConfig
 {
     bool bEnableTransitions = false;
-    FString TransitionType = TEXT("fade");
+    ETransitionType TransitionType = ETransitionType::Fade;
     float TransitionDuration = 0.5f;
 
     bool bEnableColorGrade = false;
-    FString ColorPreset = TEXT("warm");
+    EColorPreset ColorPreset = EColorPreset::Warm;
 
     bool bEnableVignette = false;
     float VignetteStrength = 0.5f;

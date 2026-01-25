@@ -20,7 +20,7 @@ TEST_CASE("buildGlTransitionFilterComplex constructs chained transitions", "[tra
     // This is expected in CI/test environments without the assets directory
     if (fc.empty()) {
         // No transition assets available in CI; treat as an intended pass instead of skipping
-        SUCCEED("Transition assets not available - skipping content validation");
+        SKIP("Transition assets not available - skipping content validation");
         return;
     }
 

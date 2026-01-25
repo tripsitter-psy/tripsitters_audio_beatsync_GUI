@@ -71,6 +71,19 @@ jobs:
             -DBUILD_GUI=OFF `
             -DUSE_ONNX=ON
 
+      - name: Build
+        if: steps.check_gpu.outputs.has_gpu == 'true'
+        run: |
+          cmake --build build --config Release --parallel
+
+      - name: Run CUDA Integration Tests
+        if: steps.check_gpu.outputs.has_gpu == 'true'
+        env:
+          BEATSYNC_ONNX_USE_CUDA: 1
+        run: |
+          ctest --test-dir build --output-on-failure -C Release
+        timeout-minutes: 30
+
       # Summary will be emitted at the end after test artifacts are uploaded
 
       - name: Ensure test results directory exists

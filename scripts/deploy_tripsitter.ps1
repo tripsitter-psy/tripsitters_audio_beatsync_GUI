@@ -32,10 +32,9 @@ $RequiredDLLs = @{
 
     # From vcpkg bin (GPU providers)
     "onnxruntime_providers_shared.dll" = @{ Source = $VCPKG_BIN; MinSize = 10KB }
-    "onnxruntime_providers_cuda.dll"   = @{ Source = $VCPKG_BIN; MinSize = 300MB }
 
     # From ThirdParty (FFmpeg - MUST use these, not build/Release versions!)
-    "avcodec-62.dll"   = @{ Source = $THIRDPARTY; MinSize = 100MB }  # ~106MB, NOT ~13MB!
+    "avcodec-62.dll"   = @{ Source = $THIRDPARTY; MinSize = 100MB }
     "avformat-62.dll"  = @{ Source = $THIRDPARTY; MinSize = 20MB }
     "avutil-60.dll"    = @{ Source = $THIRDPARTY; MinSize = 2MB }
     "avfilter-11.dll"  = @{ Source = $THIRDPARTY; MinSize = 80MB }
@@ -46,6 +45,9 @@ $RequiredDLLs = @{
 
 # Optional DLLs (app works without these but with reduced functionality)
 $OptionalDLLs = @{
+    # ONNX CUDA (Optional)
+    "onnxruntime_providers_cuda.dll"   = @{ Source = $VCPKG_BIN; MinSize = 100MB }
+
     # AudioFlux (for spectral flux beat detection - falls back to energy without these)
     "audioflux.dll"    = @{ Source = $AUDIOFLUX; MinSize = 1MB }
     "libfftw3f-3.dll"  = @{ Source = $AUDIOFLUX; MinSize = 1MB }
@@ -78,8 +80,10 @@ if ($Verify) {
         }
         elseif (-not (Test-DLLSize $targetPath $minSize)) {
             $actualSize = (Get-Item $targetPath).Length
-            $errors += "WRONG SIZE: $dll (expected >=$minSize, got $actualSize)"
-            Write-Host "  [WRONG SIZE] $dll - Expected >=$minSize, Got $([math]::Round($actualSize/1MB, 2))MB" -ForegroundColor Yellow
+            $minSizeMB = [math]::Round($minSize/1MB, 2)
+            $actualSizeMB = [math]::Round($actualSize/1MB, 2)
+            $errors += "WRONG SIZE: $dll (expected >=${minSizeMB}MB, got ${actualSizeMB}MB)"
+            Write-Host "  [WRONG SIZE] $dll - Expected >=${minSizeMB}MB, Got ${actualSizeMB}MB" -ForegroundColor Yellow
         }
         else {
             $actualSize = (Get-Item $targetPath).Length
@@ -123,8 +127,11 @@ $copyOrder = @(
         "beatsync_backend_shared.dll", "onnxruntime.dll", "abseil_dll.dll",
         "libprotobuf.dll", "libprotobuf-lite.dll", "re2.dll"
     )},
-    @{ Name = "ONNX GPU Providers"; Pattern = "vcpkg bin"; DLLs = @(
-        "onnxruntime_providers_shared.dll", "onnxruntime_providers_cuda.dll"
+    @{ Name = "ONNX Shared Provider"; Pattern = "vcpkg bin"; DLLs = @(
+        "onnxruntime_providers_shared.dll"
+    )},
+    @{ Name = "ONNX CUDA Provider (Optional)"; Pattern = "vcpkg bin"; Optional = $true; DLLs = @(
+        "onnxruntime_providers_cuda.dll"
     )},
     @{ Name = "FFmpeg (ThirdParty)"; Pattern = "ThirdParty"; DLLs = @(
         "avcodec-62.dll", "avformat-62.dll", "avutil-60.dll", "avfilter-11.dll",

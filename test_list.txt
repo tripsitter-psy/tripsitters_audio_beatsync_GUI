@@ -10,9 +10,9 @@ All available test cases:
   AI analyzer null config
       [ai][backend][null]
   AI analyzer missing beat model path
-      [ai][backend]
+      [ai][backend][config]
   AI analyzer with nonexistent model
-      [ai][backend]
+      [ai][backend][onnx]
   AI analyzer destruction null is safe
       [ai][backend][null]
   AI result free null is safe

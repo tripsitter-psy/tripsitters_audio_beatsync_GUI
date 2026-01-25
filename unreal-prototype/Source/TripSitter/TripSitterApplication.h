@@ -7,7 +7,7 @@
 /**
  * Main application class for TripSitter desktop application
  */
-class FTripSitterApplication : public TSharedFromThis<FTripSitterApplication>
+class TRIPSITTER_API FTripSitterApplication : public TSharedFromThis<FTripSitterApplication>
 {
 public:
     FTripSitterApplication();

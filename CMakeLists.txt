@@ -37,17 +37,24 @@ else()
         "C:/UE5_Source/UnrealEngine/Engine/Binaries/Win64"
         DOC "Path to TripSitter.exe"
     )
+    option(OPTION_REQUIRE_TRIPSITTER "Fail configure if TripSitter.exe is not found" OFF)
     if(NOT TRIPSITTER_EXE_PATH)
-        message(FATAL_ERROR "TripSitter.exe not found. Please set TRIPSITTER_EXE_PATH variable or export TRIPSITTER_EXE_PATH environment variable to point to the executable.")
+        if(OPTION_REQUIRE_TRIPSITTER)
+            message(FATAL_ERROR "TripSitter.exe not found. Please set TRIPSITTER_EXE_PATH variable or export TRIPSITTER_EXE_PATH environment variable to point to the executable.")
+        else()
+            message(WARNING "TripSitter.exe not found. Some functionality (like launching the GUI) may be disabled. Set TRIPSITTER_EXE_PATH to specify location.")
+        endif()
     endif()
 endif()
 
 # Configure NSIS installer template (run after BEATSYNC_VERSION is set so substitutions work)
-configure_file(
-    installer/nsis_template.nsi.in
-    installer/nsis_template.nsi
-    @ONLY
-)
+if(WIN32)
+    configure_file(
+        installer/nsis_template.nsi.in
+        installer/nsis_template.nsi
+        @ONLY
+    )
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -113,9 +120,14 @@ if(BEATSYNC_BUILD_SHARED AND (WIN32 OR APPLE OR UNIX))
         # macOS destination
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/Mac"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:beatsync_backend_shared>" "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/Mac/"
-        # Validate that project output does not contain prohibited DLLs (e.g. FFmpeg)
-        COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_SOURCE_DIR}/scripts/check_no_ffmpeg.ps1" -ReleaseDir "$<TARGET_FILE_DIR:beatsync_backend_shared>"
     )
+
+    # Validate that project output does not contain prohibited DLLs (e.g. FFmpeg) - Windows only
+    if(WIN32)
+        add_custom_command(TARGET beatsync_backend_shared POST_BUILD
+            COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_SOURCE_DIR}/scripts/check_no_ffmpeg.ps1" -ReleaseDir "$<TARGET_FILE_DIR:beatsync_backend_shared>"
+        )
+    endif()
 
 endif()
 # Optional feature sources (always compiled as stubs; actual libs wired via flags)
@@ -217,42 +229,32 @@ if(USE_ONNX)
             endif()
 
             # Copy TensorRT DLLs for RTX acceleration (optional - skip if not found)
+            set(TRT_DLLS
+                "nvinfer_10.dll"
+                "nvinfer_lean_10.dll"
+                "nvinfer_plugin_10.dll"
+                "nvinfer_dispatch_10.dll"
+                "nvonnxparser_10.dll"
+            )
+            
+            foreach(DLL_NAME IN LISTS TRT_DLLS)
+                if(EXISTS "${TENSORRT_DLL_DIR}/${DLL_NAME}")
+                    add_custom_command(TARGET beatsync_backend_shared POST_BUILD
+                        # Copy to ThirdParty for Unreal
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "${TENSORRT_DLL_DIR}/${DLL_NAME}"
+                            "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64/"
+                        # Copy to build output directory for direct testing
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "${TENSORRT_DLL_DIR}/${DLL_NAME}"
+                            "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
+                        COMMENT "Copying TensorRT DLL: ${DLL_NAME}"
+                    )
+                endif()
+            endforeach()
+            
             if(EXISTS "${TENSORRT_DLL_DIR}/nvinfer_10.dll")
-                add_custom_command(TARGET beatsync_backend_shared POST_BUILD
-                    # Copy to ThirdParty for Unreal
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${TENSORRT_DLL_DIR}/nvinfer_10.dll"
-                        "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64/"
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${TENSORRT_DLL_DIR}/nvinfer_lean_10.dll"
-                        "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64/"
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${TENSORRT_DLL_DIR}/nvinfer_plugin_10.dll"
-                        "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64/"
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${TENSORRT_DLL_DIR}/nvinfer_dispatch_10.dll"
-                        "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64/"
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${TENSORRT_DLL_DIR}/nvonnxparser_10.dll"
-                        "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64/"
-                    # Copy to build output directory for direct testing
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${TENSORRT_DLL_DIR}/nvinfer_10.dll"
-                        "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${TENSORRT_DLL_DIR}/nvinfer_lean_10.dll"
-                        "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${TENSORRT_DLL_DIR}/nvinfer_plugin_10.dll"
-                        "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${TENSORRT_DLL_DIR}/nvinfer_dispatch_10.dll"
-                        "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${TENSORRT_DLL_DIR}/nvonnxparser_10.dll"
-                        "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
-                    COMMENT "Copying TensorRT DLLs for RTX acceleration"
-                )
+                message(STATUS "TensorRT DLLs found at ${TENSORRT_DLL_DIR} - TensorRT acceleration available")
             else()
                 message(STATUS "TensorRT DLLs not found at ${TENSORRT_DLL_DIR} - TensorRT acceleration disabled")
             endif()
@@ -296,8 +298,23 @@ if(USE_AUDIOFLUX)
         # Set AudioFlux DLL paths for installer
         get_filename_component(AUDIOFLUX_LIB_DIR_FOR_INSTALLER "${AUDIOFLUX_LIBRARY}" DIRECTORY)
         set(AUDIOFLUX_DLL_DIR "${AUDIOFLUX_LIB_DIR_FOR_INSTALLER}" CACHE PATH "AudioFlux DLL directory" FORCE)
-        if(AUDIOFLUX_ROOT)
-            set(AUDIOFLUX_FFTW_DLL "${AUDIOFLUX_ROOT}/python/audioflux/lib/libfftw3f-3.dll" CACHE FILEPATH "AudioFlux FFTW3 DLL path" FORCE)
+        
+        # Try to find FFTW3 DLL - search AudioFlux paths first, then common system locations
+        find_file(FOUND_FFTW_DLL "libfftw3f-3.dll"
+            PATHS
+                "${AUDIOFLUX_ROOT}/python/audioflux/lib"
+                "${AUDIOFLUX_LIB_DIR_FOR_INSTALLER}"
+                "$ENV{FFTW_ROOT}/bin"
+                "$ENV{FFTW3_ROOT}/bin"
+                "C:/fftw"
+                "C:/fftw3"
+            DOC "AudioFlux FFTW3 DLL path"
+        )
+        if(FOUND_FFTW_DLL)
+            set(AUDIOFLUX_FFTW_DLL "${FOUND_FFTW_DLL}" CACHE FILEPATH "AudioFlux FFTW3 DLL path" FORCE)
+            get_filename_component(AUDIOFLUX_FFTW_DLL_NAME "${FOUND_FFTW_DLL}" NAME)
+        else()
+             set(AUDIOFLUX_FFTW_DLL_NAME "libfftw3f-3.dll" CACHE STRING "AudioFlux FFTW3 filename fallback")
         endif()
     else()
         message(WARNING "AudioFlux not found (include: ${AUDIOFLUX_INCLUDE_DIR}, lib: ${AUDIOFLUX_LIBRARY}). Spectral analysis disabled.")

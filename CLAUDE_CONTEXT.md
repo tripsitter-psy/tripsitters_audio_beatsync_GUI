@@ -9,26 +9,22 @@ A beat-synced video editor with:
 
 ## Key Locations
 
-| Item | Path (use env variable) |
-| ---- | ----------------------- |
-| Project Root | `${PROJECT_ROOT}` |
-| Backend DLL | `${BACKEND_DLL_PATH}` |
-| UE Source | `${UE_SOURCE}` |
-| TripSitter EXE | `${TRIPSITTER_EXE}` |
-| TensorRT | `${TENSORRT_PATH}` |
+| Item | Path |
+| ---- | ---- |
+| Project Root | Current working directory |
+| Backend DLL | `build\Release\beatsync_backend_shared.dll` |
+| UE Source | `C:\UE5_Source\UnrealEngine` |
+| TripSitter EXE | `C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe` |
+| TensorRT | `C:\TensorRT-10.9.0.34` (set via `$env:TENSORRT_HOME`) |
+| AudioFlux | `C:\audioFlux` (set via `-DAUDIOFLUX_ROOT` CMake flag) |
 
-> **Note:** Set the following environment variables to configure your local paths:
-> - PROJECT_ROOT
-> - BACKEND_DLL_PATH
-> - UE_SOURCE
-> - TRIPSITTER_EXE
-> - TENSORRT_PATH
+> **Note:** UE Source and TensorRT paths are hardcoded infrastructure paths. User-specific paths (home, Documents) should use `$env:USERPROFILE`.
 
 ## Build Commands
 
 ```powershell
-# Backend (with TensorRT)
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets
+# Backend (with TensorRT + AudioFlux)
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets -DAUDIOFLUX_ROOT="C:/audioFlux"
 cmake --build build --config Release --target beatsync_backend_shared
 
 # TripSitter

@@ -52,6 +52,7 @@ param(
     [ValidateSet("Release", "Debug")]
     [string]$Configuration = "Release",
     [string]$Version = "",
+    [string]$PackagedExePath = "",
     [switch]$DryRun
 )
 
@@ -167,14 +168,12 @@ if (-not $SkipBackend) {
 # Stage 2: Deploy DLLs
 Write-Step "Stage 2: Deploying DLLs"
 
-$ContinueOnDeployFailure = $false
 $deployScript = Join-Path $ScriptDir "deploy_tripsitter.ps1"
 if (Test-Path $deployScript) {
     if ($DryRun) {
         Write-Host "Would run: $deployScript -DryRun" -ForegroundColor Yellow
     } else {
         $deployArgs = @()
-        if ($DryRun) { $deployArgs += "-DryRun" }
         & $deployScript @deployArgs
         if ($LASTEXITCODE -ne 0) {
             Write-Warn "DLL deployment had issues - check output above"
@@ -205,11 +204,15 @@ if (-not $SkipTripSitter) {
 
     # Build with UE5
     $ueBuildBat = Join-Path $UE5Root "Engine\Build\BatchFiles\Build.bat"
+
+    # Map Release to Development for UBT (since we want TripSitter.exe, not TripSitter-Win64-Shipping.exe)
+    $UBTConfig = if ($Configuration -eq "Release") { "Development" } else { "Debug" }
+
     if ($DryRun) {
-        Write-Host "Would run: $ueBuildBat TripSitter Win64 $Configuration" -ForegroundColor Yellow
+        Write-Host "Would run: $ueBuildBat TripSitter Win64 $UBTConfig" -ForegroundColor Yellow
     } else {
         Write-Host "Building TripSitter with Unreal Engine (this may take a while)..." -ForegroundColor DarkGray
-        & $ueBuildBat TripSitter Win64 $Configuration
+        & $ueBuildBat TripSitter Win64 $UBTConfig
         if ($LASTEXITCODE -ne 0) {
             Write-Err "TripSitter build failed"
             exit 1
@@ -229,7 +232,7 @@ if (-not $SkipTripSitter) {
     if (Test-Path $TripSitterExe) {
         Write-Success "Using existing TripSitter.exe"
     } else {
-        Write-Warning "TripSitter.exe not found - installer will be incomplete"
+        Write-Warn "TripSitter.exe not found - installer will be incomplete"
     }
 }
 
@@ -237,7 +240,19 @@ if (-not $SkipTripSitter) {
 Write-Step "Stage 4: Patching Application Icon"
 
 $IconFile = Join-Path $ProjectRoot "unreal-prototype\Source\TripSitter\Resources\TripSitter.ico"
-$PackagedExe = "$env:USERPROFILE\Desktop\TripSitterBuild\Windows\TripSitter\Binaries\Win64\MyProject.exe"
+
+# Determine path to packaged executable
+if ($PackagedExePath) {
+    # Use user-provided path
+    $PackagedExe = $PackagedExePath
+} else {
+    # Default to standard Unreal Engine build output location
+    # Note: Depending on how TripSitter is built, this might be in Engine/Binaries or Project/Binaries
+    $PackagedExe = $TripSitterExe
+}
+if ($DryRun) {
+    Write-Host "Target Executable: $PackagedExe" -ForegroundColor DarkGray
+}
 
 if (Test-Path $IconFile) {
     if (Test-Path $PackagedExe) {
@@ -285,7 +300,7 @@ if (-not $SkipInstaller) {
             Write-Host "Running CPack NSIS..." -ForegroundColor DarkGray
             & cpack -C $Configuration -G NSIS
             if ($LASTEXITCODE -ne 0) {
-                Write-Warning "NSIS installer generation had issues"
+                Write-Warn "NSIS installer generation had issues"
             } else {
                 $installer = Get-ChildItem -Path $BuildDir -Filter "*.exe" |
                     Where-Object { $_.Name -like "*TripSitter*" -or $_.Name -like "*MTV*" } |
@@ -317,7 +332,7 @@ if (-not $SkipZip) {
             Write-Host "Running CPack ZIP..." -ForegroundColor DarkGray
             & cpack -C $Configuration -G ZIP
             if ($LASTEXITCODE -ne 0) {
-                Write-Warning "ZIP creation had issues"
+                Write-Warn "ZIP creation had issues"
             } else {
                 $zipFile = Get-ChildItem -Path $BuildDir -Filter "*.zip" |
                     Sort-Object LastWriteTime -Descending |

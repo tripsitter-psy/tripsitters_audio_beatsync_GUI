@@ -110,9 +110,9 @@ std::vector<double> detectBeatsFromWaveform(const std::vector<float>& samples, i
 
     int N = windowSize;
     int H = hopSize;
-    int numSamples = static_cast<int>(samples.size());
-    int numFrames = (numSamples < N) ? 0 : 1 + (numSamples - N) / H;
-    if (numFrames <= 0) return beats;
+    size_t numSamples = samples.size();
+    size_t numFrames = (numSamples < static_cast<size_t>(N)) ? 0 : 1 + (numSamples - static_cast<size_t>(N)) / static_cast<size_t>(H);
+    if (numFrames == 0) return beats;
 
     // Compute magnitude spectrogram frames
     std::vector<double> prevMag(N/2 + 1, 0.0);
@@ -121,11 +121,11 @@ std::vector<double> detectBeatsFromWaveform(const std::vector<float>& samples, i
     std::vector<std::complex<double>> buf(nextPow2(N));
     std::vector<double> win(N);  // Pre-allocate Hann window buffer outside loop
 
-    for (int f = 0; f < numFrames; ++f) {
-        int offset = f * H;
+    for (size_t f = 0; f < numFrames; ++f) {
+        size_t offset = f * static_cast<size_t>(H);
         for (int i = 0; i < N; ++i) {
             double v = 0.0;
-            if (offset + i < (int)samples.size()) v = samples[offset + i];
+            if (offset + i < numSamples) v = samples[offset + i];
             buf[i] = std::complex<double>(v, 0.0);
         }
         for (int i = N; i < (int)buf.size(); ++i) buf[i] = 0.0;

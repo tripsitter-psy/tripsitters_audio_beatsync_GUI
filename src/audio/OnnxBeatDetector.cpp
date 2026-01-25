@@ -236,7 +236,8 @@ std::vector<float> MelSpectrogramExtractor::extract(const std::vector<float>& sa
 }
 
 int MelSpectrogramExtractor::getNumFrames(int numSamples) const {
-    return 1 + (numSamples - m_impl->nFft) / m_impl->hopLength;
+    int frames = 1 + (numSamples - m_impl->nFft) / m_impl->hopLength;
+    return std::max(0, frames);  // Clamp to non-negative
 }
 
 int MelSpectrogramExtractor::getNumMels() const {
@@ -641,32 +642,43 @@ struct OnnxBeatDetector::Impl {
                         "bridge", "outro", "instrumental", "solo", "silence"
                     };
 
-                    int numClasses = static_cast<int>(labelShape.back());
+                    // Guard against empty tensor shape or null data
+                    if (labelShape.empty() || !labelData) {
+                        std::cerr << "[OnnxBeatDetector] Warning: Label tensor has empty shape or null data, skipping segment labeling\n";
+                    } else {
+                        int numClasses = static_cast<int>(labelShape.back());
 
-                    for (size_t i = 0; i < segmentBoundaries.size(); ++i) {
-                        MusicSegment seg;
-                        seg.startTime = segmentBoundaries[i];
-                        seg.endTime = (i + 1 < segmentBoundaries.size()) ?
-                                      segmentBoundaries[i + 1] :
-                                      resampled.size() / static_cast<double>(config.sampleRate);
+                        // Compute total label tensor size for bounds checking
+                        size_t labelTensorSize = 1;
+                        for (auto dim : labelShape) labelTensorSize *= dim;
 
-                        // Find label with highest probability at segment start
-                        int frameIdx = static_cast<int>(seg.startTime * frameRate);
-                        frameIdx = std::clamp(frameIdx, 0, numFrames - 1);
+                        for (size_t i = 0; i < segmentBoundaries.size(); ++i) {
+                            MusicSegment seg;
+                            seg.startTime = segmentBoundaries[i];
+                            seg.endTime = (i + 1 < segmentBoundaries.size()) ?
+                                          segmentBoundaries[i + 1] :
+                                          resampled.size() / static_cast<double>(config.sampleRate);
 
-                        float maxProb = -1e9f;
-                        int maxClass = 0;
-                        for (int c = 0; c < numClasses && c < static_cast<int>(SEGMENT_LABELS.size()); ++c) {
-                            float prob = labelData[frameIdx * numClasses + c];
-                            if (prob > maxProb) {
-                                maxProb = prob;
-                                maxClass = c;
+                            // Find label with highest probability at segment start
+                            int frameIdx = static_cast<int>(seg.startTime * frameRate);
+                            frameIdx = std::clamp(frameIdx, 0, numFrames - 1);
+
+                            float maxProb = -1e9f;
+                            int maxClass = 0;
+                            for (int c = 0; c < numClasses && c < static_cast<int>(SEGMENT_LABELS.size()); ++c) {
+                                size_t labelIdx = static_cast<size_t>(frameIdx) * numClasses + c;
+                                if (labelIdx >= labelTensorSize) continue;  // Bounds check
+                                float prob = labelData[labelIdx];
+                                if (prob > maxProb) {
+                                    maxProb = prob;
+                                    maxClass = c;
+                                }
                             }
-                        }
 
-                        seg.label = SEGMENT_LABELS[maxClass];
-                        seg.confidence = 1.0f / (1.0f + std::exp(-maxProb));  // Sigmoid
-                        result.segments.push_back(seg);
+                            seg.label = SEGMENT_LABELS[maxClass];
+                            seg.confidence = 1.0f / (1.0f + std::exp(-maxProb));  // Sigmoid
+                            result.segments.push_back(seg);
+                        }
                     }
                 }
             }
@@ -717,7 +729,23 @@ const OnnxConfig& OnnxBeatDetector::getConfigImpl() const {
 }
 
 void OnnxBeatDetector::setConfigImpl(const OnnxConfig& config) {
+    // Check if mel extractor parameters changed - if so, recreate it
+    bool needsNewExtractor = !m_impl->melExtractor ||
+        m_impl->config.sampleRate != config.sampleRate ||
+        m_impl->config.nMels != config.nMels ||
+        m_impl->config.windowLength != config.windowLength ||
+        m_impl->config.hopLength != config.hopLength ||
+        m_impl->config.fmin != config.fmin ||
+        m_impl->config.fmax != config.fmax;
+
     m_impl->config = config;
+
+    if (needsNewExtractor) {
+        m_impl->melExtractor = std::make_unique<MelSpectrogramExtractor>(
+            config.sampleRate, config.nMels, config.windowLength,
+            config.hopLength, config.fmin, config.fmax
+        );
+    }
 }
 
 BeatGrid OnnxBeatDetector::analyzeImpl(const std::vector<float>& samples, int sampleRate,

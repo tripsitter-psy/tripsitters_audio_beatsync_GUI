@@ -38,11 +38,14 @@ FBeatsyncProcessingTask::~FBeatsyncProcessingTask()
     }
 
     // Clean up Writer if DoWork didn't complete normally (e.g., early exit or exception)
-    if (Writer)
     {
-        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
-        FBeatsyncLoader::DestroyVideoWriter(Writer);
-        Writer = nullptr;
+        FScopeLock Lock(&WriterMutex);
+        if (Writer)
+        {
+            FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
+            FBeatsyncLoader::DestroyVideoWriter(Writer);
+            Writer = nullptr;
+        }
     }
 }
 
@@ -214,8 +217,18 @@ void FBeatsyncProcessingTask::DoWork()
     Result.BeatCount = FilteredBeats.Num();
 
     // Step 3: Create video writer (assign to member for destructor cleanup)
-    Writer = FBeatsyncLoader::CreateVideoWriter();
-    if (!Writer)
+    // Lock writer access to avoid race with destructor
+    {
+        FScopeLock Lock(&WriterMutex);
+        Writer = FBeatsyncLoader::CreateVideoWriter();
+    }
+    
+    if (
+        // Check Writer safely? Actually we just assigned it.
+        // But we need to check if it's null.
+        // Reading it safely:
+        [&]() { FScopeLock Lock(&WriterMutex); return Writer == nullptr; }()
+    )
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Failed to create video writer");
@@ -232,16 +245,23 @@ void FBeatsyncProcessingTask::DoWork()
     // Set up progress callback for video processing
     // Note: SharedCancelFlag is a shared member that reflects runtime cancellation state
     auto LocalOnProgress = OnProgress;
-    FBeatsyncLoader::SetProgressCallback(Writer, [LocalOnProgress, SharedCancelFlag = this->SharedCancelFlag](double Prog) {
-        if (!(*SharedCancelFlag)) {
-            float Progress = 0.2f + 0.5f * static_cast<float>(Prog);
-            FString Status = TEXT("Processing video...");
-            // Marshal to game thread for UI updates - Slate cannot be accessed from worker threads
-            AsyncTask(ENamedThreads::GameThread, [LocalOnProgress, Progress, Status]() {
-                LocalOnProgress.ExecuteIfBound(Progress, Status);
+    
+    // Protect callback setup
+    {
+        FScopeLock Lock(&WriterMutex);
+        if (Writer) {
+            FBeatsyncLoader::SetProgressCallback(Writer, [LocalOnProgress, SharedCancelFlag = this->SharedCancelFlag](double Prog) {
+                if (!(*SharedCancelFlag)) {
+                    float Progress = 0.2f + 0.5f * static_cast<float>(Prog);
+                    FString Status = TEXT("Processing video...");
+                    // Marshal to game thread for UI updates - Slate cannot be accessed from worker threads
+                    AsyncTask(ENamedThreads::GameThread, [LocalOnProgress, Progress, Status]() {
+                        LocalOnProgress.ExecuteIfBound(Progress, Status);
+                    });
+                }
             });
         }
-    });
+    }
 
     // Step 4: Cut video at beats
     ReportProgress(0.25f, TEXT("Cutting video at beats..."));
@@ -261,9 +281,16 @@ void FBeatsyncProcessingTask::DoWork()
     FString TempDir = FPaths::Combine(FPlatformProcess::UserTempDir(), TEXT("TripSitter"));
 
     // Ensure the TripSitter temp directory exists
-    if (!IFileManager::Get().MakeDirectory(*TempDir, true))
-    {
-        UE_LOG(LogTemp, Error, TEXT("TripSitter: Failed to create temp directory: %s"), *TempDir);
+    if (
+        {
+            FScopeLock Lock(&WriterMutex);
+            if (Writer) {
+                FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
+                FBeatsyncLoader::DestroyVideoWriter(Writer);
+                Writer = nullptr;
+            }
+        }
+        rror, TEXT("TripSitter: Failed to create temp directory: %s"), *TempDir);
         Result.bSuccess = false;
         Result.ErrorMessage = FString::Printf(TEXT("Failed to create temp directory: %s"), *TempDir);
         if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
@@ -282,30 +309,34 @@ void FBeatsyncProcessingTask::DoWork()
     // Generate unique temp filenames using GUID
     FString TempBaseName = FString::Printf(TEXT("temp_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     FString TempVideoPath = FPaths::Combine(TempDir, TempBaseName + TEXT("_video.mp4"));
-    FString TempEffectsPath = FPaths::Combine(TempDir, TempBaseName + TEXT("_effects.mp4"));
-
-    UE_LOG(LogTemp, Log, TEXT("TripSitter: Using temp directory: %s"), *TempDir);
-
-    // Cut video
-    if (Params.bIsMultiClip && Params.VideoPaths.Num() > 1)
-    {
-        bSuccess = FBeatsyncLoader::CutVideoAtBeatsMulti(Writer, Params.VideoPaths, FilteredBeats, TempVideoPath, ClipDuration);
+    FStrFScopeLock Lock(&WriterMutex);
+        if (Writer) {
+            bSuccess = FBeatsyncLoader::CutVideoAtBeatsMulti(Writer, Params.VideoPaths, FilteredBeats, TempVideoPath, ClipDuration);
+        } else {
+             bSuccess = false;
+        }
     }
     else
     {
         FString SingleVideo = Params.VideoPaths.Num() > 0 ? Params.VideoPaths[0] : Params.VideoPath;
-        bSuccess = FBeatsyncLoader::CutVideoAtBeats(Writer, SingleVideo, FilteredBeats, TempVideoPath, ClipDuration);
-    }
-
-    if (!bSuccess)
-    {
-        FString ErrorMsg = FBeatsyncLoader::GetVideoLastError(Writer);
+        FScopeLock Lock(;
+        {
+            FScopeLock Lock(&WriterMutex);
+            if (Writer) ErrorMsg = FBeatsyncLoader::GetVideoLastError(Writer);
+        }
         Result.bSuccess = false;
         Result.ErrorMessage = ErrorMsg.IsEmpty() ? TEXT("Failed to cut video") : ErrorMsg;
         if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
-        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
-        FBeatsyncLoader::DestroyVideoWriter(Writer);
-        Writer = nullptr;
+        
+        {
+            FScopeLock Lock(&WriterMutex);
+            if (Writer) {
+                FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
+                FBeatsyncLoader::DestroyVideoWriter(Writer);
+                Writer = nullptr;
+            }
+        }
+
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
         TempVideoPath.Empty();
         if (Span) FBeatsyncLoader::EndSpan(Span);
@@ -320,6 +351,40 @@ void FBeatsyncProcessingTask::DoWork()
     if (SharedCancelFlag.IsValid() && *SharedCancelFlag)
     {
         if (Span) FBeatsyncLoader::SpanAddEvent(Span, TEXT("cancelled-after-cut"));
+        
+        {
+            FScopeLock Lock(&WriterMutex);
+            if (Writer) {
+                FBeatsyncLoader::DestroyVideoWriter(Writer);
+                Writer = nullptr;
+            }
+        }
+        DestroyVideoWriter(Writer);
+        Writer = nullptr;
+        IFileManager::Get().Delete(*TempVideoPath, false, true, true);
+        TempVideoPath.Empty();
+        if (Span) FBeatsyncLoader::EndSpan(Span);
+        auto LocalOnComplete = OnComplete;
+        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+            LocalOnComplete.ExecuteIfBound(Result);
+        });
+        bWorkCompleted.AtomicSet(true);
+        {
+            FScopeLock Lock(&WriterMutex);
+            if (Writer) FBeatsyncLoader::SetEffectsConfig(Writer, Params.EffectsConfig);
+        }
+
+        // Apply effects
+        {
+            FScopeLock Lock(&WriterMutex);
+            if (Writer) {
+                bSuccess = FBeatsyncLoader::ApplyEffects(Writer, CurrentVideoPath, TempEffectsPath, FilteredBeats);
+            } else {
+                bSuccess = false;
+            }
+        }
+    {
+        if (Span) FBeatsyncLoader::SpanAddEvent(Span, TEXT("cancelled-after-cut"));
         FBeatsyncLoader::DestroyVideoWriter(Writer);
         Writer = nullptr;
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
@@ -327,8 +392,14 @@ void FBeatsyncProcessingTask::DoWork()
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
         if (Span) { FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage); FBeatsyncLoader::EndSpan(Span); }
-        auto LocalOnComplete = OnComplete;
-        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+        {
+            FScopeLock Lock(&WriterMutex);
+            if (Writer) {
+                FBeatsyncLoader::DestroyVideoWriter(Writer);
+                Writer = nullptr;
+            }
+        }
+        hreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
         bWorkCompleted.AtomicSet(true);

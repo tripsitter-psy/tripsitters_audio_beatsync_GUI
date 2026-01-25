@@ -90,6 +90,13 @@ BEATSYNC_API void bs_destroy_audio_analyzer(void* analyzer) {
     }
 }
 
+BEATSYNC_API const char* bs_get_analyzer_last_error(void* analyzer) {
+    if (!analyzer) return "Invalid analyzer handle";
+    auto* a = static_cast<BeatSync::AudioAnalyzer*>(analyzer);
+    s_lastError = a->getLastError();
+    return s_lastError.c_str(); 
+}
+
 BEATSYNC_API void bs_set_bpm_hint(void* analyzer, double bpm) {
     if (analyzer) {
         static_cast<BeatSync::AudioAnalyzer*>(analyzer)->setBPMHint(bpm);
@@ -289,7 +296,7 @@ BEATSYNC_API int bs_get_waveform_bands(void* analyzer, const char* filepath,
         std::vector<float> stftReal(numFrames * fftSize, 0.0f);
         std::vector<float> stftImag(numFrames * fftSize, 0.0f);
 
-        // Compute STFT
+        // Compute STFT (stftObj_stft returns void; errors manifest as NaN/zero output)
         stftObj_stft(stftObj, audioData.samples.data(), static_cast<int>(audioData.samples.size()),
                      stftReal.data(), stftImag.data());
         stftObj_free(stftObj);
@@ -1594,9 +1601,35 @@ BEATSYNC_API int bs_ai_analyze_file(void* analyzer, const char* audio_path,
 
     } catch (const std::exception& e) {
         s_aiLastError = e.what();
+        // Clean up any partial allocations before returning
+        if (out_result) {
+            if (out_result->segments) {
+                for (size_t i = 0; i < out_result->segment_count; ++i) {
+                    if (out_result->segments[i].label) free(out_result->segments[i].label);
+                }
+                free(out_result->segments);
+                out_result->segments = nullptr;
+                out_result->segment_count = 0;
+            }
+            if (out_result->downbeats) { free(out_result->downbeats); out_result->downbeats = nullptr; out_result->downbeat_count = 0; }
+            if (out_result->beats) { free(out_result->beats); out_result->beats = nullptr; out_result->beat_count = 0; }
+        }
         return -1;
     } catch (...) {
         s_aiLastError = "Unknown error during AI analysis";
+        // Clean up any partial allocations before returning
+        if (out_result) {
+            if (out_result->segments) {
+                for (size_t i = 0; i < out_result->segment_count; ++i) {
+                    if (out_result->segments[i].label) free(out_result->segments[i].label);
+                }
+                free(out_result->segments);
+                out_result->segments = nullptr;
+                out_result->segment_count = 0;
+            }
+            if (out_result->downbeats) { free(out_result->downbeats); out_result->downbeats = nullptr; out_result->downbeat_count = 0; }
+            if (out_result->beats) { free(out_result->beats); out_result->beats = nullptr; out_result->beat_count = 0; }
+        }
         return -1;
     }
 #endif
@@ -1700,9 +1733,19 @@ BEATSYNC_API int bs_ai_analyze_samples(void* analyzer,
 
     } catch (const std::exception& e) {
         s_aiLastError = e.what();
+        // Clean up any partial allocations before returning
+        if (out_result) {
+            if (out_result->downbeats) { free(out_result->downbeats); out_result->downbeats = nullptr; out_result->downbeat_count = 0; }
+            if (out_result->beats) { free(out_result->beats); out_result->beats = nullptr; out_result->beat_count = 0; }
+        }
         return -1;
     } catch (...) {
         s_aiLastError = "Unknown exception";
+        // Clean up any partial allocations before returning
+        if (out_result) {
+            if (out_result->downbeats) { free(out_result->downbeats); out_result->downbeats = nullptr; out_result->downbeat_count = 0; }
+            if (out_result->beats) { free(out_result->beats); out_result->beats = nullptr; out_result->beat_count = 0; }
+        }
         return -1;
     }
 #endif
@@ -1795,9 +1838,19 @@ BEATSYNC_API int bs_ai_analyze_quick(void* analyzer, const char* audio_path,
 
     } catch (const std::exception& e) {
         s_aiLastError = e.what();
+        // Clean up any partial allocations before returning
+        if (out_result) {
+            if (out_result->downbeats) { free(out_result->downbeats); out_result->downbeats = nullptr; out_result->downbeat_count = 0; }
+            if (out_result->beats) { free(out_result->beats); out_result->beats = nullptr; out_result->beat_count = 0; }
+        }
         return -1;
     } catch (...) {
         s_aiLastError = "Unknown exception";
+        // Clean up any partial allocations before returning
+        if (out_result) {
+            if (out_result->downbeats) { free(out_result->downbeats); out_result->downbeats = nullptr; out_result->downbeat_count = 0; }
+            if (out_result->beats) { free(out_result->beats); out_result->beats = nullptr; out_result->beat_count = 0; }
+        }
         return -1;
     }
 #endif

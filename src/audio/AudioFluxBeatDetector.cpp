@@ -163,7 +163,10 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
     }
 
     // Resample to target sample rate if needed
-    if (progress && !progress(0.05f, "Resampling audio...")) return result;
+    if (progress && !progress(0.05f, "Resampling audio...")) {
+        result.error = "Analysis cancelled by user";
+        return result;
+    }
 
     std::cerr << "[AudioFlux] Resampling from " << sampleRate << " to " << m_config.sampleRate << std::endl;
     std::vector<float> resampled = resampleAudio(samples, sampleRate, m_config.sampleRate);
@@ -171,7 +174,10 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
     std::cerr << "[AudioFlux] Resampled to " << resampled.size() << " samples, duration=" << duration << "s" << std::endl;
 
     // Compute STFT
-    if (progress && !progress(0.1f, "Computing spectrogram...")) return result;
+    if (progress && !progress(0.1f, "Computing spectrogram...")) {
+        result.error = "Analysis cancelled by user";
+        return result;
+    }
 
     // Validate fftSize is a positive power of two before deriving radix/length
     if (m_config.fftSize <= 0 || (m_config.fftSize & (m_config.fftSize - 1)) != 0) {
@@ -263,7 +269,10 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
     stftObj_free(stftObj);
     std::cerr << "[AudioFlux] STFT object freed" << std::endl;
 
-    if (progress && !progress(0.3f, "Computing onset envelope...")) return result;
+    if (progress && !progress(0.3f, "Computing onset envelope...")) {
+        result.error = "Analysis cancelled by user";
+        return result;
+    }
 
     // Compute onset envelope using spectral flux
     // Note: stft buffer has fftLength stride, but we only use first numBins (positive frequencies)
@@ -275,7 +284,10 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
         return result;
     }
 
-    if (progress && !progress(0.5f, "Detecting beats...")) return result;
+    if (progress && !progress(0.5f, "Detecting beats...")) {
+        result.error = "Analysis cancelled by user";
+        return result;
+    }
 
     // Adaptive threshold based on envelope statistics - use lower percentile for better sensitivity
 
@@ -312,7 +324,10 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
         beat = beat / frameRate;
     }
 
-    if (progress && !progress(0.8f, "Estimating tempo...")) return result;
+    if (progress && !progress(0.8f, "Estimating tempo...")) {
+        result.error = "Analysis cancelled by user";
+        return result;
+    }
 
     // Estimate BPM
     result.bpm = estimateBPM(result.beats, duration);
@@ -340,7 +355,10 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
         result.confidence = std::max(0.0, 1.0 - relativeStdDev * 2.0);
     }
 
-    if (progress && !progress(1.0f, "Done")) return result;
+    if (progress && !progress(1.0f, "Done")) {
+        result.error = "Analysis cancelled by user";
+        return result;
+    }
 
     return result;
 }
@@ -539,10 +557,13 @@ std::vector<double> AudioFluxBeatDetector::fillBeatGaps(const std::vector<double
     }
 
     // Extend to end if last beat is early
-    double lastBeat = filledBeats.back();
-    while (lastBeat + beatInterval < duration - 0.1) {
-        lastBeat += beatInterval;
-        filledBeats.push_back(lastBeat);
+    // Guard against zero or very small beatInterval to prevent infinite loop
+    if (beatInterval >= 0.1) {
+        double lastBeat = filledBeats.back();
+        while (lastBeat + beatInterval < duration - 0.1) {
+            lastBeat += beatInterval;
+            filledBeats.push_back(lastBeat);
+        }
     }
 
     return filledBeats;

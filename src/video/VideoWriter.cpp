@@ -255,10 +255,20 @@ std::string VideoWriter::resolveFfmpegPath() const {
 }
 
 std::string VideoWriter::getFFmpegPath() const {
+    // Cache the result to avoid repeated system calls
+    static std::string s_cachedFfmpegPath;
+    static bool s_ffmpegPathCached = false;
+
+    if (s_ffmpegPathCached) {
+        return s_cachedFfmpegPath;
+    }
+
     // 1. Check environment variable first
     const char* envPath = std::getenv("BEATSYNC_FFMPEG_PATH");
     if (envPath != nullptr && envPath[0] != '\0') {
-        return envPath;
+        s_cachedFfmpegPath = envPath;
+        s_ffmpegPathCached = true;
+        return s_cachedFfmpegPath;
     }
 
     // 2. Try to find ffmpeg in PATH (hidden to avoid console flash)
@@ -275,9 +285,11 @@ std::string VideoWriter::getFFmpegPath() const {
         while (!result.empty() && (result.back() == '\r' || result.back() == ' ')) {
             result.pop_back();
         }
-        // If we found something, use it
+        // If we found something, cache and use it
         if (!result.empty() && result.find("ffmpeg") != std::string::npos) {
-            return result;
+            s_cachedFfmpegPath = result;
+            s_ffmpegPathCached = true;
+            return s_cachedFfmpegPath;
         }
     }
 #else
@@ -296,21 +308,25 @@ std::string VideoWriter::getFFmpegPath() const {
             result = result.substr(0, newline);
         }
 
-        // If we found something, use it
+        // If we found something, cache and use it
         if (!result.empty() && result.find("ffmpeg") != std::string::npos) {
-            return result;
+            s_cachedFfmpegPath = result;
+            s_ffmpegPathCached = true;
+            return s_cachedFfmpegPath;
         }
     }
 #endif
 
-    // 3. Fall back to platform-specific hardcoded path
+    // 3. Fall back to platform-specific hardcoded path (also cache these)
 #ifdef _WIN32
-    return "C:\\ffmpeg-dev\\ffmpeg-master-latest-win64-gpl-shared\\bin\\ffmpeg.exe";
+    s_cachedFfmpegPath = "C:\\ffmpeg-dev\\ffmpeg-master-latest-win64-gpl-shared\\bin\\ffmpeg.exe";
 #elif defined(__APPLE__)
-    return "/opt/homebrew/bin/ffmpeg";
+    s_cachedFfmpegPath = "/opt/homebrew/bin/ffmpeg";
 #else
-    return "/usr/bin/ffmpeg";
+    s_cachedFfmpegPath = "/usr/bin/ffmpeg";
 #endif
+    s_ffmpegPathCached = true;
+    return s_cachedFfmpegPath;
 }
 
 bool VideoWriter::cutAtBeats(const std::string& inputVideo,
@@ -985,11 +1001,11 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
     // Log what we're concatenating for debugging
     std::cout << "Creating concat list with " << inputVideos.size() << " videos:\n";
 
+    // Open debug log once for all logging in this section (avoids repeated file opens)
     FILE* debugLog = fopen((getTempDir() + "tripsitter_debug.log").c_str(), "a");
     if (debugLog) {
         fprintf(debugLog, "\n=== Concatenation Step ===\n");
         fprintf(debugLog, "Creating concat list with %zu videos:\n", inputVideos.size());
-        fclose(debugLog);
     }
 
     int missingCount = 0;
@@ -1003,10 +1019,8 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
             std::cout << " [MISSING!]\n";
             missingCount++;
 
-            debugLog = fopen((getTempDir() + "tripsitter_debug.log").c_str(), "a");
             if (debugLog) {
                 fprintf(debugLog, "  - %s [MISSING!]\n", video.c_str());
-                fclose(debugLog);
             }
         } else {
             // Get file size
@@ -1015,10 +1029,8 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
             std::cout << " [OK, " << size << " bytes]\n";
             fclose(check);
 
-            debugLog = fopen((getTempDir() + "tripsitter_debug.log").c_str(), "a");
             if (debugLog) {
                 fprintf(debugLog, "  - %s [OK, %ld bytes]\n", video.c_str(), size);
-                fclose(debugLog);
             }
         }
     }
@@ -1027,7 +1039,6 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
     if (missingCount > 0) {
         m_lastError = "Cannot concatenate: " + std::to_string(missingCount) + " segment files are missing!";
 
-        debugLog = fopen((getTempDir() + "tripsitter_debug.log").c_str(), "a");
         if (debugLog) {
             fprintf(debugLog, "ERROR: %d segment files are missing!\n", missingCount);
             fclose(debugLog);
@@ -1035,6 +1046,11 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 
         std::remove(listFile.c_str());
         return false;
+    }
+
+    // Close debug log after successful validation
+    if (debugLog) {
+        fclose(debugLog);
     }
 
     // Use FFmpeg command-line to concatenate pre-normalized segments

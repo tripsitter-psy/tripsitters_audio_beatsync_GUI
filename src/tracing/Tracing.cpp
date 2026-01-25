@@ -106,15 +106,24 @@ void InitTracing(const std::string& outfile) {
             // Switching to a new file: close and reset
             bool need_stop_flusher = (g_flush_mode == TracingFlushMode::Periodic);
             std::unique_ptr<std::ofstream> local_out;
+            
+            // Mark flusher to stop while we hold the lock to avoid race
             if (need_stop_flusher) {
-                // Hold lock, stop flusher after releasing lock below
+                g_flush_mode = TracingFlushMode::Never;
             }
+
             local_out = std::move(g_out);
             g_outfile_path.clear();
-            // Release lock before flushing/closing and stopping flusher
+            
+            // Release lock before flushing/closing and joining flusher
             lk.unlock();
+            
             if (need_stop_flusher) {
-                SetTracingFlushMode(TracingFlushMode::Never); // Stop flusher
+                // If we were in periodic mode, notify thread to wake up and exit
+                g_flush_thread_cv.notify_all();
+                if (g_flush_thread.joinable()) {
+                    g_flush_thread.join();
+                }
             }
             if (local_out) {
                 local_out->flush();

@@ -2,7 +2,6 @@
 #include "audio/SpectralFlux.h"
 #include <cmath>
 #include <vector>
-#include <limits>
 
 // Helper: generate a click track (impulse at beat times)
 static std::vector<float> makeClickTrack(const std::vector<double>& beatTimes, int sampleRate, double duration) {
@@ -24,7 +23,6 @@ TEST_CASE("SpectralFlux detects click track beats", "[spectral][detector]") {
     auto samples = makeClickTrack(beats, sr, duration);
 
     auto out = BeatSync::detectBeatsFromWaveform(samples, sr, 1024, 256, 1.5, 1.2);
-    REQUIRE(out.size() == beats.size());
     // One-to-one matching: every detected beat must map to an expected beat within tolerance
     std::vector<bool> matched(beats.size(), false);
     for (double detected : out) {

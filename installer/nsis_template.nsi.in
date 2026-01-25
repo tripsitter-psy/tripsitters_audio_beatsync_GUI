@@ -58,22 +58,16 @@ Section "MTV TripSitter" SecMain
     ; Install TensorRT runtime DLLs for RTX GPU acceleration (if available)
     ; These are optional - app falls back to CUDA EP on GTX cards or if missing
     SetOutPath "$INSTDIR\TripSitter\Binaries\Win64"
-    IfFileExists "@TENSORRT_DLL_DIR@\nvinfer_10.dll" 0 skip_tensorrt
-        File /nonfatal "@TENSORRT_DLL_DIR@\nvinfer_10.dll"
-        File /nonfatal "@TENSORRT_DLL_DIR@\nvinfer_lean_10.dll"
-        File /nonfatal "@TENSORRT_DLL_DIR@\nvinfer_plugin_10.dll"
-        File /nonfatal "@TENSORRT_DLL_DIR@\nvinfer_dispatch_10.dll"
-        File /nonfatal "@TENSORRT_DLL_DIR@\nvonnxparser_10.dll"
-    skip_tensorrt:
+    File /nonfatal "@TENSORRT_DLL_DIR@\nvinfer_10.dll"
+    File /nonfatal "@TENSORRT_DLL_DIR@\nvinfer_lean_10.dll"
+    File /nonfatal "@TENSORRT_DLL_DIR@\nvinfer_plugin_10.dll"
+    File /nonfatal "@TENSORRT_DLL_DIR@\nvinfer_dispatch_10.dll"
+    File /nonfatal "@TENSORRT_DLL_DIR@\nvonnxparser_10.dll"
 
     ; Install AudioFlux DLLs for spectral analysis (if available)
     ; These are optional - Flux mode falls back to Energy mode if missing
-    IfFileExists "@AUDIOFLUX_DLL_DIR@\audioflux.dll" 0 skip_audioflux
-        File /nonfatal "@AUDIOFLUX_DLL_DIR@\audioflux.dll"
-    skip_audioflux:
-    IfFileExists "@AUDIOFLUX_FFTW_DLL@" 0 skip_audioflux_fftw
-        File /nonfatal "@AUDIOFLUX_FFTW_DLL@"
-    skip_audioflux_fftw:
+    File /nonfatal "@AUDIOFLUX_DLL_DIR@\audioflux.dll"
+    File /nonfatal "@AUDIOFLUX_FFTW_DLL@"
 
     ; Install ONNX models for AI beat detection
     SetOutPath "$INSTDIR\models"
@@ -154,7 +148,7 @@ Section "Uninstall"
 
     ; Remove AudioFlux DLLs (if installed)
     Delete "$INSTDIR\TripSitter\Binaries\Win64\audioflux.dll"
-    Delete "$INSTDIR\TripSitter\Binaries\Win64\libfftw3f-3.dll"
+    Delete "$INSTDIR\TripSitter\Binaries\Win64\@AUDIOFLUX_FFTW_DLL_NAME@"
 
     ; Remove ONNX models
     Delete "$INSTDIR\models\*.onnx"

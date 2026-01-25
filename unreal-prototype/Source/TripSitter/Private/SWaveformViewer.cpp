@@ -3,6 +3,7 @@
 #include "Styling/CoreStyle.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
+#include "Algo/BinarySearch.h"
 
 void SWaveformViewer::Construct(const FArguments& InArgs)
 {
@@ -76,18 +77,8 @@ void SWaveformViewer::AddBeatAtTime(double Time)
 {
 	if (Time < 0 || Time > Duration) return;
 
-	// Insert in sorted order
-	int32 InsertIndex = 0;
-	for (int32 i = 0; i < BeatTimes.Num(); ++i)
-	{
-		if (BeatTimes[i] > Time)
-		{
-			InsertIndex = i;
-			break;
-		}
-		InsertIndex = i + 1;
-	}
-
+	// Insert in sorted order using binary search (O(log n) instead of O(n))
+	int32 InsertIndex = Algo::LowerBound(BeatTimes, Time);
 	BeatTimes.Insert(Time, InsertIndex);
 
 	// Notify listeners
@@ -328,6 +319,19 @@ void SWaveformViewer::RemoveEffectRegion(int32 Index)
 	}
 }
 
+void SWaveformViewer::RemoveEffectRegionById(const FGuid& Id)
+{
+    // Find index by ID
+    int32 FoundIndex = EffectRegions.IndexOfByPredicate([&](const FEffectRegion& Region) {
+        return Region.Id == Id;
+    });
+
+    if (FoundIndex != INDEX_NONE)
+    {
+        RemoveEffectRegion(FoundIndex);
+    }
+}
+
 void SWaveformViewer::ClearEffectRegions()
 {
 	EffectRegions.Empty();
@@ -545,6 +549,7 @@ void SWaveformViewer::ShowEffectContextMenu(const FGeometry& MyGeometry, const F
 		// Context menu for existing effect region
 		SelectedEffectRegion = RegionIndex;
 		const FEffectRegion& Region = EffectRegions[RegionIndex];
+        const FGuid RegionId = Region.Id;
 
 		MenuBuilder.BeginSection("EffectRegion", FText::FromString(Region.EffectName));
 
@@ -552,9 +557,9 @@ void SWaveformViewer::ShowEffectContextMenu(const FGeometry& MyGeometry, const F
 			FText::FromString(TEXT("Remove Effect Region")),
 			FText::FromString(TEXT("Delete this effect region")),
 			FSlateIcon(),
-			FUIAction(FExecuteAction::CreateLambda([this, RegionIndex]()
+			FUIAction(FExecuteAction::CreateLambda([this, RegionId]()
 			{
-				RemoveEffectRegion(RegionIndex);
+				RemoveEffectRegionById(RegionId);
 			}))
 		);
 
