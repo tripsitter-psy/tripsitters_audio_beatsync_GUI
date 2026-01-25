@@ -1,19 +1,18 @@
 """
-
-"""
 Parses and extracts beat timing data from a JSON file (e.g., ONNX model output) for debugging.
 
 - Expects input: JSON file at 'tests/fixtures/test_audio.onnx.json' containing a "beats" array.
 - Usage: Run directly to print the parsed beat values.
 - Output: Prints the extracted list of beat times.
 - Exits with an error message if the file is missing or unreadable.
+"""
 import sys
 import json
+
 filename = 'tests/fixtures/test_audio.onnx.json'
 try:
     with open(filename) as f:
         s = f.read()
-            print(s)
 except (FileNotFoundError, OSError) as e:
     print(f"Error: Could not open file '{filename}': {e}", file=sys.stderr)
     sys.exit(1)
@@ -31,8 +30,8 @@ if not isinstance(data["beats"], list):
     print("Error: 'beats' key is not a list.", file=sys.stderr)
     sys.exit(1)
 try:
-    beats2 = [float(x) for x in data["beats"]]
-    print('beats2', beats2)
+    beats = [float(x) for x in data["beats"]]
+    print('beats', beats)
 except Exception as e:
     print(f"Error: Failed to convert beats to float: {e}", file=sys.stderr)
     sys.exit(1)

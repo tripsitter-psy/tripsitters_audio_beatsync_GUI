@@ -56,8 +56,9 @@ try {
         Write-Host "Engine symlink created successfully!" -ForegroundColor Green
         Write-Host "Symlink: $ProjectEnginePath -> $EnginePath" -ForegroundColor Green
     } else {
-        Write-Host "ERROR: Failed to create Engine symlink. Please run this script as Administrator." -ForegroundColor Red
+        Write-Host "ERROR: Failed to create Engine symlink." -ForegroundColor Red
         Write-Host "Exit code: $LASTEXITCODE" -ForegroundColor Red
+        Write-Host "The target path may be invalid, the destination may already exist, or there may be a permissions issue." -ForegroundColor Yellow
         exit 1
     }
 } catch {

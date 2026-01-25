@@ -12,6 +12,9 @@ enum class EAnalysisModeParam
     Energy = 0,    // Fast CPU-based spectral flux
     AIBeat = 1,    // AI beat detection (ONNX)
     AIStems = 2    // AI + stem separation (best accuracy)
+    ,
+    AudioFlux = 3, // AudioFlux-based detector
+    StemsFlux = 4  // Stem-aware AudioFlux detector
 };
 
 // Stem effect type enum (matches STripSitterMainWidget::EStemEffect)
@@ -106,9 +109,23 @@ private:
     FOnBeatsyncProcessingComplete OnComplete;
     FThreadSafeBool bCancelRequested;
     TSharedPtr<FThreadSafeBool> SharedCancelFlag;
+    TSharedPtr<FThreadSafeBool> ProgressGuard;  // Guard for progress callbacks
     FThreadSafeBool bWorkCompleted;  // Set when DoWork finishes, used for destructor synchronization
+    FEvent* WorkCompletedEvent = nullptr;  // Signaled when DoWork finishes, destructor waits on this
     void* Writer = nullptr;
+    FString TempVideoPath;
+    FString TempEffectsPath;
 
     void ReportProgress(float Progress, const FString& Status);
     bool HasAnyEffectsEnabled() const;
+
+    // Helper to signal completion and cleanup - call before every return in DoWork
+    void SignalWorkComplete()
+    {
+        bWorkCompleted.AtomicSet(true);
+        if (WorkCompletedEvent)
+        {
+            WorkCompletedEvent->Trigger();
+        }
+    }
 };

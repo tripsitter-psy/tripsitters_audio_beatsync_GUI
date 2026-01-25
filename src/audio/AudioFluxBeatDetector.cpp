@@ -13,11 +13,15 @@ extern "C" {
 }
 
 // Helper: resample audio to target sample rate (band-limited, anti-aliased)
-// TODO: Replace with libsamplerate or a proper polyphase/sinc resampler for production use.
+// NOTE: For production use, consider linking libsamplerate for higher quality resampling.
+#include <stdexcept>
+
 static std::vector<float> resampleAudio(const std::vector<float>& input, int inputRate, int outputRate) {
     if (inputRate == outputRate) return input;
+    if (input.empty()) return input;
+
 #ifdef HAVE_LIBSAMPLERATE
-    // Example using libsamplerate (not linked by default):
+    // High-quality resampling using libsamplerate (if linked):
     std::vector<float> output;
     SRC_DATA srcData;
     srcData.data_in = input.data();
@@ -34,9 +38,72 @@ static std::vector<float> resampleAudio(const std::vector<float>& input, int inp
     output.resize(srcData.output_frames_gen);
     return output;
 #else
-    // Fallback: simple linear interpolation (not recommended for production)
+    // Fallback resampler with anti-aliasing filter for downsampling
     double ratio = static_cast<double>(outputRate) / inputRate;
     size_t outputSize = static_cast<size_t>(input.size() * ratio);
+
+    // If we're downsampling, apply a FIR low-pass filter (Blackman-windowed sinc) to prevent aliasing
+    if (outputRate < inputRate) {
+        // Design parameters for anti-aliasing filter
+        const int filterLen = 31; // odd-length FIR (tradeoff: quality vs speed)
+        const int M = filterLen - 1;
+        const double cutoff = 0.5 * static_cast<double>(outputRate); // Hz (Nyquist of output)
+        const double nyquist = 0.5 * static_cast<double>(inputRate);
+        const double normCutoff = std::min(0.999, cutoff / nyquist); // normalized (0..1)
+
+        std::vector<double> taps(filterLen);
+        const double PI = 3.14159265358979323846;
+        for (int n = 0; n < filterLen; ++n) {
+            int k = n - M / 2;
+            if (k == 0) {
+                taps[n] = normCutoff;
+            } else {
+                double x = PI * k;
+                taps[n] = std::sin(PI * normCutoff * k) / x;
+            }
+            // Blackman window for better stopband attenuation
+            double w = 0.42 - 0.5 * std::cos(2.0 * PI * n / M) + 0.08 * std::cos(4.0 * PI * n / M);
+            taps[n] *= w;
+        }
+        // Normalize filter taps
+        double sum = 0.0;
+        for (double v : taps) sum += v;
+        if (sum != 0.0) {
+            for (double& v : taps) v /= sum;
+        }
+
+        // Convolve input with FIR filter (zero-pad edges)
+        std::vector<float> filtered(input.size(), 0.0f);
+        size_t N = input.size();
+        for (size_t i = 0; i < N; ++i) {
+            double acc = 0.0;
+            for (int t = 0; t < filterLen; ++t) {
+                int idx = static_cast<int>(i) + (t - M / 2);
+                if (idx >= 0 && static_cast<size_t>(idx) < N) {
+                    acc += taps[t] * static_cast<double>(input[idx]);
+                }
+            }
+            filtered[i] = static_cast<float>(acc);
+        }
+
+        // Resample filtered signal with linear interpolation
+        std::vector<float> output(outputSize);
+        for (size_t i = 0; i < outputSize; ++i) {
+            double srcPos = i / ratio;
+            size_t srcIdx = static_cast<size_t>(srcPos);
+            double frac = srcPos - srcIdx;
+            if (srcIdx + 1 < filtered.size()) {
+                output[i] = static_cast<float>(filtered[srcIdx] * (1.0 - frac) + filtered[srcIdx + 1] * frac);
+            } else if (srcIdx < filtered.size()) {
+                output[i] = filtered[srcIdx];
+            } else {
+                output[i] = 0.0f;
+            }
+        }
+        return output;
+    }
+
+    // Upsampling case: simple linear interpolation (no anti-aliasing needed)
     std::vector<float> output(outputSize);
     for (size_t i = 0; i < outputSize; ++i) {
         double srcPos = i / ratio;
@@ -46,21 +113,19 @@ static std::vector<float> resampleAudio(const std::vector<float>& input, int inp
             output[i] = static_cast<float>(input[srcIdx] * (1.0 - frac) + input[srcIdx + 1] * frac);
         } else if (srcIdx < input.size()) {
             output[i] = input[srcIdx];
+        } else {
+            output[i] = 0.0f;
         }
     }
     return output;
 #endif
 }
 
-AudioFluxBeatDetector::AudioFluxBeatDetector() {}
-
-AudioFluxBeatDetector::~AudioFluxBeatDetector() {}
-
-bool AudioFluxBeatDetector::isAvailable() {
-    // Try to create an STFT object to verify AudioFlux is working
+// Check if AudioFlux STFT is available and working
+static bool isAudioFluxAvailable() {
     STFTObj stftObj = nullptr;
-    int radix2Exp = 10;
     WindowType windowType = Window_Hann;
+    int radix2Exp = 11; // 2048 FFT
     int slideLength = 512;
     int isContinue = 0;
 
@@ -70,6 +135,17 @@ bool AudioFluxBeatDetector::isAvailable() {
         return true;
     }
     return false;
+}
+
+// Constructor
+AudioFluxBeatDetector::AudioFluxBeatDetector() = default;
+
+// Destructor
+AudioFluxBeatDetector::~AudioFluxBeatDetector() = default;
+
+// Static method to check if AudioFlux is available
+bool AudioFluxBeatDetector::isAvailable() {
+    return isAudioFluxAvailable();
 }
 
 AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
@@ -97,7 +173,13 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
     // Compute STFT
     if (progress && !progress(0.1f, "Computing spectrogram...")) return result;
 
-    // Determine radix2_exp from fftSize (2048 = 2^11)
+    // Validate fftSize is a positive power of two before deriving radix/length
+    if (m_config.fftSize <= 0 || (m_config.fftSize & (m_config.fftSize - 1)) != 0) {
+        result.error = "Invalid fftSize in configuration: " + std::to_string(m_config.fftSize) + ". fftSize must be a power of two.";
+        return result;
+    }
+
+    // Determine radix2_exp from fftSize (e.g., 2048 = 2^11)
     int radix2Exp = static_cast<int>(std::log2(m_config.fftSize));
     int fftLength = 1 << radix2Exp;
     // IMPORTANT: AudioFlux STFT outputs fftLength values per frame (full FFT), not fftLength/2+1

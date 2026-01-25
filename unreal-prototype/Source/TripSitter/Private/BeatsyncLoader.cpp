@@ -408,12 +408,9 @@ bool FBeatsyncLoader::AnalyzeAudio(void* Analyzer, const FString& FilePath, FBea
         GApi.free_beatgrid(&CGrid);
     }
 
-    // Return GProgressCallbacksEvent to pool if allocated
-    if (GProgressCallbacksEvent != nullptr) {
-        // Drain any active callbacks if needed (GActiveProgressCallbacks)
-        FPlatformProcess::ReturnSynchEventToPool(GProgressCallbacksEvent);
-        GProgressCallbacksEvent = nullptr;
-    }
+    // Note: GProgressCallbacksEvent is managed globally and should only be cleaned up
+    // in Shutdown(), not in AnalyzeAudio(). Returning it to the pool here breaks
+    // subsequent operations that depend on the event for progress callback synchronization.
 
     return bSuccess;
 }

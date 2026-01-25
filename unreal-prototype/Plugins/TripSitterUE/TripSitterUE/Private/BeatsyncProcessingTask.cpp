@@ -2,6 +2,7 @@
 #include "Async/Async.h"
 #include "HAL/FileManager.h"
 #include "HAL/ThreadSafeBool.h"
+#include "HAL/PlatformProcess.h"
 #include "Misc/Paths.h"
 #include <memory>
 
@@ -13,14 +14,22 @@ FBeatsyncProcessingTask::FBeatsyncProcessingTask(const FBeatsyncProcessingParams
     , OnComplete(InCompleteDelegate)
 {
     ProgressGuard = MakeShared<FThreadSafeBool>(false);
+    // Create event for synchronization - DoWork() will trigger this when complete
+    WorkCompletedEvent = FPlatformProcess::GetSynchEventFromPool(true);
 }
 
 FBeatsyncProcessingTask::~FBeatsyncProcessingTask()
 {
-    // Wait for work completion before destroying Writer to avoid use-after-free
-    while (!bWorkCompleted)
+    // Wait for work completion with timeout to avoid indefinite hangs
+    constexpr uint32 TimeoutMs = 10000; // 10 second timeout
+    if (WorkCompletedEvent)
     {
-        FPlatformProcess::Sleep(0.01f);
+        if (!WorkCompletedEvent->Wait(TimeoutMs))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("FBeatsyncProcessingTask: Timeout waiting for DoWork to complete"));
+        }
+        FPlatformProcess::ReturnSynchEventToPool(WorkCompletedEvent);
+        WorkCompletedEvent = nullptr;
     }
 
     // Invalidate progress guard so any in-flight callbacks won't attempt to call back into this object
@@ -67,6 +76,7 @@ void FBeatsyncProcessingTask::DoWork()
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Backend not loaded");
+        SignalWorkComplete();
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
@@ -89,6 +99,7 @@ void FBeatsyncProcessingTask::DoWork()
             FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
             FBeatsyncLoader::EndSpan(Span);
         }
+        SignalWorkComplete();
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
@@ -105,6 +116,7 @@ void FBeatsyncProcessingTask::DoWork()
             FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
             FBeatsyncLoader::EndSpan(Span);
         }
+        SignalWorkComplete();
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
@@ -122,6 +134,7 @@ void FBeatsyncProcessingTask::DoWork()
         Result.ErrorMessage = TEXT("Failed to analyze audio or no beats found");
         if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
         if (Span) FBeatsyncLoader::EndSpan(Span);
+        SignalWorkComplete();
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
@@ -145,6 +158,7 @@ void FBeatsyncProcessingTask::DoWork()
             FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
             FBeatsyncLoader::EndSpan(Span);
         }
+        SignalWorkComplete();
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
@@ -169,6 +183,7 @@ void FBeatsyncProcessingTask::DoWork()
         Result.ErrorMessage = TEXT("No beats after filtering");
         if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
         if (Span) FBeatsyncLoader::EndSpan(Span);
+        SignalWorkComplete();
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
@@ -184,6 +199,7 @@ void FBeatsyncProcessingTask::DoWork()
         Result.ErrorMessage = TEXT("Failed to create video writer");
         if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
         if (Span) FBeatsyncLoader::EndSpan(Span);
+        SignalWorkComplete();
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
@@ -240,6 +256,7 @@ void FBeatsyncProcessingTask::DoWork()
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
         TempVideoPath.Empty();
         if (Span) FBeatsyncLoader::EndSpan(Span);
+        SignalWorkComplete();
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
@@ -258,6 +275,7 @@ void FBeatsyncProcessingTask::DoWork()
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
         if (Span) { FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage); FBeatsyncLoader::EndSpan(Span); }
+        SignalWorkComplete();
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
@@ -299,6 +317,7 @@ void FBeatsyncProcessingTask::DoWork()
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
         if (Span) { FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage); FBeatsyncLoader::EndSpan(Span); }
+        SignalWorkComplete();
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
@@ -355,6 +374,7 @@ void FBeatsyncProcessingTask::DoWork()
 
     if (Span) FBeatsyncLoader::EndSpan(Span);
 
+    SignalWorkComplete();
     auto LocalOnComplete = OnComplete;
     AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
         LocalOnComplete.ExecuteIfBound(Result);

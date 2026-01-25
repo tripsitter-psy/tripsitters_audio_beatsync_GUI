@@ -340,6 +340,16 @@ void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
     }
 }
 
+bool FBeatsyncLoader::CutVideoAtBeats(void* writer, const FString& inputVideo, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration)
+{
+    if (!GApi.video_cut_at_beats) return false;
+
+    FTCHARToUTF8 inputConverter(*inputVideo);
+    FTCHARToUTF8 outputConverter(*outputVideo);
+    int res = GApi.video_cut_at_beats(writer, inputConverter.Get(), beatTimes.GetData(), (size_t)beatTimes.Num(), outputConverter.Get(), clipDuration);
+    return res == 0;
+}
+
 bool FBeatsyncLoader::CutVideoAtBeatsMulti(void* writer, const TArray<FString>& inputVideos, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration)
 {
     if (!GApi.video_cut_at_beats_multi) return false;
@@ -361,20 +371,24 @@ bool FBeatsyncLoader::CutVideoAtBeatsMulti(void* writer, const TArray<FString>& 
 
 void FBeatsyncLoader::SetEffectsConfig(void* writer, const FEffectsConfig& config)
 {
-    if (!GApi.video_set_effects) return;
+    if (!GApi.video_set_effects)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("FBeatsyncLoader::SetEffectsConfig: video_set_effects function not available"));
+        return;
+    }
 
-    // Create persistent converters for string fields - these RAII objects keep the
-    // ANSI buffers alive until after the API call completes
-    auto TransitionTypeAnsi = StringCast<ANSICHAR>(*config.TransitionType);
-    auto ColorPresetAnsi = StringCast<ANSICHAR>(*config.ColorPreset);
+    // Create persistent UTF-8 converters for string fields - these RAII objects keep the
+    // UTF8 buffers alive until after the API call completes
+    FTCHARToUTF8 TransitionTypeUtf8(*config.TransitionType);
+    FTCHARToUTF8 ColorPresetUtf8(*config.ColorPreset);
 
     bs_effects_config_t cfg;
 
     cfg.enableTransitions = config.bEnableTransitions ? 1 : 0;
-    cfg.transitionType = TransitionTypeAnsi.Get();
+    cfg.transitionType = TransitionTypeUtf8.Get();
     cfg.transitionDuration = config.TransitionDuration;
     cfg.enableColorGrade = config.bEnableColorGrade ? 1 : 0;
-    cfg.colorPreset = ColorPresetAnsi.Get();
+    cfg.colorPreset = ColorPresetUtf8.Get();
     cfg.enableVignette = config.bEnableVignette ? 1 : 0;
     cfg.vignetteStrength = config.VignetteStrength;
     cfg.enableBeatFlash = config.bEnableBeatFlash ? 1 : 0;
@@ -386,6 +400,10 @@ void FBeatsyncLoader::SetEffectsConfig(void* writer, const FEffectsConfig& confi
     cfg.effectEndTime = config.EffectEndTime;
 
     GApi.video_set_effects(writer, &cfg);
+
+    // Log the configuration for debugging
+    UE_LOG(LogTemp, Verbose, TEXT("FBeatsyncLoader::SetEffectsConfig: writer=%p, transitions=%d, vignette=%d, flash=%d, zoom=%d"),
+        writer, cfg.enableTransitions, cfg.enableVignette, cfg.enableBeatFlash, cfg.enableBeatZoom);
 }
 
 bool FBeatsyncLoader::ApplyEffects(void* writer, const FString& inputVideo, const FString& outputVideo, const TArray<double>& beatTimes)

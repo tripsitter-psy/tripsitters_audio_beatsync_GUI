@@ -283,6 +283,7 @@ void FBeatsyncProcessingTask::DoWork()
 
     if (!bSuccess)
     {
+        FString ErrorMsg = FBeatsyncLoader::GetVideoLastError(Writer);
         Result.bSuccess = false;
         Result.ErrorMessage = ErrorMsg.IsEmpty() ? TEXT("Failed to cut video") : ErrorMsg;
         if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
