@@ -351,6 +351,7 @@ struct OnnxStemSeparator::Impl {
                     fadeIn = static_cast<float>(i) / denom;
                 }
                 if (i >= segmentFrames - fadeLength) {
+                    // Use segmentFrames - 1 - i so fadeOut reaches 0 at the last sample
                     fadeOut = static_cast<float>(segmentFrames - 1 - i) / denom;
                 }
             }

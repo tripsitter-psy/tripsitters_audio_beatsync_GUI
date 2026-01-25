@@ -110,6 +110,16 @@ std::vector<double> detectBeatsFromWaveform(const std::vector<float>& samples, i
 
     int N = windowSize;
     int H = hopSize;
+    
+    // Validate windowSize against a reasonable memory ceiling
+    // 2^22 = 4,194,304 elements is a generous upper bound for FFT windows
+    // Prevents allocation of multi-gigabyte buffers from malicious input
+    constexpr int MAX_REASONABLE_FFT = 1 << 22;
+    int fftSize = nextPow2(N);
+    if (fftSize > MAX_REASONABLE_FFT) {
+         return beats;
+    }
+
     size_t numSamples = samples.size();
     size_t numFrames = (numSamples < static_cast<size_t>(N)) ? 0 : 1 + (numSamples - static_cast<size_t>(N)) / static_cast<size_t>(H);
     if (numFrames == 0) return beats;

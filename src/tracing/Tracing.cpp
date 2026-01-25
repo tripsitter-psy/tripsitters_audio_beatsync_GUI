@@ -120,7 +120,7 @@ void InitTracing(const std::string& outfile) {
             
             if (need_stop_flusher) {
                 // If we were in periodic mode, notify thread to wake up and exit
-                g_flush_thread_cv.notify_all();
+                g_flush_cv.notify_all();
                 if (g_flush_thread.joinable()) {
                     g_flush_thread.join();
                 }
@@ -131,6 +131,12 @@ void InitTracing(const std::string& outfile) {
                 local_out.reset();
             }
             lk.lock();
+            
+            // Re-check global state after re-acquiring lock (TOCTOU fix)
+            // If another thread initialized while we were unlocked, abort
+            if (g_out) {
+                 return; 
+            }
         }
     }
 

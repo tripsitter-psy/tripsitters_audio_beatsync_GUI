@@ -173,7 +173,18 @@ BEATSYNC_API void bs_span_add_event(bs_span_t span, const char* event);
 // ONNX AI Analysis (native neural network inference)
 // =============================================================================
 
-// AI progress callback with stage information
+// AI progress callback with stage information.
+// Parameters:
+//   progress  - Progress value from 0.0 to 1.0
+//   stage     - Current processing stage (e.g., "loading", "inference", "postprocess")
+//   message   - Human-readable status message
+//   user_data - User-provided context pointer passed to analysis functions
+// Returns:
+//   0         - Continue processing
+//   non-zero  - Cancel/abort analysis; the analysis function will return early with an error
+// Note: Callers implementing this callback should return 0 to continue, or any non-zero
+//       value to request cancellation. The analysis function will check this return value
+//       after each progress update and stop processing if non-zero.
 typedef int (*bs_ai_progress_cb)(float progress, const char* stage, const char* message, void* user_data);
 
 // AI analyzer configuration

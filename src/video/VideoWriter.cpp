@@ -855,10 +855,17 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
     exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
 #else
     std::string fullCmd = cmd.str() + " 2>&1";
+    
+    // RAII guard for diagLog to ensure it is closed on any return
+    struct ScopedLogClose {
+        FILE* log;
+        ~ScopedLogClose() { if (log) fclose(log); }
+    } logGuard{diagLog};
+
     FILE* pipe = popen_compat(fullCmd.c_str(), "r");
     if (!pipe) {
         m_lastError = "Failed to execute FFmpeg for video normalization";
-        if (diagLog) { fprintf(diagLog, "  ERROR: popen failed\n"); fclose(diagLog); }
+        if (diagLog) { fprintf(diagLog, "  ERROR: popen failed\n"); }
         return false;
     }
     char buffer[256];
@@ -866,6 +873,9 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
         ffmpegOutput += buffer;
     }
     exitCode = pclose_compat(pipe);
+    // Prevent RAII guard from closing diagLog here - we still need it after #endif
+    // diagLog will be closed manually at each exit point below
+    logGuard.log = nullptr;
 #endif
 
     if (diagLog) {
