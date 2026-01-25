@@ -29,8 +29,6 @@ rm -f "$GPU_LOG"
 NVPID=$!
 # Ensure the background GPU logger is cleaned up on exit/interrupt
 trap 'kill -TERM "${NVPID}" 2>/dev/null || true; wait "${NVPID}" 2>/dev/null || true' EXIT INT TERM
-# Ensure the background GPU logger is cleaned up on exit/interrupt
-trap 'kill -TERM "${NVPID}" 2>/dev/null || true; wait "${NVPID}" 2>/dev/null || true' EXIT INT TERM
 
 STDOUT_LOG="build/long_video_stdout.log"
 STDERR_LOG="build/long_video_stderr.log"

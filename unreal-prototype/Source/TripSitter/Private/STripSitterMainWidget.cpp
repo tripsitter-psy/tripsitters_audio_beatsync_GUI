@@ -1337,7 +1337,9 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateEffectsSection()
 				.Padding(0, 4, 0, 0)
 				[
 					SNew(SSlider)
-					.Value(FlashIntensity)
+					.Value_Lambda([this] { return FlashIntensity; })
+					.SliderBarColor(FLinearColor(0.3f, 0.3f, 0.3f))
+					.SliderHandleColor(NeonPurple)
 					.OnValueChanged_Lambda([this](float Value) {
 						FlashIntensity = Value;
 					})
@@ -1359,7 +1361,9 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateEffectsSection()
 				.Padding(0, 4, 0, 0)
 				[
 					SNew(SSlider)
-					.Value(ZoomIntensity)
+					.Value_Lambda([this] { return ZoomIntensity; })
+					.SliderBarColor(FLinearColor(0.3f, 0.3f, 0.3f))
+					.SliderHandleColor(NeonBlue)
 					.OnValueChanged_Lambda([this](float Value) {
 						ZoomIntensity = Value;
 					})
@@ -2551,7 +2555,7 @@ void STripSitterMainWidget::RecalculateBeatsFromBPM(double NewBPM)
 		AnalyzedBeatTimes.Add(CurrentTime);
 		CurrentTime += BeatInterval;
 		// Safety: prevent runaway loops (shouldn't happen but guard anyway)
-		if (AnalyzedBeatTimes.size() > 1000000) break;
+		if (AnalyzedBeatTimes.Num() > 1000000) break;
 	}
 
 	// If waveform already has beats displayed, update them
@@ -2636,9 +2640,9 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	Params.EffectsConfig.EffectBeatDivisor = 1 << static_cast<int32>(BeatRate);
 
 	// Map color preset index to string
-	if (ColorPresetOptions.IsValidIndex(ColorPreset))
+	if (ColorPresetOptions.IsValidIndex(ColorPresetIndex))
 	{
-		Params.EffectsConfig.ColorPreset = *ColorPresetOptions[ColorPreset];
+		Params.EffectsConfig.ColorPreset = *ColorPresetOptions[ColorPresetIndex];
 		FString Lower = Params.EffectsConfig.ColorPreset.ToLower();
 		Params.EffectsConfig.ColorPreset = Lower;
 	}

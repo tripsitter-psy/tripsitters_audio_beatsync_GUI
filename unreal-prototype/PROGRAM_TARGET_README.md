@@ -13,6 +13,10 @@ The project has been converted from a Game target to a Program target, which pro
 
 ## Prerequisites
 
+### Platform Compatibility
+**Note: These instructions are for Windows.** The provided PowerShell script (`Setup-Engine-Symlink.ps1`), paths (e.g., `C:\Program Files\Epic Games\UE_5.7\Engine`), and the target binary path (`Binaries/Win64/TripSitter.exe`) are specific to Windows.
+For macOS or Linux users, please check the repository root or relevant documentation for shell scripts (`.sh`) and appropriate Engine paths and build targets for your platform.
+
 ### 1. Engine Symlink Setup
 
 For Program targets with installed engines, you need to create an Engine symlink:

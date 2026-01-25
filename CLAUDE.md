@@ -415,6 +415,162 @@ if (sourceStart < 0.001) {  // Sub-millisecond = essentially zero
 
 **Files affected**: `VideoWriter.cpp` (multiple locations), `beatsync_capi.cpp`.
 
+### CRITICAL: Installer shows white blank window - missing Slate content
+**Symptom**: After installing the app, TripSitter.exe shows a window but it's completely white/blank. The taskbar icon appears and the window can be moved, but no UI renders.
+
+**Root cause**: The CMakeLists.txt was only installing `Engine/Content/Slate/Fonts` but NOT the essential `Slate/Common` folder which contains all UI brushes, textures, and visual elements required for Slate rendering.
+
+**Solution**: The CMakeLists.txt install section must include ALL essential Slate folders:
+```cmake
+# Install Slate content (required by UE5 Slate UI rendering)
+set(UE_SLATE_DIR "C:/UE5_Source/UnrealEngine/Engine/Content/Slate")
+if(EXISTS "${UE_SLATE_DIR}")
+    install(DIRECTORY "${UE_SLATE_DIR}/Common" DESTINATION "Engine/Content/Slate")
+    install(DIRECTORY "${UE_SLATE_DIR}/Fonts" DESTINATION "Engine/Content/Slate")
+    install(DIRECTORY "${UE_SLATE_DIR}/Cursor" DESTINATION "Engine/Content/Slate")
+    install(DIRECTORY "${UE_SLATE_DIR}/Old" DESTINATION "Engine/Content/Slate")
+    if(EXISTS "${UE_SLATE_DIR}/Checkerboard.png")
+        install(FILES "${UE_SLATE_DIR}/Checkerboard.png" DESTINATION "Engine/Content/Slate")
+    endif()
+endif()
+```
+
+**Required Slate folders**:
+- `Common` - UI brushes, backgrounds, borders (CRITICAL)
+- `Fonts` - Roboto, DroidSans, NotoSans fonts
+- `Cursor` - Mouse cursor textures
+- `Old` - Legacy brushes some widgets may reference
+- `Checkerboard.png` - Transparency indicator texture
+
+**Files affected**: `CMakeLists.txt` (install section around line 480).
+
+### CRITICAL: Black screen after install - Resources at wrong path
+**Symptom**: After installing the app, TripSitter.exe shows a black window with no UI content. Slate renders (window exists) but background/fonts/images are missing.
+
+**Root cause**: The CMakeLists.txt was installing resources (wallpaper.png, Corpta.otf, etc.) to `resources/` at the install root, but STripSitterMainWidget.cpp looks for them relative to the executable at `Engine/Binaries/Win64/Resources/`.
+
+**Widget code path resolution** (STripSitterMainWidget.cpp lines 87-115):
+
+```cpp
+FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
+FString ResourceDir = FPaths::Combine(ExeDir, TEXT("Resources"));
+FString WallpaperPath = FPaths::Combine(ResourceDir, TEXT("wallpaper.png"));
+```
+
+**Solution**: In CMakeLists.txt, the resource install destination MUST match where the widget looks:
+
+```cmake
+# WRONG - installs to C:\Program Files\MTV TripSitter\resources\
+install(FILES ... DESTINATION resources)
+
+# CORRECT - installs to C:\Program Files\MTV TripSitter\Engine\Binaries\Win64\Resources\
+install(FILES ... DESTINATION Engine/Binaries/Win64/Resources)
+```
+
+**Files affected**: `CMakeLists.txt` (install section around line 508).
+
+**Important**: After changing CMakeLists.txt install destinations, you MUST run `cmake -S . -B build ...` to reconfigure before running `cpack`. Otherwise the old cached install rules will be used.
+
+### CRITICAL: Use pre-packaged UE build for installer
+**Symptom**: Installed app shows black screen, missing UI, missing fonts, or crashes.
+
+**Root cause**: UE5 Program targets (like TripSitter.exe built from source) require extensive engine runtime files (725+ DLLs, shaders, cooked content) that are impractical to assemble manually.
+
+**Solution**: Use a pre-packaged UE build created by the UE packaging system. The CMakeLists.txt now installs from:
+
+```
+%USERPROFILE%\Desktop\TripSitterBuild\Windows\
+├── MyProject.exe         -> installed as TripSitter.exe (launcher)
+├── Engine/               -> Engine/ (runtime, ThirdParty DLLs, Slate, shaders)
+├── MyProject/            -> TripSitter/ (game binaries and cooked content)
+│   ├── Binaries/Win64/   -> Contains actual game exe and all DLLs
+│   └── Content/Paks/     -> Cooked game assets
+└── Manifest_*.txt        -> UE manifest files
+```
+
+**To create the pre-packaged build**:
+1. Open the TripSitter UE project in Unreal Editor
+2. Package for Windows (File > Package Project > Windows)
+3. Output to `%USERPROFILE%\Desktop\TripSitterBuild\Windows`
+
+**Files affected**: `CMakeLists.txt` (install section starting around line 379).
+
+## Streamlined Release Workflow
+
+The `scripts/build_release.ps1` script automates the entire build and package process.
+
+### Full Release Build (One Command)
+
+```powershell
+# Build everything: backend DLL, TripSitter.exe, installer, and ZIP
+.\scripts\build_release.ps1
+```
+
+### Stages
+
+The script runs these stages in order:
+
+1. **Stage 1: Build Backend DLL** - Compiles beatsync_backend_shared.dll with CUDA/TensorRT/AudioFlux support
+2. **Stage 2: Deploy DLLs** - Runs deploy_tripsitter.ps1 to copy all required DLLs to UE5 Binaries
+3. **Stage 3: Build TripSitter.exe** - Syncs source files and builds with UE5
+4. **Stage 4: Patch Application Icon** - Uses rcedit to replace the default UE icon with TripSitter.ico
+5. **Stage 5: Create NSIS Installer** - Generates the Windows installer
+6. **Stage 6: Create Portable ZIP** - Creates a portable archive
+
+### Quick Update Workflow
+
+When making code changes, use these flags to skip unchanged stages:
+
+```powershell
+# Backend code changed - rebuild DLL and repackage
+.\scripts\build_release.ps1 -SkipTripSitter
+
+# UI code changed - rebuild TripSitter.exe and repackage
+.\scripts\build_release.ps1 -SkipBackend
+
+# Just repackage (no code changes)
+.\scripts\build_release.ps1 -SkipBackend -SkipTripSitter
+
+# Preview what would be built without executing
+.\scripts\build_release.ps1 -DryRun
+```
+
+### Icon Patching
+
+The packaged UE build has the default Unreal Engine icon. Stage 4 uses **rcedit** to replace it with the custom TripSitter icon.
+
+**Install rcedit** (one-time setup):
+```powershell
+# Option 1: Via npm (recommended)
+npm install -g rcedit
+
+# Option 2: Download binary to tools/ folder
+# Download from: https://github.com/electron/rcedit/releases
+# Place rcedit.exe in BeatSyncEditor/tools/
+```
+
+If rcedit is not available, the build will continue but the app will have the default UE icon.
+
+### Prerequisites Checklist
+
+Before running the release script, ensure:
+
+- [ ] vcpkg submodule initialized (`git submodule update --init --recursive`)
+- [ ] UE5 Source build at `C:\UE5_Source\UnrealEngine`
+- [ ] Pre-packaged UE build at `%USERPROFILE%\Desktop\TripSitterBuild\Windows\`
+- [ ] AudioFlux installed at `C:\audioFlux` (optional, for Flux mode)
+- [ ] NSIS installed and in PATH (for installer creation)
+- [ ] rcedit installed (for custom icon)
+
+### Output Files
+
+After a successful build, find the outputs in `build/`:
+
+| File                                | Description              |
+|-------------------------------------|--------------------------|
+| `MTVTripSitter-*-Windows-AMD64.exe` | NSIS Installer (~1.5 GB) |
+| `MTVTripSitter-*-Windows-AMD64.zip` | Portable ZIP (~1.8 GB)   |
+
 ## Quick Reference
 
 ```powershell

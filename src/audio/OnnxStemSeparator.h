@@ -69,6 +69,16 @@ struct StemSeparationResult {
     /// Whether separation was cancelled by user
     bool cancelled = false;
 
+    /// Get a specific stem by StemType (convenience accessor)
+    const std::vector<float>& getStem(StemType stem) const {
+        return stems[static_cast<int>(stem)];
+    }
+
+    /// Get a specific stem by StemType (mutable version)
+    std::vector<float>& getStem(StemType stem) {
+        return stems[static_cast<int>(stem)];
+    }
+
     /// Get mono mix of a specific stem
     std::vector<float> getMonoStem(StemType stem) const {
         int stemIndex = static_cast<int>(stem);
@@ -124,7 +134,7 @@ using StemProgressCallback = std::function<bool(float progress, const std::strin
  *   OnnxStemSeparator separator;
  *   if (separator.loadModel("models/htdemucs.onnx")) {
  *       StemSeparationResult result = separator.separate(samples, sampleRate);
- *       // Use result.stems[StemType::Drums] for beat detection
+ *       // Use result.getStem(StemType::Drums) for beat detection
  *   }
  * @endcode
  */

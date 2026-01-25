@@ -43,13 +43,12 @@ struct OnnxMusicAnalyzer::Impl {
         config = cfg;
 
         // Load stem separator if path provided and enabled
-        std::string stemErrorMsg;
         if (cfg.useStemSeparation && !cfg.stemModelPath.empty()) {
             stemSeparator = std::make_unique<OnnxStemSeparator>();
             if (stemSeparator->loadModel(cfg.stemModelPath, cfg.stemConfig)) {
                 stemSeparatorLoaded = true;
             } else {
-                stemErrorMsg = "Failed to load stem separator: " + stemSeparator->getLastError();
+                debugLog("Failed to load stem separator: " + stemSeparator->getLastError());
                 stemSeparator = nullptr;
                 stemSeparatorLoaded = false;
                 // Continue without stem separation
@@ -74,11 +73,6 @@ struct OnnxMusicAnalyzer::Impl {
             return false;
         }
 
-        // Only set lastError if both failed; otherwise clear it
-        if (!beatDetectorLoaded) {
-            // lastError already set above for beat detector
-            return false;
-        }
         lastError.clear();
         return true;
     }
@@ -93,6 +87,9 @@ struct OnnxMusicAnalyzer::Impl {
     }
 
     std::vector<float> stereoToMono(const std::vector<float>& stereo) {
+        if (stereo.size() % 2 != 0) {
+            debugLog("[BeatSync] Warning: stereoToMono received odd-sized input, truncating");
+        }
         size_t numSamples = stereo.size() / 2;
         std::vector<float> mono(numSamples);
         for (size_t i = 0; i < numSamples; ++i) {
@@ -214,7 +211,12 @@ struct OnnxMusicAnalyzer::Impl {
         debugLog("[BeatSync] About to start beat detection stage");
 
         // Stage 2: Beat Detection
-        if (progress) progress(0.6f, "Beat Detection", "Analyzing rhythm...");
+        if (progress) {
+            if (!progress(0.6f, "Beat Detection", "Analyzing rhythm...")) {
+                lastError = "Beat detection cancelled by user.";
+                return result;
+            }
+        }
 
         debugLog("[BeatSync] Beat detection progress callback returned");
 
@@ -262,7 +264,12 @@ struct OnnxMusicAnalyzer::Impl {
         // Stage 3: Optional per-stem beat analysis
         // Note: result.rawStemResult is always populated if analyzePerStemBeats is enabled (see above)
         if (config.analyzePerStemBeats && result.stemSeparationUsed && !result.rawStemResult.stems[0].empty()) {
-            if (progress) progress(0.9f, "Per-Stem Analysis", "Analyzing individual stems...");
+            if (progress) {
+                if (!progress(0.9f, "Per-Stem Analysis", "Analyzing individual stems...")) {
+                    lastError = "Per-stem analysis cancelled by user.";
+                    return result;
+                }
+            }
 
             // Run beat detection on each stem
             for (int s = 0; s < 4; ++s) {

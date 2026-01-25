@@ -79,7 +79,7 @@ cmake --build build --config Release --target beatsync_backend_shared
 # Install TensorRT to C:\TensorRT-10.9.0.34
 
 # Configure with overlay triplet
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets
 
 # Build
 cmake --build build --config Release --target beatsync_backend_shared

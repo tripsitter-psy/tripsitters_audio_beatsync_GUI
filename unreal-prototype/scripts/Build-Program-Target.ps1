@@ -45,7 +45,16 @@ if (-not (Test-Path $UEPath)) {
         $commonFolders = @()
         foreach ($parent in $parentDirs) {
             if (Test-Path $parent) {
-                $found = Get-ChildItem -Path $parent -Directory -Filter 'UE_*' | Sort-Object Name -Descending | Select-Object -ExpandProperty FullName
+                # Sort by numeric version (e.g., UE_5.10 > UE_5.9) instead of lexical
+                $found = Get-ChildItem -Path $parent -Directory -Filter 'UE_*' | Sort-Object {
+                    $versionStr = $_.Name -replace '^UE_', ''
+                    try {
+                        [System.Version]::Parse($versionStr)
+                    } catch {
+                        # Fallback for non-standard version formats
+                        [System.Version]::new(0, 0)
+                    }
+                } -Descending | Select-Object -ExpandProperty FullName
                 if ($found) {
                     $commonFolders += $found
                 }
@@ -135,8 +144,11 @@ $proc.BeginErrorReadLine()
 $timeoutMillis = 1800000
 if (-not $proc.WaitForExit($timeoutMillis)) {
     Write-Host "ERROR: Build process timed out after $($timeoutMillis/60000) minutes. Killing process..." -ForegroundColor Red
+    Write-Host "See log: $LogPath" -ForegroundColor Red
     $proc.Kill()
     $proc.WaitForExit()
+    # Exit immediately with non-zero code - don't rely on $proc.ExitCode after kill
+    exit 1
 }
 
 Write-Host $script:stdout

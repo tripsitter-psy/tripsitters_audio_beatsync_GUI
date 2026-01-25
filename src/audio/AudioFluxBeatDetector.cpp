@@ -219,8 +219,10 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
     // For a 6-minute track at 22050Hz with hop=512, we need ~128MB
     // Allow up to 500MB for tracks up to ~25 minutes
     const size_t maxBufferSize = 500 * 1024 * 1024; // 500MB max
-    size_t bufferSize = static_cast<size_t>(numFrames) * static_cast<size_t>(fftLength) * sizeof(float);
-    std::cerr << "[AudioFlux] Buffer size needed: " << bufferSize << " bytes (" << numFrames << " frames x " << fftLength << " bins)" << std::endl;
+    
+    // Each of stftReal and stftImag needs numFrames * fftLength floats
+    size_t bufferSize = 2 * static_cast<size_t>(numFrames) * static_cast<size_t>(fftLength) * sizeof(float);
+    std::cerr << "[AudioFlux] Buffer size needed: " << bufferSize << " bytes (" << numFrames << " frames x " << fftLength << " bins x 2 buffers)" << std::endl;
 
     if (bufferSize > maxBufferSize) {
         stftObj_free(stftObj);

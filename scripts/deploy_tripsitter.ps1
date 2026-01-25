@@ -20,13 +20,15 @@ $AUDIOFLUX = "C:\audioFlux\build\windowBuild\Release"
 
 # Define expected DLLs with minimum sizes (to catch wrong versions)
 $RequiredDLLs = @{
-    # From build/Release (ONNX and dependencies)
+    # From build/Release (Project Output)
     "beatsync_backend_shared.dll" = @{ Source = $BUILD_RELEASE; MinSize = 300KB }
-    "onnxruntime.dll"             = @{ Source = $BUILD_RELEASE; MinSize = 13MB }
-    "abseil_dll.dll"              = @{ Source = $BUILD_RELEASE; MinSize = 1MB }
-    "libprotobuf.dll"             = @{ Source = $BUILD_RELEASE; MinSize = 10MB }
-    "libprotobuf-lite.dll"        = @{ Source = $BUILD_RELEASE; MinSize = 1MB }
-    "re2.dll"                     = @{ Source = $BUILD_RELEASE; MinSize = 1MB }
+
+    # From vcpkg bin (ONNX and dependencies - explicit path to avoid build/Release mixing)
+    "onnxruntime.dll"             = @{ Source = $VCPKG_BIN; MinSize = 13MB }
+    "abseil_dll.dll"              = @{ Source = $VCPKG_BIN; MinSize = 1MB }
+    "libprotobuf.dll"             = @{ Source = $VCPKG_BIN; MinSize = 10MB }
+    "libprotobuf-lite.dll"        = @{ Source = $VCPKG_BIN; MinSize = 1MB }
+    "re2.dll"                     = @{ Source = $VCPKG_BIN; MinSize = 1MB }
 
     # From vcpkg bin (GPU providers)
     "onnxruntime_providers_shared.dll" = @{ Source = $VCPKG_BIN; MinSize = 10KB }
@@ -166,7 +168,13 @@ foreach ($group in $copyOrder) {
         # Verify source file size
         if (-not (Test-DLLSize $sourcePath $minSize)) {
             $actualSize = (Get-Item $sourcePath).Length
-            Write-Host "  [WARN] $dll - Source file smaller than expected ($([math]::Round($actualSize/1MB, 2))MB < $minSize)" -ForegroundColor Yellow
+            if ($isOptional) {
+                Write-Host "  [WARN] $dll - Source file smaller than expected ($([math]::Round($actualSize/1MB, 2))MB < $minSize)" -ForegroundColor Yellow
+            } else {
+                 Write-Host "  [ERROR] $dll - Source file smaller than expected ($([math]::Round($actualSize/1MB, 2))MB < $minSize). Check if the correct library is installed." -ForegroundColor Red
+                 $allOk = $false
+                 continue
+            }
         }
 
         if ($DryRun) {

@@ -318,7 +318,8 @@ jobs:
             if (Test-Path $dirPath) {
               Write-Host "[OK] Required directory exists: $dir" -ForegroundColor Green
             } else {
-              Write-Warning "Required directory missing: $dir"
+              Write-Error "Required directory missing: $dir"
+              exit 1
             }
           }
 
@@ -439,6 +440,7 @@ jobs:
               Write-Host "[OK] $dll ($size MB)" -ForegroundColor Green
             } else {
               Write-Error "Required DLL missing: $dll"
+              exit 1
             }
           }
 

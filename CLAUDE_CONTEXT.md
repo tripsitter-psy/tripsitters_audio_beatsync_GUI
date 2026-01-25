@@ -28,7 +28,7 @@ A beat-synced video editor with:
 
 ```powershell
 # Backend (with TensorRT)
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets
 cmake --build build --config Release --target beatsync_backend_shared
 
 # TripSitter

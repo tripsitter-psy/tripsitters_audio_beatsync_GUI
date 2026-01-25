@@ -92,14 +92,10 @@ void FBeatsyncProcessingTask::DoWork()
         {
             BeatGrid.Duration = Params.AudioEnd - Params.AudioStart;
         }
-        else if (Params.PreAnalyzedBeatTimes.Num() > 0)
+        else
         {
             // Use last beat time + 1 second as duration estimate
             BeatGrid.Duration = Params.PreAnalyzedBeatTimes.Last() + 1.0;
-        }
-        else
-        {
-            BeatGrid.Duration = 0.0;
         }
 
         bSuccess = true;
@@ -505,7 +501,7 @@ void FBeatsyncProcessingTask::DoWork()
         return;
     }
 
-    if (bCancelRequested)
+    if (IsCancelled())
     {
         FBeatsyncLoader::SetProgressCallback(Writer, nullptr);  // Clear callback before destroy to prevent UAF
         FBeatsyncLoader::DestroyVideoWriter(Writer);

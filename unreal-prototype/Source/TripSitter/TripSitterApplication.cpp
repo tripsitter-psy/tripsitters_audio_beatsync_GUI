@@ -73,7 +73,10 @@ void FTripSitterApplication::Shutdown()
     }
 
     // Now shutdown Slate application
-    FSlateApplication::Shutdown();
+    if (FSlateApplication::IsInitialized())
+    {
+        FSlateApplication::Shutdown();
+    }
 }
 
 TSharedPtr<SWindow> FTripSitterApplication::CreateMainWindow()

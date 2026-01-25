@@ -6,6 +6,7 @@
 
 #include <valarray>
 #include <utility> // for std::swap
+#include <climits> // for INT_MAX
 
 static const double PI = 3.14159265358979323846;
 
@@ -19,12 +20,19 @@ static const double PI = 3.14159265358979323846;
 
 namespace BeatSync {
 
-// Helper: next power of two
+// Helper: next power of two (with overflow protection)
 static int nextPow2(int v) {
     // Defensive guard: return a sensible power-of-two for non-positive inputs
     if (v <= 0) return 1;
+
+    // Cap to prevent overflow: 1 << 30 = 1073741824 (largest safe power-of-two for signed 32-bit int)
+    constexpr int MAX_SAFE_POW2 = 1 << 30;
+    if (v > MAX_SAFE_POW2) return MAX_SAFE_POW2;
+
     int p = 1;
-    while (p < v) p <<= 1;
+    while (p < v && p <= (INT_MAX >> 1)) {
+        p <<= 1;
+    }
     return p;
 }
 

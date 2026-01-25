@@ -152,7 +152,7 @@ static FBeatsyncApi GApi;
 static TMap<void*, TUniquePtr<TFunction<void(double)>>> GProgressCallbacks;
 static FCriticalSection GProgressCallbacksLock;
 static std::atomic<int> GActiveProgressCallbacks{0};
-static FEvent* GProgressCallbacksEvent = FPlatformProcess::GetSynchEventFromPool(true);
+static FEvent* GProgressCallbacksEvent = nullptr;
 
 static void StaticProgressCallback(double Progress, void* UserData)
 {
@@ -179,6 +179,10 @@ static void StaticProgressCallback(double Progress, void* UserData)
 
 bool FBeatsyncLoader::Initialize()
 {
+    if (!GProgressCallbacksEvent) {
+        GProgressCallbacksEvent = FPlatformProcess::GetSynchEventFromPool(true);
+    }
+
     if (GApi.DllHandle) return true;
 
     FString Filename;
@@ -337,17 +341,35 @@ bool FBeatsyncLoader::Initialize()
 
 void FBeatsyncLoader::Shutdown()
 {
+    FEvent* LocalEvent = nullptr;
     {
         FScopeLock Lock(&GProgressCallbacksLock);
         GProgressCallbacks.Empty();
+        // Atomically grab the event and remove global reference so no one else can touch it
+        LocalEvent = GProgressCallbacksEvent;
+        GProgressCallbacksEvent = nullptr;
     }
+    
     // Wait for any in-flight callbacks to finish (with timeout to prevent indefinite hangs)
-    if (GActiveProgressCallbacks.load() > 0 && GProgressCallbacksEvent) {
+    if (GActiveProgressCallbacks.load() > 0 && LocalEvent) {
         constexpr uint32 TimeoutMs = 5000; // 5 second timeout
-        if (!GProgressCallbacksEvent->Wait(TimeoutMs)) {
+        constexpr uint32 LoopMs = 10;
+        uint32 ElapsedMs = 0;
+        
+        while (GActiveProgressCallbacks.load() > 0 && ElapsedMs < TimeoutMs) {
+            LocalEvent->Wait(LoopMs);
+            ElapsedMs += LoopMs;
+        }
+
+        if (GActiveProgressCallbacks.load() > 0) {
             UE_LOG(LogTemp, Warning, TEXT("Timeout waiting for progress callbacks to complete during shutdown"));
         }
     }
+
+    if (LocalEvent) {
+        FPlatformProcess::ReturnSynchEventToPool(LocalEvent);
+    }
+
     if (GApi.DllHandle) {
         FPlatformProcess::FreeDllHandle(GApi.DllHandle);
         GApi = FBeatsyncApi();
@@ -571,7 +593,8 @@ bool FBeatsyncLoader::ConcatenateVideos(const TArray<FString>& Inputs, const FSt
     int Result = GApi.video_concatenate(InputPtrsStable.GetData(), InputPtrsStable.Num(), UTF8Output.Get());
     return Result == 0;
 }
-
+FTCHARToUTF8 Utf8(*FilePath);
+    int Result = GApi.get_waveform(Analyzer, Utf8.Get(
 bool FBeatsyncLoader::GetWaveform(void* Analyzer, const FString& FilePath, TArray<float>& OutPeaks, double& OutDuration)
 {
     if (!GApi.get_waveform) {
@@ -632,7 +655,8 @@ bool FBeatsyncLoader::GetWaveformBands(void* Analyzer, const FString& FilePath,
     UE_LOG(LogTemp, Log, TEXT("TripSitter: Loading frequency-band waveform from: %s"), *FilePath);
 
     bs_waveform_bands_t Bands = {};
-
+FTCHARToUTF8 Utf8(*FilePath);
+    int Result = GApi.get_waveform_bands(Analyzer, Utf8.Get(
     int Result = GApi.get_waveform_bands(Analyzer, TCHAR_TO_UTF8(*FilePath), &Bands);
 
     UE_LOG(LogTemp, Log, TEXT("TripSitter: get_waveform_bands returned %d, Count=%llu, Duration=%.2f"),
@@ -850,7 +874,8 @@ void FBeatsyncLoader::DestroyAIAnalyzer(void* Handle)
 bool FBeatsyncLoader::AIAnalyzeFile(void* Analyzer, const FString& FilePath, FAIResult& OutResult)
 {
     if (!GApi.ai_analyze_file || !Analyzer) return false;
-
+FTCHARToUTF8 Utf8(*FilePath);
+    int Result = GApi.ai_analyze_file(Analyzer, Utf8.Get(
     bs_ai_result_t CResult = {};
     int Result = GApi.ai_analyze_file(Analyzer, TCHAR_TO_UTF8(*FilePath), &CResult, nullptr, nullptr);
 
@@ -884,7 +909,8 @@ bool FBeatsyncLoader::AIAnalyzeFile(void* Analyzer, const FString& FilePath, FAI
 bool FBeatsyncLoader::AIAnalyzeQuick(void* Analyzer, const FString& FilePath, FAIResult& OutResult)
 {
     if (!GApi.ai_analyze_quick || !Analyzer) return false;
-
+FTCHARToUTF8 Utf8(*FilePath);
+    int Result = GApi.ai_analyze_quick(Analyzer, Utf8.Get(
     bs_ai_result_t CResult = {};
     int Result = GApi.ai_analyze_quick(Analyzer, TCHAR_TO_UTF8(*FilePath), &CResult, nullptr, nullptr);
 
@@ -1084,7 +1110,8 @@ bool FBeatsyncLoader::AudioFluxAnalyze(const FString& FilePath, FAIResult& OutRe
     }
 
     UE_LOG(LogTemp, Log, TEXT("AudioFlux: Starting analysis of %s"), *FilePath);
-
+FTCHARToUTF8 Utf8(*FilePath);
+    int Result = GApi.audioflux_analyze(Utf8.Get(
     bs_ai_result_t CResult = {};
     UE_LOG(LogTemp, Log, TEXT("AudioFlux: Calling bs_audioflux_analyze..."));
     int Result = GApi.audioflux_analyze(TCHAR_TO_UTF8(*FilePath), &CResult, nullptr, nullptr);

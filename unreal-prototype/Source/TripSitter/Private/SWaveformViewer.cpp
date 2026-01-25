@@ -910,7 +910,6 @@ FCursorReply SWaveformViewer::OnCursorQuery(const FGeometry& MyGeometry, const F
 
 	FVector2D LocalPos = MyGeometry.AbsoluteToLocal(CursorEvent.GetScreenSpacePosition());
 	float Width = MyGeometry.GetLocalSize().X;
-	float Height = MyGeometry.GetLocalSize().Y;
 	const float RulerHeight = 24.0f;
 
 	// Check if hovering over a beat marker (in waveform area, not ruler, tight 5px tolerance)

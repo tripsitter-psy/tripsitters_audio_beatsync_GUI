@@ -603,9 +603,11 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
                                               const char* outputVideo, double clipDuration) {
     TRACE_FUNC();
 
-    // File-based logging for diagnostics - MUST be first thing to catch all issues
+    // File-based logging for diagnostics - MULTI VIDEO PATH
+    // Declare outside #ifdef so references compile in all builds
     std::string logPath;
     FILE* logFile = nullptr;
+#ifdef ENABLE_BS_DEBUG_LOG
 #ifdef _WIN32
     wchar_t tempPath[MAX_PATH + 1];
     if (GetTempPathW(MAX_PATH + 1, tempPath) > 0) {
@@ -624,6 +626,7 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
             fflush(logFile);
         }
     }
+#endif
 
     if (!writer || !inputVideos || !beatTimes || !outputVideo || videoCount == 0 || beatCount == 0) {
         s_lastError = "Invalid parameters to bs_video_cut_at_beats_multi";
@@ -980,8 +983,10 @@ BEATSYNC_API int bs_video_normalize_sources(void* writer, const char** inputVide
     TRACE_FUNC();
 
     // File-based logging for diagnostics - NORMALIZE
+    // Declare outside #ifdef so references compile in all builds
     std::string logPath;
     FILE* logFile = nullptr;
+#ifdef ENABLE_BS_DEBUG_LOG
 #ifdef _WIN32
     wchar_t tempPath[MAX_PATH + 1];
     if (GetTempPathW(MAX_PATH + 1, tempPath) > 0) {
@@ -999,6 +1004,7 @@ BEATSYNC_API int bs_video_normalize_sources(void* writer, const char** inputVide
             fflush(logFile);
         }
     }
+#endif
 
     if (!writer || !inputVideos || !normalizedPaths || videoCount == 0 || pathBufferSize == 0) {
         if (logFile) {

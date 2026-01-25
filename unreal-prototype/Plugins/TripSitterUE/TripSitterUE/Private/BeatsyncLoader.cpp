@@ -16,6 +16,7 @@ struct FBeatsyncLoader::CallbackData
 // The trampoline can hold a TSharedPtr copy to keep data alive during callback execution
 static TMap<void*, TSharedPtr<FBeatsyncLoader::CallbackData>> GCallbackStorage;
 static FCriticalSection GCallbackStorageMutex;
+static FCriticalSection GInitMutex;
 
 // Function pointer types
 using bs_resolve_ffmpeg_path_t = const char* (*)();
@@ -85,6 +86,7 @@ static FBeatsyncApi GApi;
 
 bool FBeatsyncLoader::Initialize()
 {
+    FScopeLock Lock(&GInitMutex);
     if (GApi.DllHandle) return true;
 
     // Expected locations (platform-aware):
@@ -181,9 +183,11 @@ bool FBeatsyncLoader::Initialize()
 
 void FBeatsyncLoader::Shutdown()
 {
+    FScopeLock Lock(&GInitMutex);
+
     // Clear all callback data to prevent leaks
     {
-        FScopeLock Lock(&GCallbackStorageMutex);
+        FScopeLock CallbackLock(&GCallbackStorageMutex);
         GCallbackStorage.Empty();
     }
 
@@ -211,7 +215,8 @@ void* FBeatsyncLoader::CreateAnalyzer()
     return GApi.create_analyzer();
 }
 
-void FBeatsyncLoader::DestroyAnalyzer(void* handle)
+void FBeahandle) return;
+    if (!tsyncLoader::DestroyAnalyzer(void* handle)
 {
     if (!GApi.destroy_analyzer) return;
     GApi.destroy_analyzer(handle);
@@ -240,7 +245,8 @@ void FBeatsyncLoader::DestroyVideoWriter(void* writer)
 }
 
 bool FBeatsyncLoader::AnalyzeAudio(void* handle, const FString& path, FBeatGrid& outGrid)
-{
+{handle) return false;
+    if (!
     if (!GApi.analyze_audio) return false;
 
     // Prepare C beatgrid

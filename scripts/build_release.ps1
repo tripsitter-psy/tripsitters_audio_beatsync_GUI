@@ -71,7 +71,7 @@ $AudioFluxRoot = "C:\audioFlux"
 # Colors for output
 function Write-Step { param($msg) Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 function Write-Success { param($msg) Write-Host "[OK] $msg" -ForegroundColor Green }
-function Write-Warning { param($msg) Write-Host "[WARN] $msg" -ForegroundColor Yellow }
+function Write-Warn { param($msg) Write-Host "[WARN] $msg" -ForegroundColor Yellow }
 function Write-Err { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
 # Banner
@@ -115,7 +115,7 @@ if (-not $SkipTripSitter) {
 # Check for NSIS
 $makensis = Get-Command makensis -ErrorAction SilentlyContinue
 if (-not $makensis -and -not $SkipInstaller) {
-    Write-Warning "NSIS not found - installer will not be created"
+    Write-Warn "NSIS not found - installer will not be created"
     $SkipInstaller = $true
 }
 
@@ -171,20 +171,20 @@ $ContinueOnDeployFailure = $false
 $deployScript = Join-Path $ScriptDir "deploy_tripsitter.ps1"
 if (Test-Path $deployScript) {
     if ($DryRun) {
-        Write-Host "Would run: $deployScript" -ForegroundColor Yellow
+        Write-Host "Would run: $deployScript -DryRun" -ForegroundColor Yellow
     } else {
-        & $deployScript
+        $deployArgs = @()
+        if ($DryRun) { $deployArgs += "-DryRun" }
+        & $deployScript @deployArgs
         if ($LASTEXITCODE -ne 0) {
-            Write-Warning "DLL deployment had issues - check output above"
-            if (-not $ContinueOnDeployFailure) {
-                exit $LASTEXITCODE
-            }
+            Write-Warn "DLL deployment had issues - check output above"
+            exit $LASTEXITCODE
         } else {
             Write-Success "DLLs deployed successfully"
         }
     }
 } else {
-    Write-Warning "deploy_tripsitter.ps1 not found - skipping DLL deployment"
+    Write-Warn "deploy_tripsitter.ps1 not found - skipping DLL deployment"
 }
 
 # Stage 3: Build TripSitter.exe
@@ -206,10 +206,10 @@ if (-not $SkipTripSitter) {
     # Build with UE5
     $ueBuildBat = Join-Path $UE5Root "Engine\Build\BatchFiles\Build.bat"
     if ($DryRun) {
-        Write-Host "Would run: $ueBuildBat TripSitter Win64 Development" -ForegroundColor Yellow
+        Write-Host "Would run: $ueBuildBat TripSitter Win64 $Configuration" -ForegroundColor Yellow
     } else {
         Write-Host "Building TripSitter with Unreal Engine (this may take a while)..." -ForegroundColor DarkGray
-        & $ueBuildBat TripSitter Win64 Development
+        & $ueBuildBat TripSitter Win64 $Configuration
         if ($LASTEXITCODE -ne 0) {
             Write-Err "TripSitter build failed"
             exit 1
@@ -233,9 +233,49 @@ if (-not $SkipTripSitter) {
     }
 }
 
-# Stage 4: Create Installer
+# Stage 4: Patch Application Icon
+Write-Step "Stage 4: Patching Application Icon"
+
+$IconFile = Join-Path $ProjectRoot "unreal-prototype\Source\TripSitter\Resources\TripSitter.ico"
+$PackagedExe = "$env:USERPROFILE\Desktop\TripSitterBuild\Windows\TripSitter\Binaries\Win64\MyProject.exe"
+
+if (Test-Path $IconFile) {
+    if (Test-Path $PackagedExe) {
+        # Check for rcedit
+        $rcedit = Get-Command rcedit -ErrorAction SilentlyContinue
+        if (-not $rcedit) {
+            $rcedit = Get-Command "rcedit.exe" -ErrorAction SilentlyContinue
+        }
+        if (-not $rcedit -and (Test-Path "$ProjectRoot\tools\rcedit.exe")) {
+            $rcedit = "$ProjectRoot\tools\rcedit.exe"
+        }
+
+        if ($rcedit) {
+            if ($DryRun) {
+                Write-Host "Would run: rcedit `"$PackagedExe`" --set-icon `"$IconFile`"" -ForegroundColor Yellow
+            } else {
+                Write-Host "Patching icon in packaged exe..." -ForegroundColor DarkGray
+                & $rcedit $PackagedExe --set-icon $IconFile
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Success "Application icon patched successfully"
+                } else {
+                    Write-Warn "Icon patching failed - app will have default UE icon"
+                }
+            }
+        } else {
+            Write-Warn "rcedit not found - install via 'npm install -g rcedit' or place rcedit.exe in tools/"
+            Write-Host "  App will have default UE icon until rcedit is available" -ForegroundColor DarkGray
+        }
+    } else {
+        Write-Warn "Packaged exe not found at $PackagedExe - skipping icon patch"
+    }
+} else {
+    Write-Warn "Icon file not found at $IconFile"
+}
+
+# Stage 5: Create Installer
 if (-not $SkipInstaller) {
-    Write-Step "Stage 4: Creating NSIS Installer"
+    Write-Step "Stage 5: Creating NSIS Installer"
 
     if ($DryRun) {
         Write-Host "Would run: cpack -C $Configuration -G NSIS (in $BuildDir)" -ForegroundColor Yellow
@@ -262,12 +302,12 @@ if (-not $SkipInstaller) {
         }
     }
 } else {
-    Write-Step "Stage 4: Skipping Installer"
+    Write-Step "Stage 5: Skipping Installer"
 }
 
-# Stage 5: Create Portable ZIP
+# Stage 6: Create Portable ZIP
 if (-not $SkipZip) {
-    Write-Step "Stage 5: Creating Portable ZIP"
+    Write-Step "Stage 6: Creating Portable ZIP"
 
     if ($DryRun) {
         Write-Host "Would run: cpack -C $Configuration -G ZIP (in $BuildDir)" -ForegroundColor Yellow
@@ -293,7 +333,7 @@ if (-not $SkipZip) {
         }
     }
 } else {
-    Write-Step "Stage 5: Skipping ZIP"
+    Write-Step "Stage 6: Skipping ZIP"
 }
 
 # Summary

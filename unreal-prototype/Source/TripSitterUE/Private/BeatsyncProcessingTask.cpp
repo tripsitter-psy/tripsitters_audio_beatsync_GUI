@@ -259,10 +259,26 @@ void FBeatsyncProcessingTask::DoWork()
 
     // Create temp files in system temp directory (not next to output)
     FString TempDir = FPaths::Combine(FPlatformProcess::UserTempDir(), TEXT("TripSitter"));
-    
+
     // Ensure the TripSitter temp directory exists
-    IFileManager::Get().MakeDirectory(*TempDir, true);
-    
+    if (!IFileManager::Get().MakeDirectory(*TempDir, true))
+    {
+        UE_LOG(LogTemp, Error, TEXT("TripSitter: Failed to create temp directory: %s"), *TempDir);
+        Result.bSuccess = false;
+        Result.ErrorMessage = FString::Printf(TEXT("Failed to create temp directory: %s"), *TempDir);
+        if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
+        if (Span) FBeatsyncLoader::EndSpan(Span);
+        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
+        FBeatsyncLoader::DestroyVideoWriter(Writer);
+        Writer = nullptr;
+        auto LocalOnComplete = OnComplete;
+        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+            LocalOnComplete.ExecuteIfBound(Result);
+        });
+        bWorkCompleted.AtomicSet(true);
+        return;
+    }
+
     // Generate unique temp filenames using GUID
     FString TempBaseName = FString::Printf(TEXT("temp_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     FString TempVideoPath = FPaths::Combine(TempDir, TempBaseName + TEXT("_video.mp4"));
@@ -334,6 +350,9 @@ void FBeatsyncProcessingTask::DoWork()
         if (bSuccess)
         {
             IFileManager::Get().Delete(*CurrentVideoPath, false, true, true);
+            // Clear TempVideoPath since we just deleted it (CurrentVideoPath was pointing to TempVideoPath)
+            // This prevents double-delete in later cleanup logic
+            TempVideoPath.Empty();
             CurrentVideoPath = TempEffectsPath;
             TempEffectsPath.Empty();
         }

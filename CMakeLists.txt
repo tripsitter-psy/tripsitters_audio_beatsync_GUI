@@ -3,6 +3,11 @@ cmake_minimum_required(VERSION 3.15)
 # Copyright years for installer and metadata
 set(PROJECT_COPYRIGHT_YEARS "2024-2026")
 
+# Prevent vcpkg from copying DLLs (especially incompatible FFmpeg versions) to build output
+# We perform explicit deployment using scripts/deploy_tripsitter.ps1 from dedicated directories
+if(WIN32)
+    set(VCPKG_APPLOCAL_DEPS OFF CACHE BOOL "Disable vcpkg app-local deployment" FORCE)
+endif()
 
 project(TripSitterBeatSync)
 
@@ -27,7 +32,14 @@ set(AUDIOFLUX_FFTW_DLL "" CACHE PATH "AudioFlux FFTW3 DLL path")
 if(DEFINED ENV{TRIPSITTER_EXE_PATH})
     set(TRIPSITTER_EXE_PATH "$ENV{TRIPSITTER_EXE_PATH}" CACHE FILEPATH "Path to TripSitter.exe")
 else()
-    set(TRIPSITTER_EXE_PATH "C:/UE5_Source/UnrealEngine/Engine/Binaries/Win64/TripSitter.exe" CACHE FILEPATH "Path to TripSitter.exe")
+    find_program(TRIPSITTER_EXE_PATH TripSitter.exe
+        HINTS
+        "C:/UE5_Source/UnrealEngine/Engine/Binaries/Win64"
+        DOC "Path to TripSitter.exe"
+    )
+    if(NOT TRIPSITTER_EXE_PATH)
+        message(FATAL_ERROR "TripSitter.exe not found. Please set TRIPSITTER_EXE_PATH variable or export TRIPSITTER_EXE_PATH environment variable to point to the executable.")
+    endif()
 endif()
 
 # Configure NSIS installer template (run after BEATSYNC_VERSION is set so substitutions work)
@@ -101,6 +113,8 @@ if(BEATSYNC_BUILD_SHARED AND (WIN32 OR APPLE OR UNIX))
         # macOS destination
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/Mac"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:beatsync_backend_shared>" "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/Mac/"
+        # Validate that project output does not contain prohibited DLLs (e.g. FFmpeg)
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_SOURCE_DIR}/scripts/check_no_ffmpeg.ps1" -ReleaseDir "$<TARGET_FILE_DIR:beatsync_backend_shared>"
     )
 
 endif()
@@ -376,129 +390,104 @@ set_target_properties(beatsync PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
 )
 
-# Install AI tools if they exist (bundled executables for beat detection)
-# These are built separately with PyInstaller - see scripts/build_ai_tools.py
-if(EXISTS "${CMAKE_SOURCE_DIR}/scripts/dist/beatnet_analyze.exe")
-    install(PROGRAMS "${CMAKE_SOURCE_DIR}/scripts/dist/beatnet_analyze.exe" DESTINATION ai_tools)
-endif()
-if(EXISTS "${CMAKE_SOURCE_DIR}/scripts/dist/demucs_separate.exe")
-    install(PROGRAMS "${CMAKE_SOURCE_DIR}/scripts/dist/demucs_separate.exe" DESTINATION ai_tools)
-endif()
+# =============================================================================
+# INSTALLATION FROM PRE-PACKAGED UE BUILD
+# =============================================================================
+# Use the pre-packaged Unreal Engine build which includes all cooked content,
+# shaders, and engine dependencies. This is more reliable than piecing together
+# files from the UE source tree.
 
-
-# Use UE5 folder structure so TripSitter.exe can find ICU data
-set(UE_BIN_DIR "Engine/Binaries/Win64")
-
-# Install TripSitter.exe (main GUI - built separately by Unreal Engine)
-if(EXISTS "${TRIPSITTER_EXE_PATH}")
-    install(PROGRAMS "${TRIPSITTER_EXE_PATH}" DESTINATION "${UE_BIN_DIR}")
-    message(STATUS "TripSitter.exe found at ${TRIPSITTER_EXE_PATH} - will be included in installer")
+if(DEFINED ENV{UE_PACKAGED_BUILD})
+    set(UE_PACKAGED_BUILD "$ENV{UE_PACKAGED_BUILD}" CACHE PATH "Path to packaged build")
 else()
-    message(WARNING "TripSitter.exe not found at ${TRIPSITTER_EXE_PATH} - installer will be incomplete")
+    set(UE_PACKAGED_BUILD "" CACHE PATH "Path to packaged build")
 endif()
 
-# Install beatsync backend DLL
-if(TARGET beatsync_backend_shared)
-    install(TARGETS beatsync_backend_shared
-        RUNTIME DESTINATION "${UE_BIN_DIR}"
-        LIBRARY DESTINATION "${UE_BIN_DIR}"
+if(UE_PACKAGED_BUILD AND EXISTS "${UE_PACKAGED_BUILD}/MyProject.exe")
+    message(STATUS "Pre-packaged UE build found at ${UE_PACKAGED_BUILD}")
+
+    # Install root launcher
+    install(PROGRAMS "${UE_PACKAGED_BUILD}/MyProject.exe"
+        DESTINATION "."
+        RENAME "TripSitter.exe"
     )
-endif()
 
-# Install all required DLLs from ThirdParty folder
-set(THIRDPARTY_DLL_DIR "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64")
-if(EXISTS "${THIRDPARTY_DLL_DIR}")
-    # FFmpeg DLLs
-    file(GLOB FFMPEG_DLLS "${THIRDPARTY_DLL_DIR}/av*.dll" "${THIRDPARTY_DLL_DIR}/sw*.dll")
-    if(FFMPEG_DLLS)
-        install(FILES ${FFMPEG_DLLS} DESTINATION "${UE_BIN_DIR}")
-        message(STATUS "FFmpeg DLLs found - will be included in installer")
+    # Install manifest files
+    install(FILES
+        "${UE_PACKAGED_BUILD}/Manifest_DebugFiles_Win64.txt"
+        "${UE_PACKAGED_BUILD}/Manifest_NonUFSFiles_Win64.txt"
+        "${UE_PACKAGED_BUILD}/Manifest_UFSFiles_Win64.txt"
+        DESTINATION "."
+        OPTIONAL
+    )
+
+    # Install Engine folder (Binaries/ThirdParty, Config, Content, Extras, Plugins)
+    install(DIRECTORY "${UE_PACKAGED_BUILD}/Engine/" DESTINATION "Engine")
+
+    # Copy Slate/Common from UE source (packaged build only has Cursor, missing UI textures)
+    set(UE_SLATE_DIR "C:/UE5_Source/UnrealEngine/Engine/Content/Slate")
+    if(EXISTS "${UE_SLATE_DIR}/Common")
+        install(DIRECTORY "${UE_SLATE_DIR}/Common" DESTINATION "Engine/Content/Slate")
     endif()
 
-    # TBB DLLs (required by ONNX Runtime)
-    if(EXISTS "${THIRDPARTY_DLL_DIR}/tbbmalloc.dll")
+    # Install MyProject folder (renamed to TripSitter)
+    # This contains the cooked game content and binaries
+    install(DIRECTORY "${UE_PACKAGED_BUILD}/MyProject/" DESTINATION "TripSitter")
+
+    # Install updated beatsync_backend_shared.dll (overwrite packaged version)
+    if(TARGET beatsync_backend_shared)
+        install(TARGETS beatsync_backend_shared
+            RUNTIME DESTINATION "TripSitter/Binaries/Win64"
+            LIBRARY DESTINATION "TripSitter/Binaries/Win64"
+        )
+    endif()
+
+    # Install AudioFlux DLLs if available (may not be in packaged build)
+    if(USE_AUDIOFLUX AND AUDIOFLUX_DLL_DIR)
+        if(EXISTS "${AUDIOFLUX_DLL_DIR}/audioflux.dll")
+            install(FILES "${AUDIOFLUX_DLL_DIR}/audioflux.dll"
+                DESTINATION "TripSitter/Binaries/Win64" OPTIONAL)
+        endif()
+        if(EXISTS "${AUDIOFLUX_FFTW_DLL}")
+            install(FILES "${AUDIOFLUX_FFTW_DLL}"
+                DESTINATION "TripSitter/Binaries/Win64" OPTIONAL)
+        endif()
+    endif()
+
+    # Install UI resources next to game executable (where widget looks for them)
+    set(RESOURCE_SRC_DIR "${CMAKE_SOURCE_DIR}/unreal-prototype/Source/TripSitter/Resources")
+    if(EXISTS "${RESOURCE_SRC_DIR}")
         install(FILES
-            "${THIRDPARTY_DLL_DIR}/tbb12.dll"
-            "${THIRDPARTY_DLL_DIR}/tbbmalloc.dll"
-            "${THIRDPARTY_DLL_DIR}/tbbmalloc_proxy.dll"
-            DESTINATION "${UE_BIN_DIR}"
+            "${RESOURCE_SRC_DIR}/wallpaper.png"
+            "${RESOURCE_SRC_DIR}/TitleHeader.png"
+            "${RESOURCE_SRC_DIR}/Corpta.otf"
+            DESTINATION "TripSitter/Binaries/Win64/Resources"
             OPTIONAL
         )
-        message(STATUS "TBB DLLs found - will be included in installer")
+    endif()
+
+else()
+    message(WARNING "Pre-packaged UE build not found at ${UE_PACKAGED_BUILD}")
+    message(WARNING "Falling back to legacy installation method")
+
+    # Legacy installation (may not work properly)
+    set(UE_BIN_DIR "Engine/Binaries/Win64")
+
+    if(EXISTS "${TRIPSITTER_EXE_PATH}")
+        install(PROGRAMS "${TRIPSITTER_EXE_PATH}" DESTINATION "${UE_BIN_DIR}")
+    endif()
+
+    if(TARGET beatsync_backend_shared)
+        install(TARGETS beatsync_backend_shared
+            RUNTIME DESTINATION "${UE_BIN_DIR}"
+            LIBRARY DESTINATION "${UE_BIN_DIR}"
+        )
     endif()
 endif()
 
-# Install ONNX Runtime and dependencies from build output
-if(EXISTS "${CMAKE_BINARY_DIR}/Release/onnxruntime.dll")
-    install(FILES
-        "${CMAKE_BINARY_DIR}/Release/onnxruntime.dll"
-        "${CMAKE_BINARY_DIR}/Release/abseil_dll.dll"
-        "${CMAKE_BINARY_DIR}/Release/libprotobuf.dll"
-        "${CMAKE_BINARY_DIR}/Release/libprotobuf-lite.dll"
-        "${CMAKE_BINARY_DIR}/Release/re2.dll"
-        DESTINATION "${UE_BIN_DIR}"
-        OPTIONAL
-    )
-    message(STATUS "ONNX Runtime DLLs found - will be included in installer")
-endif()
-
-# Install ONNX GPU providers if available
-if(EXISTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/onnxruntime_providers_shared.dll")
-    install(FILES
-        "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/onnxruntime_providers_shared.dll"
-        DESTINATION "${UE_BIN_DIR}"
-        OPTIONAL
-    )
-endif()
-if(EXISTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/onnxruntime_providers_cuda.dll")
-    install(FILES
-        "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/onnxruntime_providers_cuda.dll"
-        DESTINATION "${UE_BIN_DIR}"
-        OPTIONAL
-    )
-endif()
-
-# Install AudioFlux DLLs if available
-if(USE_AUDIOFLUX AND AUDIOFLUX_DLL_DIR)
-    if(EXISTS "${AUDIOFLUX_DLL_DIR}/audioflux.dll")
-        install(FILES "${AUDIOFLUX_DLL_DIR}/audioflux.dll" DESTINATION "${UE_BIN_DIR}" OPTIONAL)
-    endif()
-    if(EXISTS "${AUDIOFLUX_FFTW_DLL}")
-        install(FILES "${AUDIOFLUX_FFTW_DLL}" DESTINATION "${UE_BIN_DIR}" OPTIONAL)
-    endif()
-endif()
-
-# Install ICU internationalization data (required by UE5 runtime)
-set(UE_ICU_DIR "C:/UE5_Source/UnrealEngine/Engine/Content/Internationalization")
-if(EXISTS "${UE_ICU_DIR}")
-    install(DIRECTORY "${UE_ICU_DIR}/icudt64l" DESTINATION "Engine/Content/Internationalization")
-    message(STATUS "ICU data found - will be included in installer")
-endif()
-
-# Install Slate fonts (required by UE5 Slate UI rendering)
-set(UE_SLATE_DIR "C:/UE5_Source/UnrealEngine/Engine/Content/Slate")
-if(EXISTS "${UE_SLATE_DIR}/Fonts")
-    install(DIRECTORY "${UE_SLATE_DIR}/Fonts" DESTINATION "Engine/Content/Slate")
-    message(STATUS "Slate fonts found - will be included in installer")
-endif()
-
-# Install ONNX models if they exist (preferred method - no Python needed)
+# Install ONNX models if they exist
 if(EXISTS "${CMAKE_SOURCE_DIR}/models")
     install(DIRECTORY "${CMAKE_SOURCE_DIR}/models" DESTINATION .)
-endif()
-
-# Install UI resources (fonts, images)
-set(TRIPSITTER_RESOURCES_DIR "${CMAKE_SOURCE_DIR}/unreal-prototype/Source/TripSitter/Resources")
-if(EXISTS "${TRIPSITTER_RESOURCES_DIR}")
-    install(FILES
-        "${TRIPSITTER_RESOURCES_DIR}/wallpaper.png"
-        "${TRIPSITTER_RESOURCES_DIR}/TitleHeader.png"
-        "${TRIPSITTER_RESOURCES_DIR}/icon.png"
-        "${TRIPSITTER_RESOURCES_DIR}/Corpta.otf"
-        "${TRIPSITTER_RESOURCES_DIR}/TripSitter.ico"
-        DESTINATION resources
-        OPTIONAL
-    )
 endif()
 
 # Install license files
@@ -547,12 +536,12 @@ if(WIN32)
     if(EXISTS "${CMAKE_SOURCE_DIR}/assets/icon.ico")
         set(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}/assets/icon.ico")
         set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}/assets/icon.ico")
-        set(CPACK_NSIS_INSTALLED_ICON_NAME "Engine\\\\Binaries\\\\Win64\\\\TripSitter.exe")
+        set(CPACK_NSIS_INSTALLED_ICON_NAME "TripSitter.exe")
     endif()
 
     # Start menu and desktop shortcuts
     set(CPACK_NSIS_CREATE_ICONS_EXTRA
-        "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk' '$INSTDIR\\\\Engine\\\\Binaries\\\\Win64\\\\TripSitter.exe'"
+        "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk' '$INSTDIR\\\\TripSitter.exe'"
     )
     set(CPACK_NSIS_DELETE_ICONS_EXTRA
         "Delete '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk'"
@@ -563,7 +552,7 @@ if(WIN32)
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
 
     # Request admin rights for installation
-    set(CPACK_NSIS_EXECUTABLES_DIRECTORY "Engine/Binaries/Win64")
+    set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
 
     # Install to Program Files by default
     set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES64")

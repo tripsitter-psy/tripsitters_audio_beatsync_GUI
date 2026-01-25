@@ -108,7 +108,7 @@ This project is a desktop application for beat-syncing videos to audio. It consi
 
 ```powershell
 # Build backend
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets
 cmake --build build --config Release --target beatsync_backend_shared
 
 

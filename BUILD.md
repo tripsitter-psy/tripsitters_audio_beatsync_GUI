@@ -47,7 +47,7 @@ Output: `build/Release/beatsync_backend_shared.dll`
 # Install TensorRT to C:\TensorRT-10.9.0.34
 
 # Configure with overlay triplet (sets TENSORRT_HOME)
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets
 
 # Build (first run with TensorRT takes ~2 hours for ONNX Runtime)
 cmake --build build --config Release --target beatsync_backend_shared
@@ -62,7 +62,7 @@ cmake --build build --config Release --target beatsync_backend_shared
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DAUDIOFLUX_ROOT="C:/audioFlux"
 
 # Or combine with GPU acceleration
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets -DAUDIOFLUX_ROOT="C:/audioFlux"
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets -DAUDIOFLUX_ROOT="C:/audioFlux"
 
 # Build
 cmake --build build --config Release --target beatsync_backend_shared
@@ -105,7 +105,9 @@ Output: `%UE_ENGINE_PATH%\Engine\Binaries\Win64\TripSitter.exe`
 .\scripts\deploy_tripsitter.ps1 -Verify
 ```
 
-**WARNING**: Do NOT copy all DLLs from `build/Release/` - this overwrites correct FFmpeg DLLs with incompatible versions. Always use the deployment script or copy ThirdParty FFmpeg DLLs last.
+**IMPORTANT**: The build is configured to strictly separate project artifacts from dependencies. Dependency DLLs (FFmpeg, ONNX Runtime) are **NOT** copied to `build/Release/` to prevent mixing incompatible versions.
+A build-time validation step ensures `build/Release` contains only project binaries.
+Always use the deployment script to collect DLLs from their dedicated directories (`vcpkg_installed` and `ThirdParty`).
 
 ## Dependencies
 
@@ -199,7 +201,7 @@ cmake --build build --config RelWithDebInfo
 Remove-Item -Recurse -Force build
 
 # Reconfigure and build
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets
 cmake --build build --config Release
 ```
 

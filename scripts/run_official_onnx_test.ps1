@@ -30,7 +30,7 @@ if (!(Test-Path $zipPath) -or (Get-Item $zipPath).Length -eq 0) {
     exit 1
 }
 
-if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force }
+if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force -ErrorAction Stop }
 
 Write-Host "Extracting to $outDir"
 try {
@@ -40,7 +40,7 @@ try {
 } catch {
     Write-Error "Failed to extract archive: $zipPath -> $outDir"
     Write-Error $_
-    if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force }
+    if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force -ErrorAction SilentlyContinue }
     exit 2
 }
 

@@ -200,7 +200,7 @@ private:
 	int32 AnalysisModeIndex = 1;
 	int32 ResolutionIndex = 0;
 	int32 FPSIndex = 1;
-	int32 ColorPreset = 0;
+
 
 	// Button handlers
 	FReply OnBrowseAudioClicked();

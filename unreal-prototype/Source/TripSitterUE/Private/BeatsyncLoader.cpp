@@ -26,10 +26,13 @@ static FCriticalSection GCallbackStorageMutex;
 
 // Static trampoline function for progress callbacks - must have stable address
 // Using a proper static function instead of a lambda for guaranteed ABI stability
+// NOTE: user_data is the writer key (void*), NOT the CallbackData pointer, to avoid
+// use-after-free if another thread removes the callback before we can validate it.
 static void ProgressCallbackTrampoline(double progress, void* user_data)
 {
-    FBeatsyncLoader::CallbackData* data = reinterpret_cast<FBeatsyncLoader::CallbackData*>(user_data);
-    if (!data || !data->Key) return;
+    // user_data is the writer key, not the CallbackData pointer
+    void* writerKey = user_data;
+    if (!writerKey) return;
 
     // Take a shared_ptr copy to extend lifetime during callback invocation.
     // This prevents use-after-free if another thread removes the callback
@@ -38,10 +41,10 @@ static void ProgressCallbackTrampoline(double progress, void* user_data)
     TFunction<void(double)> localFunc;
     {
         FScopeLock Lock(&GCallbackStorageMutex);
-        TSharedPtr<FBeatsyncLoader::CallbackData>* found = GCallbackStorage.Find(data->Key);
-        if (found && found->IsValid() && found->Get() == data) {
+        TSharedPtr<FBeatsyncLoader::CallbackData>* found = GCallbackStorage.Find(writerKey);
+        if (found && found->IsValid()) {
             localData = *found;  // Extend lifetime via ref count
-            localFunc = data->Func;
+            localFunc = localData->Func;
         }
     }
 
@@ -282,6 +285,11 @@ void FBeatsyncLoader::DestroyVideoWriter(void* writer)
 bool FBeatsyncLoader::AnalyzeAudio(void* handle, const FString& path, FBeatGrid& outGrid)
 {
     if (!GApi.analyze_audio) return false;
+    if (!handle)
+    {
+        UE_LOG(LogTemp, Error, TEXT("FBeatsyncLoader::AnalyzeAudio: null handle passed"));
+        return false;
+    }
 
     // Prepare C beatgrid
     bs_beatgrid_t grid = {};
@@ -312,7 +320,6 @@ void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
 {
     if (!GApi.video_set_progress) return;
 
-    CallbackData* rawPtr = nullptr;
     bool doRegister = false;
     {
         FScopeLock Lock(&GCallbackStorageMutex);
@@ -323,15 +330,15 @@ void FBeatsyncLoader::SetProgressCallback(void* writer, FProgressCb cb)
             data->Func = cb;
             data->Key = writer;
             GCallbackStorage.Add(writer, data);
-            rawPtr = data.Get();
             doRegister = true;
         }
-        // else: doRegister remains false, rawPtr is nullptr
+        // else: doRegister remains false
     }
     // Call the native setter outside the lock to avoid deadlock if callback is invoked immediately
+    // Pass writer as user_data (the key) - trampoline will look up CallbackData by this key
     if (doRegister)
     {
-        GApi.video_set_progress(writer, ProgressCallbackTrampoline, rawPtr);
+        GApi.video_set_progress(writer, ProgressCallbackTrampoline, writer);
     }
     else
     {

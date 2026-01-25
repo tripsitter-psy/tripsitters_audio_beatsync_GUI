@@ -125,7 +125,11 @@ struct OnnxStemSeparator::Impl {
                     OrtCUDAProviderOptionsV2* cudaOptions = nullptr;
                     const OrtApi& ortApi = Ort::GetApi();
                     OrtStatus* status = ortApi.CreateCUDAProviderOptions(&cudaOptions);
-                    if (status == nullptr && cudaOptions != nullptr) {
+                    if (status != nullptr) {
+                        const char* msg = ortApi.GetErrorMessage(status);
+                        std::cerr << "[BeatSync] CreateCUDAProviderOptions failed (StemSep): " << (msg ? msg : "unknown error") << std::endl;
+                        ortApi.ReleaseStatus(status);
+                    } else if (cudaOptions != nullptr) {
                         const char* keys[] = {"device_id"};
                         char deviceIdStr[16];
                         snprintf(deviceIdStr, sizeof(deviceIdStr), "%d", cfg.gpuDeviceId);

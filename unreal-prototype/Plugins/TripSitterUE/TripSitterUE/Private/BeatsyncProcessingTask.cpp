@@ -20,7 +20,16 @@ FBeatsyncProcessingTask::FBeatsyncProcessingTask(const FBeatsyncProcessingParams
 
 FBeatsyncProcessingTask::~FBeatsyncProcessingTask()
 {
+    // Invalidate progress guard so any in-flight callbacks won't attempt to call back into this object
+    if (ProgressGuard) {
+        ProgressGuard->AtomicSet(true);
+    }
+
+    // Request cancellation to unblock waiting threads
+    bCancelRequested = true;
+
     // Wait for work completion with timeout to avoid indefinite hangs
+    bool bCompleted = false;
     constexpr uint32 TimeoutMs = 10000; // 10 second timeout
     if (WorkCompletedEvent)
     {
@@ -28,17 +37,16 @@ FBeatsyncProcessingTask::~FBeatsyncProcessingTask()
         {
             UE_LOG(LogTemp, Warning, TEXT("FBeatsyncProcessingTask: Timeout waiting for DoWork to complete"));
         }
+        else
+        {
+            bCompleted = true;
+        }
         FPlatformProcess::ReturnSynchEventToPool(WorkCompletedEvent);
         WorkCompletedEvent = nullptr;
     }
 
-    // Invalidate progress guard so any in-flight callbacks won't attempt to call back into this object
-    if (ProgressGuard) {
-        ProgressGuard->AtomicSet(true);
-    }
-
-    // Clear the progress callback and destroy the Writer to avoid leaks and dangling references
-    if (Writer)
+    // Only destroy writer if work completed, otherwise we risk use-after-free race
+    if (bCompleted && Writer)
     {
         FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
         FBeatsyncLoader::DestroyVideoWriter(Writer);

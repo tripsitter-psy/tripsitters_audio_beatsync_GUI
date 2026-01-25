@@ -28,13 +28,11 @@ $gpuLogPath = Join-Path (Resolve-Path .) "build/gpu_log.csv"
 if (Test-Path $gpuLogPath) { Remove-Item $gpuLogPath }
 $job = Start-Job -Name NvidiaLog -ScriptBlock {
     param($gpuLogPath)
-    while ($true) {
-        try {
+    if (Get-Command 'nvidia-smi' -ErrorAction SilentlyContinue) {
+        while ($true) {
             nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used --format=csv,noheader,nounits >> $gpuLogPath
-        } catch {
-            # ignore if nvidia-smi not present
+            Start-Sleep -Seconds 10
         }
-        Start-Sleep -Seconds 10
     }
 } -ArgumentList $gpuLogPath
 
@@ -69,7 +67,10 @@ foreach ($cmd in $cmds) {
 
     $tempOut = [System.IO.Path]::GetTempFileName()
     try {
-        $proc = Start-Process -FilePath powershell -ArgumentList "-NoProfile -Command $cmd" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempOut -RedirectStandardError $stderr
+        # Using -FilePath to executable allows direct exit code capture. 
+        # But since $cmd has args and escaping, nested powershell is used.
+        # We append "; exit `$LASTEXITCODE" to ensure the wrapper returns the real code.
+        $proc = Start-Process -FilePath powershell -ArgumentList "-NoProfile -Command $cmd; exit `$LASTEXITCODE" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempOut -RedirectStandardError $stderr
         $exitCode = $proc.ExitCode
     } catch {
         if ($proc -and $proc.ExitCode -ne $null) {
@@ -82,6 +83,9 @@ foreach ($cmd in $cmds) {
         Add-Content -Path $stdout -Value (Get-Content $tempOut)
         Remove-Item $tempOut -Force
     }
+
+    # Append any stderr content instead of overwriting, if needed by the test logic (stderr file already redirected above)
+    # The redirection flags on Start-Process handle the file writing.
 
     Write-Host "Command exit code: $exitCode"
     if ($exitCode -eq 0 -and (Test-Path $OutputVideo)) {

@@ -30,9 +30,9 @@ BeatSyncEditor/
 │   │   └── TransitionLibrary.cpp/h # Video transitions & effects
 │   ├── backend/
 │   │   ├── beatsync_capi.cpp/h     # C API wrapper for DLL export
-│   │   └── tracing.cpp/h           # OpenTelemetry tracing
+│   │   └── tracing.cpp/h           # OpenTelemetry implementation & DLL exports (Internal)
 │   └── tracing/
-│       └── Tracing.h               # Tracing macros and utilities
+│       └── Tracing.h               # Tracing macros and utilities (Public API)
 ├── tests/                          # Catch2 unit tests
 ├── triplets/
 │   └── x64-windows.cmake           # vcpkg overlay triplet for TensorRT
@@ -54,10 +54,10 @@ BeatSyncEditor/
 
 ```powershell
 # Configure with TensorRT support
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets
 
 # Configure with TensorRT + AudioFlux
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets -DAUDIOFLUX_ROOT="C:/audioFlux"
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets -DAUDIOFLUX_ROOT="C:/audioFlux"
 
 # Build
 cmake --build build --config Release --target beatsync_backend_shared
@@ -169,7 +169,7 @@ Available execution providers can be queried via `bs_ai_get_providers()`.
 
 ```powershell
 # Full build sequence (with TensorRT + AudioFlux)
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake --overlay-triplets=triplets -DAUDIOFLUX_ROOT="C:/audioFlux"
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets -DAUDIOFLUX_ROOT="C:/audioFlux"
 cmake --build build --config Release --target beatsync_backend_shared
 Copy-Item 'build\Release\beatsync_backend_shared.dll' 'unreal-prototype\ThirdParty\beatsync\lib\x64\' -Force
 

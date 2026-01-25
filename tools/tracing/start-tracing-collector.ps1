@@ -8,8 +8,7 @@ try {
 	Write-Host "Starting tracing collector (docker compose up -d)..."
 	docker compose up -d
 	if ($LASTEXITCODE -ne 0) {
-		Write-Error "docker compose failed with exit code $LASTEXITCODE"
-		exit $LASTEXITCODE
+		throw "docker compose failed with exit code $LASTEXITCODE"
 	}
 	Write-Host "Collector and Jaeger should be available. Jaeger UI: http://localhost:16686"
 } finally {

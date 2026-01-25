@@ -100,13 +100,18 @@ def main():
                 outputs = model(dummy_input)
                 # If not full export, fill with zeros for missing outputs
                 if not export_full:
-                    import torch
+                    # check if outputs is already a 6-element list/tuple
+                    if isinstance(outputs, (list, tuple)) and len(outputs) == 6:
+                        return outputs
+
                     # outputs: embeddings only, so fill others
                     batch = dummy_input.shape[0]
                     time = dummy_input.shape[3]
                     segments = 1
                     classes = 1
-                    zeros = lambda *shape: torch.zeros(*shape, dtype=outputs.dtype, device=outputs.device)
+                    # Use dummy_input to get device/dtype so we don't need 'import torch'
+                    zeros = lambda *shape: dummy_input.new_zeros(*shape)
+                    
                     # Return tuple in output_names order
                     return (
                         zeros(batch, time),  # beat_activation
@@ -335,9 +340,9 @@ def main():
                     x = x + ff_block(x)
 
                 # Output heads
-                beat_act = self.beat_head(x)  # (batch, time, 1)
-                downbeat_act = self.downbeat_head(x)  # (batch, time, 1)
-                segment_act = self.segment_head(x)  # (batch, time, 1)
+                beat_act = self.beat_head(x).squeeze(-1)  # (batch, time)
+                downbeat_act = self.downbeat_head(x).squeeze(-1)  # (batch, time)
+                segment_act = self.segment_head(x).squeeze(-1)  # (batch, time)
                 segment_labels = self.label_head(x)  # (batch, time, 10)
 
                 # Tempo estimation
@@ -346,7 +351,7 @@ def main():
                 tempo_feat = self.tempo_norm(tempo_feat)  # Normalize over embed_dim: (batch, embed_dim)
                 tempo_logits = self.tempo_classifier(tempo_feat)  # (batch, 271)
 
-                return beat_act, downbeat_act, segment_act, segment_labels, tempo_logits
+                return beat_act, downbeat_act, segment_act, segment_labels, tempo_logits, x
 
         torch.manual_seed(42)
         model = AllInOneEncoder()

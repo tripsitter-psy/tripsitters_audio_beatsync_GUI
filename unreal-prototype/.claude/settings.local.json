@@ -3,11 +3,7 @@
     "allow": [
       "Bash(cmake --build:*)",
       "Bash(./build/tests/Release/test_backend_api.exe:*)",
-      "Bash(powershell -Command \"Get-ChildItem ''C:\\\\Users\\\\samue\\\\Videos\\\\output_test*.mp4'' 2>&1\")",
-      "Bash(powershell:*)",
       "Bash(ls:*)",
-      "Bash(Copy-Item -Path \"C:\\\\Users\\\\samue\\\\Desktop\\\\BeatSyncEditor\\\\unreal-prototype\\\\Source\\\\TripSitter\\\\Private\\\\*\" -Destination \"C:\\\\UE5_Source\\\\UnrealEngine\\\\Engine\\\\Source\\\\Programs\\\\TripSitter\\\\Private\"\" -Recurse -Force)",
-      "Bash(\"C:\\\\UE5_Source\\\\UnrealEngine\\\\Engine\\\\Build\\\\BatchFiles\\\\Build.bat\" TripSitter Win64 Development)",
       "Bash(dumpbin:*)",
       "Bash(findstr:*)"
     ]

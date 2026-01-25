@@ -73,6 +73,7 @@ unreal-prototype/Intermediate/
 # Ignore transient CTest artifacts
 Testing/Temporary/
 
+
 # Claude Code local settings (user-specific paths)
 .claude/settings.local.json
 **/.claude/settings.local.json

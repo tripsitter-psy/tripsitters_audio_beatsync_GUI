@@ -15,7 +15,7 @@
 // CreateVideoWriter/DestroyVideoWriter, SetProgressCallback, CutVideoAtBeats/CutVideoAtBeatsMulti,
 // ApplyEffects, SetEffectsConfig, AddAudioTrack, ExtractFrame, StartSpan/EndSpan/SpanSetError/SpanAddEvent, IsInitialized.
 
-class FBeatsyncLoader
+class TRIPSITTERUE_API FBeatsyncLoader
 {
 public:
     static bool Initialize();

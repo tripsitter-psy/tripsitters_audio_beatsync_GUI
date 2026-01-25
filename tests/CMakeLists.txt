@@ -103,10 +103,7 @@ if(BUILD_TESTS)
         add_test(NAME audioflux COMMAND test_audioflux)
         set_tests_properties(audioflux PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     endif()
-endif()
 
-# GUI wallpaper tests removed - wxWidgets GUI has been deprecated and deleted
-# The GUI is now implemented in Unreal Engine (TripSitter standalone app)
     # Spectral flux tests
     add_executable(test_spectral_flux
         catch_main.cpp
@@ -118,3 +115,7 @@ endif()
     target_link_libraries(test_spectral_flux PRIVATE Catch2::Catch2)
     add_test(NAME spectral_flux COMMAND test_spectral_flux)
     set_tests_properties(spectral_flux PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+endif()
+
+# GUI wallpaper tests removed - wxWidgets GUI has been deprecated and deleted
+# The GUI is now implemented in Unreal Engine (TripSitter standalone app)

@@ -31,13 +31,21 @@
       "Bash(powershell -Command Get-ChildItem:*)",
       "Bash(powershell -Command Test-Path:*)",
       "Bash(powershell -Command Copy-Item:*)",
+      "Bash(powershell -Command Get-Process:*)",
+      "Bash(powershell -Command Stop-Process:*)",
+      "Bash(powershell -Command Start-Process:*)",
+      "Bash(powershell -Command Write-Host:*)",
+      "Bash(powershell -Command Add-Type:*)",
       "Bash(powershell -File scripts/*.ps1)",
       "Bash(powershell -ExecutionPolicy Bypass -File:*)",
       "Bash(./build/tests/Release/test_backend_api.exe:*)",
       "Bash(C:/UE5_Source/UnrealEngine/Engine/Build/BatchFiles/Build.bat:*)",
-      "Bash(powershell -NoProfile -Command \"Test-Path ''C:/Program Files \\(x86\\)/NSIS/makensis.exe''\")",
-      "Bash(\"C:/Program Files \\(x86\\)/NSIS/makensis.exe\":*)",
-      "Bash(powershell:*)"
+      "Bash(makensis:*)",
+      "Bash(cpack:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(Get-ChildItem -Path \"$env:USERPROFILE\\\\Desktop\\\\TripSitterBuild\\\\Windows\" -ErrorAction SilentlyContinue)",
+      "Bash(Select-Object Name, Length)",
+      "Bash(powershell.exe:*)"
     ]
   }
 }

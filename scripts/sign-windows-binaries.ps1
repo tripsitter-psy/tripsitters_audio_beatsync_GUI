@@ -196,6 +196,11 @@ try {
         $filesToSign += Get-Item $InstallerPath
     } else {
         # Directory mode - find all exe/dll files
+        if (-not (Test-Path -Path $BuildDir -PathType Container)) {
+            Write-Error "Build directory invalid or missing: $BuildDir"
+            $global:ExitCode = 1
+            return
+        }
         $extensions = @("*.exe", "*.dll")
         foreach ($ext in $extensions) {
             $files = Get-ChildItem -Path $BuildDir -Recurse -Filter $ext -File

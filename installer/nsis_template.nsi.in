@@ -37,7 +37,7 @@ VIAddVersionKey "LegalCopyright" "@PROJECT_COPYRIGHT_YEARS@ MTV"
 !insertmacro MUI_PAGE_LICENSE "@CPACK_RESOURCE_FILE_LICENSE@"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_FINISHPAGE_RUN "$INSTDIR\bin\TripSitter.exe"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\TripSitter.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "Launch MTV TripSitter"
 !insertmacro MUI_PAGE_FINISH
 
@@ -57,7 +57,7 @@ Section "MTV TripSitter" SecMain
 
     ; Install TensorRT runtime DLLs for RTX GPU acceleration (if available)
     ; These are optional - app falls back to CUDA EP on GTX cards or if missing
-    SetOutPath "$INSTDIR\bin"
+    SetOutPath "$INSTDIR\TripSitter\Binaries\Win64"
     IfFileExists "@TENSORRT_DLL_DIR@\nvinfer_10.dll" 0 skip_tensorrt
         File /nonfatal "@TENSORRT_DLL_DIR@\nvinfer_10.dll"
         File /nonfatal "@TENSORRT_DLL_DIR@\nvinfer_lean_10.dll"
@@ -79,8 +79,8 @@ Section "MTV TripSitter" SecMain
     SetOutPath "$INSTDIR\models"
     File /nonfatal "@CMAKE_SOURCE_DIR@\models\*.onnx"
 
-    ; Install UI resources (fonts, images)
-    SetOutPath "$INSTDIR\resources"
+    ; Install UI resources (fonts, images) - must be next to game exe
+    SetOutPath "$INSTDIR\TripSitter\Binaries\Win64\Resources"
     File /nonfatal "@CMAKE_SOURCE_DIR@\unreal-prototype\Source\TripSitter\Resources\wallpaper.png"
     File /nonfatal "@CMAKE_SOURCE_DIR@\unreal-prototype\Source\TripSitter\Resources\TitleHeader.png"
     File /nonfatal "@CMAKE_SOURCE_DIR@\unreal-prototype\Source\TripSitter\Resources\icon.png"
@@ -105,7 +105,7 @@ Section "MTV TripSitter" SecMain
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
         "UninstallString" "$INSTDIR\Uninstall.exe"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
-        "DisplayIcon" "$INSTDIR\bin\TripSitter.exe"
+        "DisplayIcon" "$INSTDIR\TripSitter.exe"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
         "Publisher" "@CPACK_PACKAGE_VENDOR@"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_NAME@" \
@@ -127,13 +127,13 @@ SectionEnd
 ; Start Menu shortcuts section
 Section "Start Menu Shortcuts" SecStartMenu
     CreateDirectory "$SMPROGRAMS\@CPACK_NSIS_DISPLAY_NAME@"
-    CreateShortCut "$SMPROGRAMS\@CPACK_NSIS_DISPLAY_NAME@\@CPACK_NSIS_DISPLAY_NAME@.lnk" "$INSTDIR\bin\TripSitter.exe"
+    CreateShortCut "$SMPROGRAMS\@CPACK_NSIS_DISPLAY_NAME@\@CPACK_NSIS_DISPLAY_NAME@.lnk" "$INSTDIR\TripSitter.exe"
     CreateShortCut "$SMPROGRAMS\@CPACK_NSIS_DISPLAY_NAME@\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
 SectionEnd
 
 ; Desktop shortcut section (optional)
 Section "Desktop Shortcut" SecDesktop
-    CreateShortCut "$DESKTOP\@CPACK_NSIS_DISPLAY_NAME@.lnk" "$INSTDIR\bin\TripSitter.exe"
+    CreateShortCut "$DESKTOP\@CPACK_NSIS_DISPLAY_NAME@.lnk" "$INSTDIR\TripSitter.exe"
 SectionEnd
 
 ; Uninstaller section
@@ -146,27 +146,27 @@ Section "Uninstall"
     Delete "$DESKTOP\@CPACK_NSIS_DISPLAY_NAME@.lnk"
 
     ; Remove TensorRT DLLs (if installed)
-    Delete "$INSTDIR\bin\nvinfer_10.dll"
-    Delete "$INSTDIR\bin\nvinfer_lean_10.dll"
-    Delete "$INSTDIR\bin\nvinfer_plugin_10.dll"
-    Delete "$INSTDIR\bin\nvinfer_dispatch_10.dll"
-    Delete "$INSTDIR\bin\nvonnxparser_10.dll"
+    Delete "$INSTDIR\TripSitter\Binaries\Win64\nvinfer_10.dll"
+    Delete "$INSTDIR\TripSitter\Binaries\Win64\nvinfer_lean_10.dll"
+    Delete "$INSTDIR\TripSitter\Binaries\Win64\nvinfer_plugin_10.dll"
+    Delete "$INSTDIR\TripSitter\Binaries\Win64\nvinfer_dispatch_10.dll"
+    Delete "$INSTDIR\TripSitter\Binaries\Win64\nvonnxparser_10.dll"
 
     ; Remove AudioFlux DLLs (if installed)
-    Delete "$INSTDIR\bin\audioflux.dll"
-    Delete "$INSTDIR\bin\libfftw3f-3.dll"
+    Delete "$INSTDIR\TripSitter\Binaries\Win64\audioflux.dll"
+    Delete "$INSTDIR\TripSitter\Binaries\Win64\libfftw3f-3.dll"
 
     ; Remove ONNX models
     Delete "$INSTDIR\models\*.onnx"
     RMDir "$INSTDIR\models"
 
     ; Remove UI resources
-    Delete "$INSTDIR\resources\wallpaper.png"
-    Delete "$INSTDIR\resources\TitleHeader.png"
-    Delete "$INSTDIR\resources\icon.png"
-    Delete "$INSTDIR\resources\Corpta.otf"
-    Delete "$INSTDIR\resources\TripSitter.ico"
-    RMDir "$INSTDIR\resources"
+    Delete "$INSTDIR\TripSitter\Binaries\Win64\Resources\wallpaper.png"
+    Delete "$INSTDIR\TripSitter\Binaries\Win64\Resources\TitleHeader.png"
+    Delete "$INSTDIR\TripSitter\Binaries\Win64\Resources\icon.png"
+    Delete "$INSTDIR\TripSitter\Binaries\Win64\Resources\Corpta.otf"
+    Delete "$INSTDIR\TripSitter\Binaries\Win64\Resources\TripSitter.ico"
+    RMDir "$INSTDIR\TripSitter\Binaries\Win64\Resources"
 
     ; Remove license files
     Delete "$INSTDIR\licenses\LICENSE"
