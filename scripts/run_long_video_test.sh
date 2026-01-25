@@ -27,6 +27,10 @@ rm -f "$GPU_LOG"
 # Start background GPU logging every 10s
 ( while true; do nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used --format=csv,noheader,nounits >> "$GPU_LOG" || true; sleep 10; done ) &
 NVPID=$!
+# Ensure the background GPU logger is cleaned up on exit/interrupt
+trap 'kill -TERM "${NVPID}" 2>/dev/null || true; wait "${NVPID}" 2>/dev/null || true' EXIT INT TERM
+# Ensure the background GPU logger is cleaned up on exit/interrupt
+trap 'kill -TERM "${NVPID}" 2>/dev/null || true; wait "${NVPID}" 2>/dev/null || true' EXIT INT TERM
 
 STDOUT_LOG="build/long_video_stdout.log"
 STDERR_LOG="build/long_video_stderr.log"

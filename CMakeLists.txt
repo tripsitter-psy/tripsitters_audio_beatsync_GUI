@@ -386,12 +386,100 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/scripts/dist/demucs_separate.exe")
 endif()
 
 
+# Use UE5 folder structure so TripSitter.exe can find ICU data
+set(UE_BIN_DIR "Engine/Binaries/Win64")
+
 # Install TripSitter.exe (main GUI - built separately by Unreal Engine)
 if(EXISTS "${TRIPSITTER_EXE_PATH}")
-    install(PROGRAMS "${TRIPSITTER_EXE_PATH}" DESTINATION bin)
+    install(PROGRAMS "${TRIPSITTER_EXE_PATH}" DESTINATION "${UE_BIN_DIR}")
     message(STATUS "TripSitter.exe found at ${TRIPSITTER_EXE_PATH} - will be included in installer")
 else()
     message(WARNING "TripSitter.exe not found at ${TRIPSITTER_EXE_PATH} - installer will be incomplete")
+endif()
+
+# Install beatsync backend DLL
+if(TARGET beatsync_backend_shared)
+    install(TARGETS beatsync_backend_shared
+        RUNTIME DESTINATION "${UE_BIN_DIR}"
+        LIBRARY DESTINATION "${UE_BIN_DIR}"
+    )
+endif()
+
+# Install all required DLLs from ThirdParty folder
+set(THIRDPARTY_DLL_DIR "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64")
+if(EXISTS "${THIRDPARTY_DLL_DIR}")
+    # FFmpeg DLLs
+    file(GLOB FFMPEG_DLLS "${THIRDPARTY_DLL_DIR}/av*.dll" "${THIRDPARTY_DLL_DIR}/sw*.dll")
+    if(FFMPEG_DLLS)
+        install(FILES ${FFMPEG_DLLS} DESTINATION "${UE_BIN_DIR}")
+        message(STATUS "FFmpeg DLLs found - will be included in installer")
+    endif()
+
+    # TBB DLLs (required by ONNX Runtime)
+    if(EXISTS "${THIRDPARTY_DLL_DIR}/tbbmalloc.dll")
+        install(FILES
+            "${THIRDPARTY_DLL_DIR}/tbb12.dll"
+            "${THIRDPARTY_DLL_DIR}/tbbmalloc.dll"
+            "${THIRDPARTY_DLL_DIR}/tbbmalloc_proxy.dll"
+            DESTINATION "${UE_BIN_DIR}"
+            OPTIONAL
+        )
+        message(STATUS "TBB DLLs found - will be included in installer")
+    endif()
+endif()
+
+# Install ONNX Runtime and dependencies from build output
+if(EXISTS "${CMAKE_BINARY_DIR}/Release/onnxruntime.dll")
+    install(FILES
+        "${CMAKE_BINARY_DIR}/Release/onnxruntime.dll"
+        "${CMAKE_BINARY_DIR}/Release/abseil_dll.dll"
+        "${CMAKE_BINARY_DIR}/Release/libprotobuf.dll"
+        "${CMAKE_BINARY_DIR}/Release/libprotobuf-lite.dll"
+        "${CMAKE_BINARY_DIR}/Release/re2.dll"
+        DESTINATION "${UE_BIN_DIR}"
+        OPTIONAL
+    )
+    message(STATUS "ONNX Runtime DLLs found - will be included in installer")
+endif()
+
+# Install ONNX GPU providers if available
+if(EXISTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/onnxruntime_providers_shared.dll")
+    install(FILES
+        "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/onnxruntime_providers_shared.dll"
+        DESTINATION "${UE_BIN_DIR}"
+        OPTIONAL
+    )
+endif()
+if(EXISTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/onnxruntime_providers_cuda.dll")
+    install(FILES
+        "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/onnxruntime_providers_cuda.dll"
+        DESTINATION "${UE_BIN_DIR}"
+        OPTIONAL
+    )
+endif()
+
+# Install AudioFlux DLLs if available
+if(USE_AUDIOFLUX AND AUDIOFLUX_DLL_DIR)
+    if(EXISTS "${AUDIOFLUX_DLL_DIR}/audioflux.dll")
+        install(FILES "${AUDIOFLUX_DLL_DIR}/audioflux.dll" DESTINATION "${UE_BIN_DIR}" OPTIONAL)
+    endif()
+    if(EXISTS "${AUDIOFLUX_FFTW_DLL}")
+        install(FILES "${AUDIOFLUX_FFTW_DLL}" DESTINATION "${UE_BIN_DIR}" OPTIONAL)
+    endif()
+endif()
+
+# Install ICU internationalization data (required by UE5 runtime)
+set(UE_ICU_DIR "C:/UE5_Source/UnrealEngine/Engine/Content/Internationalization")
+if(EXISTS "${UE_ICU_DIR}")
+    install(DIRECTORY "${UE_ICU_DIR}/icudt64l" DESTINATION "Engine/Content/Internationalization")
+    message(STATUS "ICU data found - will be included in installer")
+endif()
+
+# Install Slate fonts (required by UE5 Slate UI rendering)
+set(UE_SLATE_DIR "C:/UE5_Source/UnrealEngine/Engine/Content/Slate")
+if(EXISTS "${UE_SLATE_DIR}/Fonts")
+    install(DIRECTORY "${UE_SLATE_DIR}/Fonts" DESTINATION "Engine/Content/Slate")
+    message(STATUS "Slate fonts found - will be included in installer")
 endif()
 
 # Install ONNX models if they exist (preferred method - no Python needed)
@@ -459,12 +547,12 @@ if(WIN32)
     if(EXISTS "${CMAKE_SOURCE_DIR}/assets/icon.ico")
         set(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}/assets/icon.ico")
         set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}/assets/icon.ico")
-        set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\TripSitter.exe")
+        set(CPACK_NSIS_INSTALLED_ICON_NAME "Engine\\\\Binaries\\\\Win64\\\\TripSitter.exe")
     endif()
 
     # Start menu and desktop shortcuts
     set(CPACK_NSIS_CREATE_ICONS_EXTRA
-        "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk' '$INSTDIR\\\\bin\\\\TripSitter.exe'"
+        "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk' '$INSTDIR\\\\Engine\\\\Binaries\\\\Win64\\\\TripSitter.exe'"
     )
     set(CPACK_NSIS_DELETE_ICONS_EXTRA
         "Delete '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk'"
@@ -475,7 +563,7 @@ if(WIN32)
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
 
     # Request admin rights for installation
-    set(CPACK_NSIS_EXECUTABLES_DIRECTORY "bin")
+    set(CPACK_NSIS_EXECUTABLES_DIRECTORY "Engine/Binaries/Win64")
 
     # Install to Program Files by default
     set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES64")

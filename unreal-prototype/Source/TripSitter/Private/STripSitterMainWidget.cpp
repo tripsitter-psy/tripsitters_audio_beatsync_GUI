@@ -2511,8 +2511,20 @@ void STripSitterMainWidget::OnBPMValueChanged(double NewBPM)
 
 void STripSitterMainWidget::RecalculateBeatsFromBPM(double NewBPM)
 {
-	if (NewBPM <= 0 || AudioDuration <= 0)
+	if (NewBPM <= 0)
 	{
+		return;
+	}
+
+	// Prefer duration from waveform viewer when available
+	double EffectiveDuration = AudioDuration;
+	if (WaveformViewer.IsValid()) {
+		double wfDur = WaveformViewer->GetDuration();
+		if (wfDur > 0.0) EffectiveDuration = wfDur;
+	}
+
+	if (EffectiveDuration <= 0.0) {
+		// Nothing to do without a valid audio duration
 		return;
 	}
 
@@ -2525,24 +2537,31 @@ void STripSitterMainWidget::RecalculateBeatsFromBPM(double NewBPM)
 	// Recalculate beat times starting from the original first beat
 	AnalyzedBeatTimes.Empty();
 
-	// Generate beats from first beat time to end of audio
-	double CurrentTime = OriginalFirstBeatTime;
-	while (CurrentTime < AudioDuration)
+	// If the original first beat is beyond duration, fall back to time 0 to avoid empty list
+	double StartTime = OriginalFirstBeatTime;
+	if (StartTime >= EffectiveDuration) {
+		UE_LOG(LogTemp, Warning, TEXT("TripSitter: OriginalFirstBeatTime (%.3f) >= effective duration (%.3f), falling back to 0.0"), StartTime, EffectiveDuration);
+		StartTime = 0.0;
+	}
+
+	// Generate beats from start time to end of audio
+	double CurrentTime = StartTime;
+	while (CurrentTime < EffectiveDuration)
 	{
 		AnalyzedBeatTimes.Add(CurrentTime);
 		CurrentTime += BeatInterval;
+		// Safety: prevent runaway loops (shouldn't happen but guard anyway)
+		if (AnalyzedBeatTimes.size() > 1000000) break;
 	}
 
 	// If waveform already has beats displayed, update them
-	if (WaveformViewer.IsValid() && WaveformViewer->GetDuration() > 0)
+	if (WaveformViewer.IsValid())
 	{
-		// Check if beats were already applied (waveform has beat data)
-		// We auto-update if they were viewing beats
 		WaveformViewer->SetBeatTimes(AnalyzedBeatTimes);
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("TripSitter: Recalculated beats - Old BPM: %.1f, New BPM: %.1f, Beats: %d"),
-		OldBPM, NewBPM, AnalyzedBeatTimes.Num());
+	UE_LOG(LogTemp, Log, TEXT("TripSitter: Recalculated beats - Old BPM: %.1f, New BPM: %.1f, Beats: %d, Duration: %.3f"),
+		OldBPM, NewBPM, AnalyzedBeatTimes.Num(), EffectiveDuration);
 }
 
 FReply STripSitterMainWidget::OnStartSyncClicked()

@@ -78,9 +78,8 @@ def main():
 
             print(f"Exporting to ONNX (input shape: {dummy_input.shape})...")
 
-            if args.export_full:
-
             # Always export with the same output schema for interface consistency
+            # When export_full=True, model returns real outputs; otherwise placeholders are used
             output_names = [
                 'beat_activation', 'downbeat_activation',
                 'segment_activation', 'segment_labels',

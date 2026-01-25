@@ -50,9 +50,6 @@ else
   echo "Temp path: $TMPDIR (python3 not found — skipping disk space check)"
 fi
 
-
-echo "Validation done. Review warnings above and fix as needed."
-
 # Optional GitHub runner check (requires GITHUB_TOKEN and GITHUB_REPOSITORY in OWNER/REPO form)
 if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
   if ! command -v jq >/dev/null 2>&1; then

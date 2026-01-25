@@ -53,6 +53,8 @@ int RunTripSitter(const TCHAR* CommandLine)
 
     // Add window and show
     FSlateApplication::Get().AddWindow(MainWindow);
+    MainWindow->ShowWindow();
+    MainWindow->BringToFront();
 
     // Main application loop
     while (!IsEngineExitRequested())

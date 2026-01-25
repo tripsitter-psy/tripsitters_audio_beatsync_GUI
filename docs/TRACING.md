@@ -5,11 +5,11 @@ This repository includes optional OpenTelemetry tracing support for the backend 
 ## Quick start (local)
 
 1. Install OpenTelemetry C++ SDK (recommended via vcpkg):
-   - vcpkg install opentelemetry-cpp
-     - Example for Windows: `vcpkg install opentelemetry-cpp:x64-windows`
-     - Example for Linux: `vcpkg install opentelemetry-cpp:x64-linux`
-      - Example for macOS (Intel): `vcpkg install opentelemetry-cpp:x64-osx`
-      - Example for macOS (Apple Silicon): `vcpkg install opentelemetry-cpp:arm64-osx`
+    - vcpkg install opentelemetry-cpp
+       - Example for Windows: `vcpkg install opentelemetry-cpp:x64-windows`
+       - Example for Linux: `vcpkg install opentelemetry-cpp:x64-linux`
+       - Example for macOS (Intel): `vcpkg install opentelemetry-cpp:x64-osx`
+       - Example for macOS (Apple Silicon): `vcpkg install opentelemetry-cpp:arm64-osx`
    - By default, vcpkg uses the triplet set by your environment or toolchain file. You can override the triplet by appending `:<triplet>` to the package name, or by setting the `VCPKG_DEFAULT_TRIPLET` environment variable.
    - If using vcpkg toolchain, configure CMake with `-DBEATSYNC_ENABLE_TRACING=ON` and ensure you use the matching vcpkg toolchain and triplet for your platform.
 

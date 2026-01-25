@@ -25,18 +25,27 @@ jobs:
             echo "gpu_changes=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Find existing GPU PR comment
+        id: gpu_comment
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: '<!-- gpu-pr-check -->'
+
       - name: Notify PR about missing test-cuda label
         if: steps.detect.outputs.gpu_changes == 'true' && contains(github.event.pull_request.labels.*.name, 'test-cuda') == false
         uses: peter-evans/create-or-update-comment@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.pull_request.number }}
+          comment-id: ${{ steps.gpu_comment.outputs.comment-id }}
           body: |
             :wave: I detected GPU/ONNX-related changes in this PR but the **`test-cuda`** label is missing.
 
             Please add the **`test-cuda`** label so the gated CUDA integration workflow can run on a GPU-enabled self-hosted runner and validate GPU changes.
 
-            *How-to:* add the label in the PR sidebar or run `python tools/check_gpu_changes.py --base "${{ github.base_ref }}"` to see which files triggered this.
+            *How-to:* add the label in the PR sidebar or run `python tools/check_gpu_changes.py --base "${{ github.event.pull_request.base.ref }}"` to see which files triggered this.
 
             <!-- gpu-pr-check -->
           edit-mode: replace

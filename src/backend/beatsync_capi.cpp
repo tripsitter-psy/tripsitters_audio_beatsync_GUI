@@ -2131,9 +2131,19 @@ BEATSYNC_API int bs_audioflux_analyze_with_stems(const char* audio_path,
 
         return 0;
     } catch (const std::exception& e) {
+        if (out_result && out_result->beats) {
+            free(out_result->beats);
+            out_result->beats = nullptr;
+            out_result->beat_count = 0;
+        }
         s_lastError = std::string("Stems+AudioFlux analysis exception: ") + e.what();
         return -5;
     } catch (...) {
+        if (out_result && out_result->beats) {
+            free(out_result->beats);
+            out_result->beats = nullptr;
+            out_result->beat_count = 0;
+        }
         s_lastError = "Stems+AudioFlux analysis crashed with unknown exception";
         return -6;
     }

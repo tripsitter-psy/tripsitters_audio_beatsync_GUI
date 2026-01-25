@@ -300,10 +300,10 @@ struct OnnxMusicAnalyzer::Impl {
 
         if (progress) progress(1.0f, "Complete", "Analysis complete");
 
-        // Release GPU memory after analysis to prevent accumulation during long processing sessions
-        if (beatDetectorLoaded && beatDetector) {
-            beatDetector->releaseGPUMemory();
-        }
+        // Note: GPU memory is managed by the ONNX Runtime session and will be released
+        // when the detector is destroyed. Calling releaseGPUMemory() here would set
+        // loaded=false in the detector while beatDetectorLoaded remains true, breaking
+        // subsequent analyze() calls. Let ONNX Runtime manage its memory lifecycle.
 
         return result;
     }

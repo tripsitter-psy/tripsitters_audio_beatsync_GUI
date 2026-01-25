@@ -112,14 +112,19 @@ TEST_CASE("AudioAnalyzer null parameter handling", "[backend][audio][null]") {
 
     bs_beatgrid_t grid = {};
 
-    // Null analyzer
+    // Null analyzer - should fail regardless of file existence
     REQUIRE(bs_analyze_audio(nullptr, TEST_AUDIO_FILE, &grid) == -1);
 
-    // Null filepath
+    // Null filepath - should fail regardless of file existence
     REQUIRE(bs_analyze_audio(analyzer, nullptr, &grid) == -1);
 
-    // Null output grid
-    REQUIRE(bs_analyze_audio(analyzer, TEST_AUDIO_FILE, nullptr) == -1);
+    // Null output grid - requires existing file to ensure we're testing null handling,
+    // not file-not-found error
+    if (std::filesystem::exists(TEST_AUDIO_FILE)) {
+        REQUIRE(bs_analyze_audio(analyzer, TEST_AUDIO_FILE, nullptr) == -1);
+    } else {
+        WARN("Skipping null output grid test - test audio file not found: " << TEST_AUDIO_FILE);
+    }
 
     bs_destroy_audio_analyzer(analyzer);
 }

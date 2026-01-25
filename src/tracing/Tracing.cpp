@@ -40,13 +40,14 @@ void SetTracingFlushMode(TracingFlushMode mode, int period_ms = 1000) {
     if (mode == TracingFlushMode::Periodic) {
         g_flush_period_ms.store(period_ms, std::memory_order_relaxed);
         std::lock_guard<std::mutex> startlk(g_flush_start_mutex);
-        if (!g_flush_thread_running) {
-            g_flush_thread_running = true;
+        // Use compare_exchange for atomic check-and-set to avoid race
+        bool expected = false;
+        if (g_flush_thread_running.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
             g_flush_thread = std::thread([]() {
-                while (g_flush_thread_running) {
+                while (g_flush_thread_running.load(std::memory_order_acquire)) {
                     std::unique_lock<std::mutex> lk(g_flush_cv_mutex);
                     g_flush_cv.wait_for(lk, std::chrono::milliseconds(g_flush_period_ms.load(std::memory_order_relaxed)));
-                    if (!g_flush_thread_running) break;
+                    if (!g_flush_thread_running.load(std::memory_order_acquire)) break;
                     std::lock_guard<std::mutex> outlk(g_mutex);
                     if (g_out) g_out->flush();
                 }
@@ -55,8 +56,9 @@ void SetTracingFlushMode(TracingFlushMode mode, int period_ms = 1000) {
     } else {
         // Stop background flusher if running
         std::lock_guard<std::mutex> startlk(g_flush_start_mutex);
-        if (g_flush_thread_running) {
-            g_flush_thread_running = false;
+        // Use compare_exchange for atomic check-and-set to avoid race
+        bool expected = true;
+        if (g_flush_thread_running.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) {
             g_flush_cv.notify_all();
             if (g_flush_thread.joinable()) g_flush_thread.join();
         }

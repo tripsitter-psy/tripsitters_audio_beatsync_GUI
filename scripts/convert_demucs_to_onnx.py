@@ -35,6 +35,8 @@ def main():
                         help="Audio segment length in samples (default: 10 seconds at 44.1kHz)")
     parser.add_argument("--verify", action="store_true", help="Verify exported model")
     parser.add_argument("--simplify", action="store_true", help="Simplify ONNX model (requires onnx-simplifier)")
+    parser.add_argument("--allow-unsafe-checkpoint", action="store_true",
+                        help="Allow loading checkpoints without weights_only=True (security risk)")
     args = parser.parse_args()
 
     try:
@@ -224,8 +226,13 @@ def main():
                 try:
                     state_dict = torch.load(args.weights, map_location='cpu', weights_only=True)
                 except TypeError:
-                    # Fallback for older PyTorch versions
-                    print("  WARNING: weights_only=True not supported, falling back to unsafe loading")
+                    # PyTorch version doesn't support weights_only parameter
+                    if not args.allow_unsafe_checkpoint:
+                        print("  ERROR: Your PyTorch version does not support weights_only=True.", file=sys.stderr)
+                        print(f"         Loading '{args.weights}' without this flag is a security risk.", file=sys.stderr)
+                        print("         Either upgrade PyTorch (>= 1.13) or pass --allow-unsafe-checkpoint", file=sys.stderr)
+                        return 1
+                    print("  WARNING: Loading checkpoint without weights_only=True (--allow-unsafe-checkpoint specified)")
                     state_dict = torch.load(args.weights, map_location='cpu')
                 # Handle different checkpoint formats
                 if 'state_dict' in state_dict:
