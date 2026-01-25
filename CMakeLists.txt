@@ -314,7 +314,11 @@ if(USE_AUDIOFLUX)
             set(AUDIOFLUX_FFTW_DLL "${FOUND_FFTW_DLL}" CACHE FILEPATH "AudioFlux FFTW3 DLL path" FORCE)
             get_filename_component(AUDIOFLUX_FFTW_DLL_NAME "${FOUND_FFTW_DLL}" NAME)
         else()
-             set(AUDIOFLUX_FFTW_DLL_NAME "libfftw3f-3.dll" CACHE STRING "AudioFlux FFTW3 filename fallback")
+            # Leave AUDIOFLUX_FFTW_DLL empty so downstream EXISTS checks correctly detect missing DLL
+            set(AUDIOFLUX_FFTW_DLL "" CACHE FILEPATH "AudioFlux FFTW3 DLL path (not found)" FORCE)
+            set(AUDIOFLUX_FFTW_DLL_NAME "" CACHE STRING "AudioFlux FFTW3 filename (not found)")
+            message(WARNING "FFTW3 DLL (libfftw3f-3.dll) not found. AudioFlux spectral analysis may fail at runtime. "
+                            "Set FFTW_ROOT or ensure libfftw3f-3.dll is in AudioFlux installation directory.")
         endif()
     else()
         message(WARNING "AudioFlux not found (include: ${AUDIOFLUX_INCLUDE_DIR}, lib: ${AUDIOFLUX_LIBRARY}). Spectral analysis disabled.")
@@ -376,18 +380,29 @@ if(USE_AUDIOFLUX AND EXISTS "${AUDIOFLUX_LIBRARY}")
         # Use cache variables AUDIOFLUX_DLL_DIR and AUDIOFLUX_FFTW_DLL for consistency with installer
         if(WIN32 AND AUDIOFLUX_DLL_DIR)
             set(AUDIOFLUX_DLL_PATH "${AUDIOFLUX_DLL_DIR}/audioflux.dll")
-            if(EXISTS "${AUDIOFLUX_DLL_PATH}" AND EXISTS "${AUDIOFLUX_FFTW_DLL}")
+            
+            # Check and copy audioflux.dll
+            if(EXISTS "${AUDIOFLUX_DLL_PATH}")
                 add_custom_command(TARGET beatsync_backend_shared POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         "${AUDIOFLUX_DLL_PATH}"
                         "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
+                    COMMENT "Copying audioflux.dll"
+                )
+            else()
+                message(WARNING "AudioFlux DLL not found: ${AUDIOFLUX_DLL_PATH}")
+            endif()
+
+            # Check and copy FFTW DLL
+            if(EXISTS "${AUDIOFLUX_FFTW_DLL}")
+                add_custom_command(TARGET beatsync_backend_shared POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         "${AUDIOFLUX_FFTW_DLL}"
                         "$<TARGET_FILE_DIR:beatsync_backend_shared>/"
-                    COMMENT "Copying AudioFlux DLLs"
+                    COMMENT "Copying FFTW DLL"
                 )
             else()
-                message(WARNING "AudioFlux DLLs not found: ${AUDIOFLUX_DLL_PATH} or ${AUDIOFLUX_FFTW_DLL}")
+                message(WARNING "FFTW DLL not found: ${AUDIOFLUX_FFTW_DLL}")
             endif()
         endif()
     endif()
@@ -531,9 +546,13 @@ include(InstallRequiredSystemLibraries)
 set(CPACK_PACKAGE_NAME "MTVTripSitter")
 set(CPACK_PACKAGE_VENDOR "MTV")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "MTV Trip Sitter - Audio Beat Sync")
-set(CPACK_PACKAGE_VERSION_MAJOR "0")
-set(CPACK_PACKAGE_VERSION_MINOR "1")
-set(CPACK_PACKAGE_VERSION_PATCH "0")
+
+# Derive package version from project version (BEATSYNC_VERSION)
+string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)" _ ${BEATSYNC_VERSION})
+set(CPACK_PACKAGE_VERSION_MAJOR ${CMAKE_MATCH_1})
+set(CPACK_PACKAGE_VERSION_MINOR ${CMAKE_MATCH_2})
+set(CPACK_PACKAGE_VERSION_PATCH ${CMAKE_MATCH_3})
+
 set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${CPACK_PACKAGE_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "MTV TripSitter")

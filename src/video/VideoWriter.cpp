@@ -11,6 +11,8 @@
 #include <ctime>
 #include <cstring>
 #include <filesystem>
+#include <thread>
+#include <mutex>
 
 // libavformat for audio stream probing
 extern "C" {
@@ -193,8 +195,8 @@ void flushGpuMemory() {
     // Additional brief sleep to let cleanup propagate
     Sleep(50);
 #else
-    // On Linux/macOS, brief sleep is the best we can do without root access
-    usleep(150000);  // 150ms
+    // On Linux/macOS, brief sleep using standard thread features
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
 #endif
 }
 
@@ -257,75 +259,70 @@ std::string VideoWriter::resolveFfmpegPath() const {
 std::string VideoWriter::getFFmpegPath() const {
     // Cache the result to avoid repeated system calls
     static std::string s_cachedFfmpegPath;
-    static bool s_ffmpegPathCached = false;
+    static std::once_flag s_ffmpegFlag;
 
-    if (s_ffmpegPathCached) {
-        return s_cachedFfmpegPath;
-    }
+    std::call_once(s_ffmpegFlag, []() {
+        // 1. Check environment variable first
+        const char* envPath = std::getenv("BEATSYNC_FFMPEG_PATH");
+        if (envPath != nullptr && envPath[0] != '\0') {
+            s_cachedFfmpegPath = envPath;
+            return;
+        }
 
-    // 1. Check environment variable first
-    const char* envPath = std::getenv("BEATSYNC_FFMPEG_PATH");
-    if (envPath != nullptr && envPath[0] != '\0') {
-        s_cachedFfmpegPath = envPath;
-        s_ffmpegPathCached = true;
-        return s_cachedFfmpegPath;
-    }
-
-    // 2. Try to find ffmpeg in PATH (hidden to avoid console flash)
+        // 2. Try to find ffmpeg in PATH (hidden to avoid console flash)
 #ifdef _WIN32
-    std::string result;
-    int rc = runHiddenCommand("where ffmpeg", result);
-    if (rc == 0 && !result.empty()) {
-        // Get first line (first match)
-        size_t newline = result.find('\n');
-        if (newline != std::string::npos) {
-            result = result.substr(0, newline);
-        }
-        // Trim trailing whitespace
-        while (!result.empty() && (result.back() == '\r' || result.back() == ' ')) {
-            result.pop_back();
-        }
-        // If we found something, cache and use it
-        if (!result.empty() && result.find("ffmpeg") != std::string::npos) {
-            s_cachedFfmpegPath = result;
-            s_ffmpegPathCached = true;
-            return s_cachedFfmpegPath;
-        }
-    }
-#else
-    FILE* pipe = popen("which ffmpeg 2>/dev/null", "r");
-    if (pipe) {
-        char buffer[512];
         std::string result;
-        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-            result += buffer;
+        int rc = runHiddenCommand("where ffmpeg", result);
+        if (rc == 0 && !result.empty()) {
+            // Get first line (first match)
+            size_t newline = result.find('\n');
+            if (newline != std::string::npos) {
+                result = result.substr(0, newline);
+            }
+            // Trim trailing whitespace
+            while (!result.empty() && (result.back() == '\r' || result.back() == ' ')) {
+                result.pop_back();
+            }
+            // If we found something, cache and use it
+            if (!result.empty() && result.find("ffmpeg") != std::string::npos) {
+                s_cachedFfmpegPath = result;
+                return;
+            }
         }
-        pclose(pipe);
-
-        // Get first line (first match)
-        size_t newline = result.find('\n');
-        if (newline != std::string::npos) {
-            result = result.substr(0, newline);
-        }
-
-        // If we found something, cache and use it
-        if (!result.empty() && result.find("ffmpeg") != std::string::npos) {
-            s_cachedFfmpegPath = result;
-            s_ffmpegPathCached = true;
-            return s_cachedFfmpegPath;
-        }
-    }
-#endif
-
-    // 3. Fall back to platform-specific hardcoded path (also cache these)
-#ifdef _WIN32
-    s_cachedFfmpegPath = "C:\\ffmpeg-dev\\ffmpeg-master-latest-win64-gpl-shared\\bin\\ffmpeg.exe";
-#elif defined(__APPLE__)
-    s_cachedFfmpegPath = "/opt/homebrew/bin/ffmpeg";
 #else
-    s_cachedFfmpegPath = "/usr/bin/ffmpeg";
+        FILE* pipe = popen("which ffmpeg 2>/dev/null", "r");
+        if (pipe) {
+            char buffer[512];
+            std::string result;
+            while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+                result += buffer;
+            }
+            pclose(pipe);
+
+            // Get first line (first match)
+            size_t newline = result.find('\n');
+            if (newline != std::string::npos) {
+                result = result.substr(0, newline);
+            }
+
+            // If we found something, cache and use it
+            if (!result.empty() && result.find("ffmpeg") != std::string::npos) {
+                s_cachedFfmpegPath = result;
+                return;
+            }
+        }
 #endif
-    s_ffmpegPathCached = true;
+
+        // 3. Fall back to platform-specific hardcoded path
+#ifdef _WIN32
+        s_cachedFfmpegPath = "C:\\ffmpeg-dev\\ffmpeg-master-latest-win64-gpl-shared\\bin\\ffmpeg.exe";
+#elif defined(__APPLE__)
+        s_cachedFfmpegPath = "/opt/homebrew/bin/ffmpeg";
+#else
+        s_cachedFfmpegPath = "/usr/bin/ffmpeg";
+#endif
+    });
+
     return s_cachedFfmpegPath;
 }
 

@@ -76,7 +76,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backend-dlls
-          path: build/Release
+          path: build
 
       - name: Deploy DLLs to UE5
         run: |
@@ -84,7 +84,7 @@ jobs:
 
           # Copy backend DLLs
           Copy-Item 'build\Release\beatsync_backend_shared.dll' $ue5Bin -Force
-          Copy-Item 'build\Release\onnxruntime.dll' $ue5Bin -Force -ErrorAction SilentlyContinue
+          Copy-Item 'build\vcpkg_installed\x64-windows\bin\onnxruntime*.dll' $ue5Bin -Force -ErrorAction SilentlyContinue
 
           # Copy FFmpeg DLLs from ThirdParty
           Copy-Item 'unreal-prototype\ThirdParty\beatsync\lib\x64\av*.dll' $ue5Bin -Force
@@ -168,19 +168,23 @@ jobs:
         run: |
           # Check if TripSitter.exe was downloaded
           $tripSitterPath = "staging/bin/TripSitter.exe"
+          $cmakeArgs = @(
+            "-S", ".",
+            "-B", "build",
+            "-DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}",
+            "-DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake",
+            "-DVCPKG_OVERLAY_TRIPLETS=${{ github.workspace }}/triplets",
+            "-DBUILD_TESTS=OFF"
+          )
+
           if (Test-Path $tripSitterPath) {
-            $tripSitterArg = "-DTRIPSITTER_EXE_PATH=${{ github.workspace }}/staging/bin/TripSitter.exe"
+            $cmakeArgs += "-DTRIPSITTER_EXE_PATH=${{ github.workspace }}/staging/bin/TripSitter.exe"
             Write-Host "TripSitter.exe found - will be included in installer"
           } else {
-            $tripSitterArg = ""
             Write-Warning "TripSitter.exe not found - installer will not include main GUI"
           }
 
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
-            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" `
-            -DBUILD_TESTS=OFF `
-            $tripSitterArg
+          cmake @cmakeArgs
         shell: powershell
 
       - name: Check certificate availability
@@ -461,7 +465,12 @@ jobs:
 
           if (Test-Path $uninstaller) {
             Write-Host "Running uninstaller..."
-            $proc = Start-Process -FilePath $uninstaller -ArgumentList "/S" -PassThru -Wait
+            $proc = Start-Process -FilePath $uninstaller -ArgumentList "/S" -PassThru
+            if (-not $proc.WaitForExit(300000)) {
+                Stop-Process -Id $proc.Id -Force
+                Write-Error "Uninstaller timed out"
+                exit 1
+            }
             Write-Host "Uninstaller exit code: $($proc.ExitCode)"
 
             # Verify cleanup
