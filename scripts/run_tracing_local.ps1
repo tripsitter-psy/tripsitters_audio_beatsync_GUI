@@ -8,14 +8,12 @@ try {
     cmake $projectRoot -G "Visual Studio 17 2022" -A x64 -DBEATSYNC_ENABLE_TRACING=ON -DBEATSYNC_ENABLE_TESTS=ON
     $configureExitCode = $LASTEXITCODE
     if ($configureExitCode -ne 0) {
-        Write-Error "CMake configure failed with exit code: $configureExitCode"
-        exit $configureExitCode
+        throw "CMake configure failed with exit code: $configureExitCode"
     }
     cmake --build . --config Debug -- /m
     $buildExitCode = $LASTEXITCODE
     if ($buildExitCode -ne 0) {
-        Write-Error "CMake build failed with exit code: $buildExitCode"
-        exit $buildExitCode
+        throw "CMake build failed with exit code: $buildExitCode"
     }
     $traceOut = Join-Path $PWD 'beatsync-trace.log'
     $env:BEATSYNC_TRACE_OUT = $traceOut

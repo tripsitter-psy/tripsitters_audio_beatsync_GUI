@@ -25,7 +25,7 @@ param(
     [System.Security.SecureString]$CertificatePassword,
 
     [Parameter(Mandatory=$false)]
-    [string]$TimestampUrl = "http://timestamp.digicert.com",
+    [string]$TimestampUrl = "https://timestamp.digicert.com",
 
     [Parameter(Mandatory=$false)]
     [switch]$DryRun

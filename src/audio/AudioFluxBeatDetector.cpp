@@ -514,7 +514,9 @@ std::vector<double> AudioFluxBeatDetector::fillBeatGaps(const std::vector<double
     double beatInterval = modeBin / 100.0;
 
     // If the mode isn't well-supported, use median
-    if (maxCount < static_cast<int>(intervals.size()) / 5) {
+    // Use safe threshold to handle small interval counts (avoid integer division yielding 0)
+    int minSupport = std::max(1, static_cast<int>(intervals.size()) / 5);
+    if (maxCount < minSupport) {
         beatInterval = intervals[intervals.size() / 2];
     }
 
@@ -609,7 +611,9 @@ double AudioFluxBeatDetector::estimateBPM(const std::vector<double>& beats, doub
     double modeInterval = modeBin / 200.0;
 
     // Use mode if it has significant support, otherwise median
-    double bestInterval = (maxCount > intervals.size() / 5) ? modeInterval : medianInterval;
+    // Use safe threshold to handle small interval counts (avoid integer division yielding 0)
+    int minSupportBPM = std::max(1, static_cast<int>(intervals.size()) / 5);
+    double bestInterval = (maxCount > minSupportBPM) ? modeInterval : medianInterval;
 
     // Also try subdivisions and multiples to find best fit
     std::vector<double> candidates = {

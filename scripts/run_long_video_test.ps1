@@ -84,8 +84,13 @@ foreach ($cmd in $cmds) {
         $proc = Start-Process -FilePath powershell -ArgumentList "-NoProfile -Command $cmd; exit `$LASTEXITCODE" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempOut -RedirectStandardError $tempErr
         $exitCode = $proc.ExitCode
     } catch {
-        if ($proc -and $proc.ExitCode -ne $null) {
-            $exitCode = $proc.ExitCode
+        if ($null -ne $proc) {
+            $code = $proc.ExitCode
+            if ($null -ne $code) {
+                $exitCode = $code
+            } else {
+                $exitCode = 1
+            }
         } else {
             $exitCode = 1
         }

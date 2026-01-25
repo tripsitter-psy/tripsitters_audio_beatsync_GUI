@@ -175,10 +175,12 @@ foreach ($group in $copyOrder) {
         # Verify source file size
         if (-not (Test-DLLSize $sourcePath $minSize)) {
             $actualSize = (Get-Item $sourcePath).Length
+            $actualSizeMB = [math]::Round($actualSize/1MB, 2)
+            $minSizeMB = [math]::Round($minSize/1MB, 2)
             if ($isOptional) {
-                Write-Host "  [WARN] $dll - Source file smaller than expected ($([math]::Round($actualSize/1MB, 2))MB < $minSize)" -ForegroundColor Yellow
+                Write-Host "  [WARN] $dll - Source file smaller than expected (${actualSizeMB}MB < ${minSizeMB}MB)" -ForegroundColor Yellow
             } else {
-                 Write-Host "  [ERROR] $dll - Source file smaller than expected ($([math]::Round($actualSize/1MB, 2))MB < $minSize). Check if the correct library is installed." -ForegroundColor Red
+                 Write-Host "  [ERROR] $dll - Source file smaller than expected (${actualSizeMB}MB < ${minSizeMB}MB). Check if the correct library is installed." -ForegroundColor Red
                  $allOk = $false
                  continue
             }
@@ -226,4 +228,5 @@ elseif ($allOk) {
 }
 else {
     Write-Host "`nDeployment completed with warnings. Check DLL sizes above." -ForegroundColor Yellow
+    exit 1
 }
