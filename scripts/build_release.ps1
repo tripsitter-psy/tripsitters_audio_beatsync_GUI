@@ -170,10 +170,14 @@ Write-Step "Stage 2: Deploying DLLs"
 
 $deployScript = Join-Path $ScriptDir "deploy_tripsitter.ps1"
 if (Test-Path $deployScript) {
+    $deployArgs = @()
     if ($DryRun) {
-        Write-Host "Would run: $deployScript -DryRun" -ForegroundColor Yellow
+        $deployArgs += "-DryRun"
+    }
+
+    if ($DryRun) {
+        Write-Host "Would run: $deployScript $($deployArgs -join ' ')" -ForegroundColor Yellow
     } else {
-        $deployArgs = @()
         & $deployScript @deployArgs
         if ($LASTEXITCODE -ne 0) {
             Write-Warn "DLL deployment had issues - check output above"

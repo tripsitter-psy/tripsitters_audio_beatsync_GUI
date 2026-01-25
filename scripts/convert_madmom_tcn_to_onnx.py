@@ -192,6 +192,12 @@ def main():
     # Collect pkl files
     pkl_files = []
     if args.pkl:
+        if not os.path.exists(args.pkl):
+            print(f"ERROR: File does not exist: {args.pkl}", file=sys.stderr)
+            return 1
+        if not os.path.isfile(args.pkl):
+            print(f"ERROR: Path is not a file: {args.pkl}", file=sys.stderr)
+            return 1
         pkl_files = [args.pkl]
     elif args.pkl_dir:
         if not os.path.exists(args.pkl_dir):

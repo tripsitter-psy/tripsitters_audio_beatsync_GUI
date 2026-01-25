@@ -25,7 +25,6 @@ def main():
 
     try:
         import torch
-        import torch.nn as nn
     except ImportError:
         print("ERROR: PyTorch not installed", file=sys.stderr)
         return 1

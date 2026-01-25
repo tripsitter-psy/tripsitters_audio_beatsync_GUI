@@ -176,14 +176,13 @@ Section "Uninstall"
 
     ; Remove runtime/user data (logs, configs, etc.)
     ; Remove logs/configs under $INSTDIR if present
-    IfFileExists "$INSTDIR\logs\*.*" 0 +2
-        Delete "$INSTDIR\logs\*.*"
-    IfDirExists "$INSTDIR\logs" 0 +2
+    IfDirExists "$INSTDIR\logs" 0 skip_logs_remove
         RMDir /r "$INSTDIR\logs"
-    IfFileExists "$INSTDIR\config\*.*" 0 +2
-        Delete "$INSTDIR\config\*.*"
-    IfDirExists "$INSTDIR\config" 0 +2
+    skip_logs_remove:
+
+    IfDirExists "$INSTDIR\config" 0 skip_config_remove
         RMDir /r "$INSTDIR\config"
+    skip_config_remove:
 
     ; Remove per-user data (prompt before deletion)
     IfDirExists "$APPDATA\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_NAME@" 0 skip_user_remove

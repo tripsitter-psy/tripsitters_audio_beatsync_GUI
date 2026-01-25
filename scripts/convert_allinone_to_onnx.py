@@ -98,30 +98,46 @@ def main():
             # Ensure model returns all outputs (real or placeholder) for ONNX export
             def get_all_outputs(model, dummy_input, export_full):
                 outputs = model(dummy_input)
-                # If not full export, fill with zeros for missing outputs
-                if not export_full:
-                    # check if outputs is already a 6-element list/tuple
-                    if isinstance(outputs, (list, tuple)) and len(outputs) == 6:
-                        return outputs
 
-                    # outputs: embeddings only, so fill others
-                    batch = dummy_input.shape[0]
-                    time = dummy_input.shape[3]
-                    segments = 1
-                    classes = 1
-                    # Use dummy_input to get device/dtype so we don't need 'import torch'
-                    zeros = lambda *shape: dummy_input.new_zeros(*shape)
-                    
-                    # Return tuple in output_names order
-                    return (
-                        zeros(batch, time),  # beat_activation
-                        zeros(batch, time),  # downbeat_activation
-                        zeros(batch, time),  # segment_activation
-                        zeros(batch, segments),  # segment_labels
-                        zeros(batch, classes),  # tempo_logits
-                        outputs  # embeddings
-                    )
-                return outputs
+                # Expected output keys for dict-style outputs
+                expected_keys = ['beat_activation', 'downbeat_activation', 'segment_activation',
+                                 'segment_labels', 'tempo_logits', 'embeddings']
+
+                # Handle dict outputs by mapping to tuple in expected order
+                if isinstance(outputs, dict):
+                    missing = [k for k in expected_keys if k not in outputs]
+                    if missing:
+                        raise ValueError(f"Model dict output missing keys: {missing}")
+                    return tuple(outputs[k] for k in expected_keys)
+
+                # If already a 6-element list/tuple, return as-is
+                if isinstance(outputs, (list, tuple)) and len(outputs) == 6:
+                    return outputs
+
+                # If a single Tensor, treat as embeddings only and fill placeholders
+                if isinstance(outputs, torch.Tensor):
+                    if not export_full:
+                        batch = dummy_input.shape[0]
+                        time = dummy_input.shape[3]
+                        segments = 1
+                        classes = 1
+                        zeros = lambda *shape: dummy_input.new_zeros(*shape)
+
+                        # Return tuple in output_names order
+                        return (
+                            zeros(batch, time),  # beat_activation
+                            zeros(batch, time),  # downbeat_activation
+                            zeros(batch, time),  # segment_activation
+                            zeros(batch, segments),  # segment_labels
+                            zeros(batch, classes),  # tempo_logits
+                            outputs  # embeddings
+                        )
+                    else:
+                        raise ValueError(f"export_full=True but model returned single Tensor, expected 6 outputs")
+
+                # Unexpected output type
+                raise ValueError(f"Unexpected model output type: {type(outputs).__name__}. "
+                                 f"Expected dict with keys {expected_keys}, 6-element tuple/list, or single Tensor.")
 
             torch.onnx.export(
                 lambda x: get_all_outputs(model, x, args.export_full),
@@ -183,10 +199,10 @@ def main():
                     k_window = k[:, :, window_idx, :]  # (B, num_heads, window, head_dim)
                     # Dot product attention
                     attn = torch.einsum('bnh,bnwh->bnw', q_t, k_window) * self.scale
-                    # Pad to kernel_size
+                    # Pad to kernel_size, masking padded positions with -inf so softmax gives them zero probability
                     pad = self.kernel_size - attn.shape[-1]
                     if pad > 0:
-                        attn = torch.nn.functional.pad(attn, (0, pad))
+                        attn = torch.nn.functional.pad(attn, (0, pad), value=float('-inf'))
                     attn_scores[:, :, t, :] = attn
 
                 attn_probs = torch.softmax(attn_scores, dim=-1)
@@ -343,7 +359,15 @@ def main():
                 beat_act = self.beat_head(x).squeeze(-1)  # (batch, time)
                 downbeat_act = self.downbeat_head(x).squeeze(-1)  # (batch, time)
                 segment_act = self.segment_head(x).squeeze(-1)  # (batch, time)
-                segment_labels = self.label_head(x)  # (batch, time, 10)
+                segment_labels_per_frame = self.label_head(x)  # (batch, time, 10)
+
+                # Aggregate frame-level segment labels into (batch, segments) to match USE_ALLIN1 branch
+                # Use segment boundaries from segment_act to pool labels
+                # For simplicity, use global pooling: average over time, then argmax per segment
+                # Output shape: (batch, num_segments) where num_segments is derived from segment_act peaks
+                # Since we need a fixed output shape, use a single aggregated segment label
+                segment_labels_pooled = segment_labels_per_frame.mean(dim=1)  # (batch, 10)
+                segment_labels = segment_labels_pooled.argmax(dim=-1, keepdim=True)  # (batch, 1)
 
                 # Tempo estimation
                 tempo_feat = x.permute(0, 2, 1)  # (batch, embed_dim, time)
