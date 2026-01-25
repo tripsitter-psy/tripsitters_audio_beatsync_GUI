@@ -107,3 +107,14 @@ endif()
 
 # GUI wallpaper tests removed - wxWidgets GUI has been deprecated and deleted
 # The GUI is now implemented in Unreal Engine (TripSitter standalone app)
+    # Spectral flux tests
+    add_executable(test_spectral_flux
+        catch_main.cpp
+        test_spectral_flux.cpp
+        ../src/audio/SpectralFlux.cpp
+    )
+
+    target_include_directories(test_spectral_flux PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(test_spectral_flux PRIVATE Catch2::Catch2)
+    add_test(NAME spectral_flux COMMAND test_spectral_flux)
+    set_tests_properties(spectral_flux PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
