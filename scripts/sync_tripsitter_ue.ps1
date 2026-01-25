@@ -26,10 +26,18 @@ if (-not (Test-Path $RepoSource)) {
 
 function Get-EngineSourcePath {
     $engineSource = $env:TRIPSITTER_ENGINE_PATH
+    # Trim whitespace from environment variable if present
+    if ($engineSource) {
+        $engineSource = $engineSource.Trim()
+    }
     if (-not $engineSource) {
         $isInteractive = -not $NonInteractive -and [Environment]::UserInteractive
         if ($isInteractive) {
             $engineSource = Read-Host "Enter the path to the Unreal Engine source directory (e.g., C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter)"
+            # Trim whitespace from user input
+            if ($engineSource) {
+                $engineSource = $engineSource.Trim()
+            }
         } else {
             Write-Warning "Engine source path not set and cannot prompt in non-interactive mode. Set TRIPSITTER_ENGINE_PATH or pass interactively."
             return $null
@@ -94,7 +102,7 @@ function Sync-ToEngine {
                     [System.IO.File]::WriteAllText($dstFile, $content, [System.Text.UTF8Encoding]::new($false))
                     Write-Host "  [OK] $file" -ForegroundColor Green
                 } catch {
-                    Write-Host "  [FAIL] $file: $_" -ForegroundColor Red
+                    Write-Host "  [FAIL] ${file}: $_" -ForegroundColor Red
                     $failedWrites++
                 }
             } else {
@@ -151,8 +159,8 @@ function Sync-ToEngine {
         }
 
         if (-not (Test-Path $EngineRoot)) {
-            Write-Warning "Engine root directory '$EngineRoot' does not exist."
-            return
+            Write-Error "Engine root directory '$EngineRoot' does not exist. Sync aborted."
+            exit 1
         }
         Write-Host "`nSync complete! Now run:" -ForegroundColor Cyan
         Write-Host "  cd '$EngineRoot'" -ForegroundColor White
@@ -207,7 +215,7 @@ function Sync-ToRepo {
                 [System.IO.File]::WriteAllText($dstFile, $content, $utf8NoBom)
                 Write-Host "  [OK] $file" -ForegroundColor Green
             } catch {
-                Write-Host "  [FAIL] $file: $_" -ForegroundColor Red
+                Write-Host "  [FAIL] ${file}: $_" -ForegroundColor Red
                 $failedWrites++
             }
         } else {

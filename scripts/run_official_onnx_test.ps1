@@ -41,7 +41,8 @@ if (Test-Path $outDir) {
 
 Write-Host "Extracting to $outDir"
 try {
-    Expand-Archive -LiteralPath $zipPath -DestinationPath $outDir
+    # Use -Force to overwrite existing files if prior Remove-Item failed
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $outDir -Force
     # Cleanup: remove the downloaded ZIP after extraction
     Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 } catch {

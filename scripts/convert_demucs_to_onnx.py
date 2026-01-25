@@ -222,6 +222,8 @@ def main():
                 output = torch.stack(stems, dim=1)
                 return output
 
+        # Set deterministic seed before model creation for reproducibility
+        torch.manual_seed(42)
         model = LightweightStemSeparator()
 
         # Load pre-trained weights if provided
@@ -258,9 +260,7 @@ def main():
                 print(f"  WARNING: Could not load weights: {e}")
                 print("  Using random initialization instead.")
         else:
-            # Ensure deterministic initialization
-            torch.manual_seed(42)
-            model = LightweightStemSeparator()
+            # Apply deterministic weight initialization (model already created with seed 42)
             for m in model.modules():
                 if isinstance(m, (nn.Conv1d, nn.ConvTranspose1d)):
                     nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')

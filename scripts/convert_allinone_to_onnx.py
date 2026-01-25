@@ -404,13 +404,14 @@ def main():
 
         print(f"Exporting to ONNX (input shape: {dummy_input.shape})...")
 
+        # Match USE_ALLIN1 branch dynamic_axes for consistent output shapes
         dynamic_axes = {
             'spectrogram': {0: 'batch', 3: 'time'},
             'beat_activation': {0: 'batch', 1: 'time'},
             'downbeat_activation': {0: 'batch', 1: 'time'},
             'segment_activation': {0: 'batch', 1: 'time'},
-            'segment_labels': {0: 'batch', 1: 'time'},
-            'tempo_logits': {0: 'batch'},
+            'segment_labels': {0: 'batch', 1: 'segments'},
+            'tempo_logits': {0: 'batch', 1: 'classes'},
             'embeddings': {0: 'batch', 1: 'time'}
         }
 

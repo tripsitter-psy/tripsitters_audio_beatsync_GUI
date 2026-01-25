@@ -123,8 +123,11 @@ foreach ($dir in $sourceDirs) {
 
 # Copy DLLs in correct order (ThirdParty FFmpeg LAST to avoid overwrite)
 $copyOrder = @(
-    @{ Name = "ONNX Runtime & Dependencies"; Pattern = "build/Release DLLs"; DLLs = @(
-        "beatsync_backend_shared.dll", "onnxruntime.dll", "abseil_dll.dll",
+    @{ Name = "Project Backend"; Pattern = "build/Release"; DLLs = @(
+        "beatsync_backend_shared.dll"
+    )},
+    @{ Name = "ONNX Runtime & Dependencies (vcpkg)"; Pattern = "vcpkg bin"; DLLs = @(
+        "onnxruntime.dll", "abseil_dll.dll",
         "libprotobuf.dll", "libprotobuf-lite.dll", "re2.dll"
     )},
     @{ Name = "ONNX Shared Provider"; Pattern = "vcpkg bin"; DLLs = @(
@@ -178,9 +181,9 @@ foreach ($group in $copyOrder) {
             $actualSizeMB = [math]::Round($actualSize/1MB, 2)
             $minSizeMB = [math]::Round($minSize/1MB, 2)
             if ($isOptional) {
-                Write-Host "  [WARN] $dll - Source file smaller than expected (${actualSizeMB}MB < ${minSizeMB}MB)" -ForegroundColor Yellow
+                Write-Host "  [WARN] $dll - Source file smaller than expected (${actualSizeMB} MB < ${minSizeMB} MB)" -ForegroundColor Yellow
             } else {
-                 Write-Host "  [ERROR] $dll - Source file smaller than expected (${actualSizeMB}MB < ${minSizeMB}MB). Check if the correct library is installed." -ForegroundColor Red
+                 Write-Host "  [ERROR] $dll - Source file smaller than expected (${actualSizeMB} MB < ${minSizeMB} MB). Check if the correct library is installed." -ForegroundColor Red
                  $allOk = $false
                  continue
             }
@@ -227,6 +230,6 @@ elseif ($allOk) {
     Write-Host "`nDeployment successful! TripSitter.exe is ready to run." -ForegroundColor Green
 }
 else {
-    Write-Host "`nDeployment completed with warnings. Check DLL sizes above." -ForegroundColor Yellow
+    Write-Host "`nDeployment FAILED: One or more required DLLs have incorrect sizes. Check errors above." -ForegroundColor Red
     exit 1
 }
