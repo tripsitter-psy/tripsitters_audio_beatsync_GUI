@@ -87,6 +87,7 @@ jobs:
       # Summary will be emitted at the end after test artifacts are uploaded
 
       - name: Ensure test results directory exists
+        if: always()
         run: |
           New-Item -ItemType Directory -Force -Path build/Testing
 

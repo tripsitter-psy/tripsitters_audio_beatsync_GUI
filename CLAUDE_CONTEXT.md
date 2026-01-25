@@ -27,9 +27,9 @@ A beat-synced video editor with:
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets -DAUDIOFLUX_ROOT="C:/audioFlux"
 cmake --build build --config Release --target beatsync_backend_shared
 
-# TripSitter
-Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "${UE_SOURCE}\Engine\Source\Programs\TripSitter\Private\" -Recurse -Force
-& "${UE_SOURCE}\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+# TripSitter (UE_SOURCE path from Key Locations table above)
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
+& "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
 
 ## Recent Fixes (January 13, 2026)

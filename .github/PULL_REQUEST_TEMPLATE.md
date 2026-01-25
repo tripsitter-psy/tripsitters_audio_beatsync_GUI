@@ -8,7 +8,11 @@ Please describe the change and why it is needed.
 ### GPU / CUDA / ONNX Note
 If your PR touches GPU code (CUDA, ONNX runtime, device providers, .cu files, or environment flags like `BEATSYNC_ONNX_USE_CUDA`):
 - Add the label **`test-cuda`** to the PR so the gated CUDA integration workflow runs on a GPU-enabled runner.
-- Optionally mention which GPU/drivers were used for testing and any special setup.
+- In the **Summary** section above, include GPU/driver testing details:
+  - GPU model (e.g., RTX 4090, GTX 1080)
+  - CUDA toolkit version (e.g., 12.4)
+  - Driver version (e.g., 560.94)
+  - Any special setup steps or environment variables used
 
 Thanks!
 <details>
