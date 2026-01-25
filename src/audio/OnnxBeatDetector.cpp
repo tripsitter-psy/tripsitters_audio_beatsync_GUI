@@ -547,21 +547,14 @@ struct OnnxBeatDetector::Impl {
 
             // Prepare input tensor
             // Shape: (batch=1, channels=1, n_mels, time)
+            // melSpec is already laid out as (n_mels * n_frames) which matches the flattened tensor
             std::vector<int64_t> inputShape = {1, 1, nMels, numFrames};
-            size_t inputSize = 1 * 1 * nMels * numFrames;
+            size_t inputSize = static_cast<size_t>(nMels) * numFrames;
 
-            // Reshape mel spectrogram from (n_mels * n_frames) to (1, 1, n_mels, n_frames)
-            std::vector<float> inputTensor(inputSize);
-            for (int m = 0; m < nMels; ++m) {
-                for (int t = 0; t < numFrames; ++t) {
-                    inputTensor[m * numFrames + t] = melSpec[m * numFrames + t];
-                }
-            }
-
-            // Create ONNX tensor
+            // Create ONNX tensor directly from melSpec data (no copy needed)
             auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
             auto inputTensorOrt = Ort::Value::CreateTensor<float>(
-                memoryInfo, inputTensor.data(), inputSize,
+                memoryInfo, melSpec.data(), inputSize,
                 inputShape.data(), inputShape.size()
             );
 
@@ -802,7 +795,11 @@ std::vector<double> OnnxBeatDetector::processChunkImpl(const std::vector<float>&
     // Update stream state
     m_impl->streamTime += bufferDuration;
     if (m_impl->streamBuffer.size() > overlapSamples) {
-        m_impl->streamBuffer.erase(m_impl->streamBuffer.begin(), m_impl->streamBuffer.end() - overlapSamples);
+        // Move overlap samples to front - O(overlapSamples) instead of O(n) erase
+        std::move(m_impl->streamBuffer.end() - overlapSamples,
+                  m_impl->streamBuffer.end(),
+                  m_impl->streamBuffer.begin());
+        m_impl->streamBuffer.resize(overlapSamples);
         m_impl->streamTime -= overlapSamples / static_cast<double>(m_impl->config.sampleRate);
     } else {
         m_impl->streamBuffer.clear();
