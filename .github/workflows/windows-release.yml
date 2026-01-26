@@ -65,8 +65,12 @@ jobs:
     name: Build TripSitter GUI
     needs: build-backend
     runs-on: [self-hosted, windows, ue5]
-    if: github.event.inputs.include_tripsitter == 'true' || startsWith(github.ref, 'refs/tags/v')
-    continue-on-error: true  # Don't fail entire workflow if UE5 runner unavailable
+    if: (github.event.inputs.include_tripsitter == 'true' || startsWith(github.ref, 'refs/tags/v'))
+    timeout-minutes: 120
+    # Note: Gate availability check is typically handled by 'if' or job runner labels.
+    # We removed 'continue-on-error: true' to ensure real build failures are reported.
+    # To handle runner unavailability gracefully, one would typically use a separate job to probe runner labels.
+    continue-on-error: false
 
     steps:
       - name: Checkout
@@ -82,11 +86,27 @@ jobs:
         run: |
           $ue5Bin = "C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64"
 
-          # Copy backend DLLs
-          Copy-Item 'build\Release\beatsync_backend_shared.dll' $ue5Bin -Force
-          Copy-Item 'build\vcpkg_installed\x64-windows\bin\onnxruntime*.dll' $ue5Bin -Force -ErrorAction SilentlyContinue
+          # Handle both flattened and preserved artifact directory structures
+          # actions/download-artifact@v4 may flatten files into the target path
 
-          # Copy FFmpeg DLLs from ThirdParty
+          # Find backend DLL (check both flattened and preserved paths)
+          $backendDll = Get-ChildItem -Path 'build' -Filter 'beatsync_backend_shared.dll' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($backendDll) {
+            Copy-Item $backendDll.FullName $ue5Bin -Force
+            Write-Host "Copied backend DLL from: $($backendDll.FullName)"
+          } else {
+            Write-Error "beatsync_backend_shared.dll not found in build artifacts"
+            exit 1
+          }
+
+          # Find ONNX Runtime DLLs (search recursively for both layouts)
+          $onnxDlls = Get-ChildItem -Path 'build' -Filter 'onnxruntime*.dll' -Recurse -ErrorAction SilentlyContinue
+          foreach ($dll in $onnxDlls) {
+            Copy-Item $dll.FullName $ue5Bin -Force
+            Write-Host "Copied ONNX DLL: $($dll.Name)"
+          }
+
+          # Copy FFmpeg DLLs from ThirdParty (these are from checkout, not artifacts)
           Copy-Item 'unreal-prototype\ThirdParty\beatsync\lib\x64\av*.dll' $ue5Bin -Force
           Copy-Item 'unreal-prototype\ThirdParty\beatsync\lib\x64\sw*.dll' $ue5Bin -Force
 
@@ -363,7 +383,12 @@ jobs:
             }
 
             if ($proc.HasExited) {
-              Write-Warning "Application exited during smoke test (exit code: $($proc.ExitCode))"
+              if ($proc.ExitCode -ne 0) {
+                Write-Error "Application crashed during smoke test with exit code: $($proc.ExitCode)"
+                exit 1
+              } else {
+                Write-Warning "Application exited cleanly during smoke test (exit code: 0) - may indicate quick startup/shutdown"
+              }
             } else {
               Write-Host "[OK] Application running successfully after ${elapsed}s" -ForegroundColor Green
               Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
@@ -512,9 +537,12 @@ jobs:
 
       - name: Determine version
         id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.version }}" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$INPUT_VERSION" ]; then
+            echo "version=$INPUT_VERSION" >> $GITHUB_OUTPUT
           else
             echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
           fi
