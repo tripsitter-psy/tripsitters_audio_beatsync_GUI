@@ -266,8 +266,14 @@ endif()
 
 # AudioFlux support for signal processing-based beat detection (no Python, no GPU needed)
 # This provides reliable spectral flux onset detection as an alternative to neural networks
-option(USE_AUDIOFLUX "Enable AudioFlux for spectral analysis" ON)
+option(USE_AUDIOFLUX "Enable AudioFlux for spectral analysis" OFF)
 set(AUDIOFLUX_ROOT "" CACHE PATH "AudioFlux installation directory (optional, overrides autodetect)")
+
+# Auto-enable if AUDIOFLUX_ROOT is set
+if(NOT USE_AUDIOFLUX AND DEFINED AUDIOFLUX_ROOT AND NOT "${AUDIOFLUX_ROOT}" STREQUAL "")
+    set(USE_AUDIOFLUX ON)
+endif()
+
 if(USE_AUDIOFLUX)
     # Try to find AudioFlux include dir
     find_path(AUDIOFLUX_INCLUDE_DIR flux_base.h
@@ -423,98 +429,160 @@ set_target_properties(beatsync PROPERTIES
 )
 
 # =============================================================================
-# INSTALLATION FROM PRE-PACKAGED UE BUILD
+# INSTALLATION FOR PROGRAM TARGET BUILD
 # =============================================================================
-# Use the pre-packaged Unreal Engine build which includes all cooked content,
-# shaders, and engine dependencies. This is more reliable than piecing together
-# files from the UE source tree.
+# TripSitter is a Program target (standalone Slate app), NOT a Game.
+# Install TripSitter.exe with required Engine runtime files.
 
-if(DEFINED ENV{UE_PACKAGED_BUILD})
-    set(UE_PACKAGED_BUILD "$ENV{UE_PACKAGED_BUILD}" CACHE PATH "Path to packaged build")
+set(UE_BIN_DIR "Engine/Binaries/Win64")
+set(UE5_ROOT "C:/UE5_Source/UnrealEngine")
+set(UE5_BIN_DIR "${UE5_ROOT}/Engine/Binaries/Win64")
+
+# Install TripSitter.exe (Program target)
+if(EXISTS "${TRIPSITTER_EXE_PATH}")
+    message(STATUS "Installing Program target: ${TRIPSITTER_EXE_PATH}")
+    install(PROGRAMS "${TRIPSITTER_EXE_PATH}" DESTINATION "${UE_BIN_DIR}")
 else()
-    set(UE_PACKAGED_BUILD "" CACHE PATH "Path to packaged build")
+    message(WARNING "TripSitter.exe not found at ${TRIPSITTER_EXE_PATH}")
 endif()
 
-if(UE_PACKAGED_BUILD AND EXISTS "${UE_PACKAGED_BUILD}/MyProject.exe")
-    message(STATUS "Pre-packaged UE build found at ${UE_PACKAGED_BUILD}")
-
-    # Install root launcher
-    install(PROGRAMS "${UE_PACKAGED_BUILD}/MyProject.exe"
-        DESTINATION "."
-        RENAME "TripSitter.exe"
+# Install backend DLL
+if(TARGET beatsync_backend_shared)
+    install(TARGETS beatsync_backend_shared
+        RUNTIME DESTINATION "${UE_BIN_DIR}"
+        LIBRARY DESTINATION "${UE_BIN_DIR}"
     )
+endif()
 
-    # Install manifest files
+# Install ONNX Runtime DLLs from build directory
+set(ONNX_DLLS
+    "${CMAKE_BINARY_DIR}/Release/onnxruntime.dll"
+    "${CMAKE_BINARY_DIR}/Release/abseil_dll.dll"
+    "${CMAKE_BINARY_DIR}/Release/libprotobuf.dll"
+    "${CMAKE_BINARY_DIR}/Release/libprotobuf-lite.dll"
+    "${CMAKE_BINARY_DIR}/Release/re2.dll"
+)
+foreach(DLL ${ONNX_DLLS})
+    if(EXISTS "${DLL}")
+        install(FILES "${DLL}" DESTINATION "${UE_BIN_DIR}")
+    endif()
+endforeach()
+
+# Install ONNX GPU providers
+file(GLOB ONNX_PROVIDER_DLLS "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/bin/onnxruntime_providers_*.dll")
+foreach(DLL ${ONNX_PROVIDER_DLLS})
+    install(FILES "${DLL}" DESTINATION "${UE_BIN_DIR}")
+endforeach()
+
+# Install FFmpeg DLLs from ThirdParty (NOT from vcpkg - those are smaller/incompatible)
+set(FFMPEG_THIRDPARTY_DIR "${CMAKE_SOURCE_DIR}/unreal-prototype/ThirdParty/beatsync/lib/x64")
+if(EXISTS "${FFMPEG_THIRDPARTY_DIR}")
+    file(GLOB FFMPEG_DLLS "${FFMPEG_THIRDPARTY_DIR}/*.dll")
+    foreach(DLL ${FFMPEG_DLLS})
+        install(FILES "${DLL}" DESTINATION "${UE_BIN_DIR}")
+    endforeach()
+endif()
+
+# Install AudioFlux DLLs if available
+if(USE_AUDIOFLUX AND AUDIOFLUX_DLL_DIR)
+    if(EXISTS "${AUDIOFLUX_DLL_DIR}/audioflux.dll")
+        install(FILES "${AUDIOFLUX_DLL_DIR}/audioflux.dll" DESTINATION "${UE_BIN_DIR}" OPTIONAL)
+    endif()
+    if(EXISTS "${AUDIOFLUX_FFTW_DLL}")
+        install(FILES "${AUDIOFLUX_FFTW_DLL}" DESTINATION "${UE_BIN_DIR}" OPTIONAL)
+    endif()
+endif()
+
+# Install UI resources next to TripSitter.exe
+set(RESOURCE_SRC_DIR "${CMAKE_SOURCE_DIR}/unreal-prototype/Source/TripSitter/Resources")
+if(EXISTS "${RESOURCE_SRC_DIR}")
     install(FILES
-        "${UE_PACKAGED_BUILD}/Manifest_DebugFiles_Win64.txt"
-        "${UE_PACKAGED_BUILD}/Manifest_NonUFSFiles_Win64.txt"
-        "${UE_PACKAGED_BUILD}/Manifest_UFSFiles_Win64.txt"
-        DESTINATION "."
+        "${RESOURCE_SRC_DIR}/wallpaper.png"
+        "${RESOURCE_SRC_DIR}/TitleHeader.png"
+        "${RESOURCE_SRC_DIR}/Corpta.otf"
+        DESTINATION "${UE_BIN_DIR}/Resources"
         OPTIONAL
     )
+    # Also install icon for reference
+    if(EXISTS "${RESOURCE_SRC_DIR}/TripSitter.ico")
+        install(FILES "${RESOURCE_SRC_DIR}/TripSitter.ico" DESTINATION "${UE_BIN_DIR}/Resources" OPTIONAL)
+    endif()
+endif()
 
-    # Install Engine folder (Binaries/ThirdParty, Config, Content, Extras, Plugins)
-    install(DIRECTORY "${UE_PACKAGED_BUILD}/Engine/" DESTINATION "Engine")
-
-    # Copy Slate/Common from UE source (packaged build only has Cursor, missing UI textures)
-    set(UE_SLATE_DIR "C:/UE5_Source/UnrealEngine/Engine/Content/Slate")
+# Install Slate content from UE5 source (required for Slate UI rendering)
+set(UE_SLATE_DIR "${UE5_ROOT}/Engine/Content/Slate")
+if(EXISTS "${UE_SLATE_DIR}")
+    message(STATUS "Installing Slate content from ${UE_SLATE_DIR}")
+    # Common - UI brushes, backgrounds, borders (CRITICAL)
     if(EXISTS "${UE_SLATE_DIR}/Common")
         install(DIRECTORY "${UE_SLATE_DIR}/Common" DESTINATION "Engine/Content/Slate")
     endif()
-
-    # Install MyProject folder (renamed to TripSitter)
-    # This contains the cooked game content and binaries
-    install(DIRECTORY "${UE_PACKAGED_BUILD}/MyProject/" DESTINATION "TripSitter")
-
-    # Install updated beatsync_backend_shared.dll (overwrite packaged version)
-    if(TARGET beatsync_backend_shared)
-        install(TARGETS beatsync_backend_shared
-            RUNTIME DESTINATION "TripSitter/Binaries/Win64"
-            LIBRARY DESTINATION "TripSitter/Binaries/Win64"
-        )
+    # Fonts - Roboto, DroidSans, etc.
+    if(EXISTS "${UE_SLATE_DIR}/Fonts")
+        install(DIRECTORY "${UE_SLATE_DIR}/Fonts" DESTINATION "Engine/Content/Slate")
     endif()
-
-    # Install AudioFlux DLLs if available (may not be in packaged build)
-    if(USE_AUDIOFLUX AND AUDIOFLUX_DLL_DIR)
-        if(EXISTS "${AUDIOFLUX_DLL_DIR}/audioflux.dll")
-            install(FILES "${AUDIOFLUX_DLL_DIR}/audioflux.dll"
-                DESTINATION "TripSitter/Binaries/Win64" OPTIONAL)
-        endif()
-        if(EXISTS "${AUDIOFLUX_FFTW_DLL}")
-            install(FILES "${AUDIOFLUX_FFTW_DLL}"
-                DESTINATION "TripSitter/Binaries/Win64" OPTIONAL)
-        endif()
+    # Cursor - Mouse cursor textures
+    if(EXISTS "${UE_SLATE_DIR}/Cursor")
+        install(DIRECTORY "${UE_SLATE_DIR}/Cursor" DESTINATION "Engine/Content/Slate")
     endif()
-
-    # Install UI resources next to game executable (where widget looks for them)
-    set(RESOURCE_SRC_DIR "${CMAKE_SOURCE_DIR}/unreal-prototype/Source/TripSitter/Resources")
-    if(EXISTS "${RESOURCE_SRC_DIR}")
-        install(FILES
-            "${RESOURCE_SRC_DIR}/wallpaper.png"
-            "${RESOURCE_SRC_DIR}/TitleHeader.png"
-            "${RESOURCE_SRC_DIR}/Corpta.otf"
-            DESTINATION "TripSitter/Binaries/Win64/Resources"
-            OPTIONAL
-        )
+    # Old - Legacy brushes some widgets may reference
+    if(EXISTS "${UE_SLATE_DIR}/Old")
+        install(DIRECTORY "${UE_SLATE_DIR}/Old" DESTINATION "Engine/Content/Slate")
     endif()
-
+    # Checkerboard texture
+    if(EXISTS "${UE_SLATE_DIR}/Checkerboard.png")
+        install(FILES "${UE_SLATE_DIR}/Checkerboard.png" DESTINATION "Engine/Content/Slate")
+    endif()
 else()
-    message(WARNING "Pre-packaged UE build not found at ${UE_PACKAGED_BUILD}")
-    message(WARNING "Falling back to legacy installation method")
+    message(WARNING "Slate content not found at ${UE_SLATE_DIR}")
+endif()
 
-    # Legacy installation (may not work properly)
-    set(UE_BIN_DIR "Engine/Binaries/Win64")
+# Install required Engine DLLs from UE5 source
+# Only install the specific DLLs needed by TripSitter Program target
+# (NOT all 725+ DLLs from the engine)
+if(EXISTS "${UE5_BIN_DIR}")
+    message(STATUS "Installing Engine DLLs from ${UE5_BIN_DIR}")
 
-    if(EXISTS "${TRIPSITTER_EXE_PATH}")
-        install(PROGRAMS "${TRIPSITTER_EXE_PATH}" DESTINATION "${UE_BIN_DIR}")
-    endif()
+    # Core UE5 DLLs required for Slate-based Program targets
+    set(UE_REQUIRED_DLLS
+        # Core engine modules
+        "UnrealEditor-Core.dll"
+        "UnrealEditor-CoreUObject.dll"
+        "UnrealEditor-ApplicationCore.dll"
+        # Slate UI system
+        "UnrealEditor-Slate.dll"
+        "UnrealEditor-SlateCore.dll"
+        "UnrealEditor-SlateRHIRenderer.dll"
+        "UnrealEditor-StandaloneRenderer.dll"
+        # Supporting modules
+        "UnrealEditor-ImageWrapper.dll"
+        "UnrealEditor-Projects.dll"
+        "UnrealEditor-Json.dll"
+        "UnrealEditor-InputCore.dll"
+        "UnrealEditor-ImageCore.dll"
+        # Third-party dependencies
+        "tbb12.dll"
+        "tbbmalloc.dll"
+        # RHI/Rendering (needed for Slate)
+        "UnrealEditor-RHI.dll"
+        "UnrealEditor-RenderCore.dll"
+        # Platform
+        "UnrealEditor-TraceLog.dll"
+    )
 
-    if(TARGET beatsync_backend_shared)
-        install(TARGETS beatsync_backend_shared
-            RUNTIME DESTINATION "${UE_BIN_DIR}"
-            LIBRARY DESTINATION "${UE_BIN_DIR}"
-        )
-    endif()
+    foreach(DLL_NAME ${UE_REQUIRED_DLLS})
+        if(EXISTS "${UE5_BIN_DIR}/${DLL_NAME}")
+            install(FILES "${UE5_BIN_DIR}/${DLL_NAME}" DESTINATION "${UE_BIN_DIR}")
+        else()
+            message(STATUS "  Note: ${DLL_NAME} not found in UE5 - may not be required")
+        endif()
+    endforeach()
+
+    # Also need D3D12 DLLs for Windows rendering
+    file(GLOB D3D_DLLS "${UE5_BIN_DIR}/D3D12*.dll")
+    foreach(DLL ${D3D_DLLS})
+        install(FILES "${DLL}" DESTINATION "${UE_BIN_DIR}")
+    endforeach()
 endif()
 
 # Install ONNX models if they exist
@@ -606,6 +674,39 @@ option(BUILD_TESTS "Build unit tests" ON)
 if(BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+# =============================================================================
+# Packaging Validation (runs at configure time)
+# =============================================================================
+# Validate critical files exist before packaging to catch issues early
+
+# Check TripSitter.exe
+if(NOT EXISTS "${TRIPSITTER_EXE_PATH}")
+    message(WARNING "PACKAGING: TripSitter.exe not found at ${TRIPSITTER_EXE_PATH}")
+    message(WARNING "  Run 'Build.bat TripSitter Win64 Development' from UE5 source first")
+endif()
+
+# Check backend DLL
+set(BACKEND_DLL_PATH "${CMAKE_BINARY_DIR}/Release/beatsync_backend_shared.dll")
+if(NOT EXISTS "${BACKEND_DLL_PATH}")
+    message(STATUS "PACKAGING: Backend DLL not yet built (will be built before cpack)")
+endif()
+
+# Check FFmpeg DLLs are the correct (large) version, not vcpkg (small) version
+set(FFMPEG_AVCODEC_PATH "${FFMPEG_THIRDPARTY_DIR}/avcodec-62.dll")
+if(EXISTS "${FFMPEG_AVCODEC_PATH}")
+    file(SIZE "${FFMPEG_AVCODEC_PATH}" AVCODEC_SIZE)
+    math(EXPR AVCODEC_SIZE_MB "${AVCODEC_SIZE} / 1048576")
+    if(AVCODEC_SIZE_MB LESS 50)
+        message(WARNING "PACKAGING: FFmpeg avcodec-62.dll is only ${AVCODEC_SIZE_MB}MB")
+        message(WARNING "  Expected 100+MB. This appears to be the wrong FFmpeg build.")
+        message(WARNING "  Use the ThirdParty FFmpeg, not the vcpkg version.")
+    else()
+        message(STATUS "PACKAGING: FFmpeg avcodec-62.dll validated (${AVCODEC_SIZE_MB}MB)")
+    endif()
+else()
+    message(WARNING "PACKAGING: FFmpeg avcodec-62.dll not found at ${FFMPEG_AVCODEC_PATH}")
 endif()
 
 include(CPack)

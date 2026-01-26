@@ -6,6 +6,14 @@
 #include "Stats/StatsSystem.h"
 #include "Private/STripSitterMainWidget.h"
 #include "Private/BeatsyncLoader.h"
+#include "Misc/Paths.h"
+#include "HAL/PlatformProcess.h"
+
+#if PLATFORM_WINDOWS
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include <Windows.h>
+#include "Windows/HideWindowsPlatformTypes.h"
+#endif
 
 IMPLEMENT_APPLICATION(TripSitter, "TripSitter");
 
@@ -55,6 +63,38 @@ int RunTripSitter(const TCHAR* CommandLine)
     FSlateApplication::Get().AddWindow(MainWindow);
     MainWindow->ShowWindow();
     MainWindow->BringToFront();
+
+#if PLATFORM_WINDOWS
+    // Set custom window icon (replaces default UE icon)
+    if (TSharedPtr<FGenericWindow> NativeWindow = MainWindow->GetNativeWindow())
+    {
+        HWND Hwnd = (HWND)NativeWindow->GetOSWindowHandle();
+        if (Hwnd)
+        {
+            FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
+            FString IconPath = FPaths::Combine(ExeDir, TEXT("Resources"), TEXT("TripSitter.ico"));
+
+            if (FPaths::FileExists(IconPath))
+            {
+                HICON hIcon = (HICON)LoadImageW(NULL, *IconPath, IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE);
+                if (hIcon)
+                {
+                    SendMessage(Hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
+                    SendMessage(Hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
+                    UE_LOG(LogTemp, Log, TEXT("Custom window icon set from: %s"), *IconPath);
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("Failed to load icon from: %s (Error: %d)"), *IconPath, GetLastError());
+                }
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Icon file not found: %s"), *IconPath);
+            }
+        }
+    }
+#endif
 
     // Main application loop
     while (!IsEngineExitRequested())

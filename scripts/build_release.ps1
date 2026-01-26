@@ -27,6 +27,9 @@
 .PARAMETER Version
     Version string for the installer. Default reads from CMakeLists.txt.
 
+.PARAMETER PackagedExePath
+    Optional path to an existing packaged TripSitter.exe to use instead of building.
+
 .PARAMETER DryRun
     Show what would be done without executing.
 
@@ -154,7 +157,7 @@ if (-not $SkipBackend) {
         }
 
         Write-Host "Building backend..." -ForegroundColor DarkGray
-        & cmake --build $BuildDir --config $Configuration --target beatsync_backend_shared -- /m
+        & cmake --build $BuildDir --config $Configuration --target beatsync_backend_shared --parallel
         if ($LASTEXITCODE -ne 0) {
             Write-Err "Backend build failed"
             exit 1
@@ -190,6 +193,72 @@ if (Test-Path $deployScript) {
     Write-Warn "deploy_tripsitter.ps1 not found - skipping DLL deployment"
 }
 
+# Stage 2.5: Validate Critical Files
+Write-Step "Stage 2.5: Validating Critical Files"
+
+$ValidationErrors = @()
+$ValidationWarnings = @()
+
+# Check backend DLL
+$BackendDll = Join-Path $BuildDir "Release\beatsync_backend_shared.dll"
+if (-not $SkipBackend) {
+    if (Test-Path $BackendDll) {
+        $backendSize = (Get-Item $BackendDll).Length / 1MB
+        Write-Success "Backend DLL: $([math]::Round($backendSize, 2)) MB"
+    } else {
+        $ValidationErrors += "Backend DLL not found at $BackendDll"
+    }
+}
+
+# Check FFmpeg DLLs at UE5 destination (must be 100+MB, not 13MB vcpkg version)
+$AvcodecPath = Join-Path $UE5Root "Engine\Binaries\Win64\avcodec-62.dll"
+if (Test-Path $AvcodecPath) {
+    $avcodecSize = (Get-Item $AvcodecPath).Length / 1MB
+    if ($avcodecSize -lt 50) {
+        $ValidationErrors += "FFmpeg avcodec-62.dll is only $([math]::Round($avcodecSize, 2))MB - should be 100+MB. Wrong FFmpeg version deployed!"
+    } else {
+        Write-Success "FFmpeg avcodec-62.dll: $([math]::Round($avcodecSize, 2)) MB (correct version)"
+    }
+} else {
+    $ValidationWarnings += "FFmpeg avcodec-62.dll not found at $AvcodecPath"
+}
+
+# Check ONNX Runtime
+$OnnxDll = Join-Path $UE5Root "Engine\Binaries\Win64\onnxruntime.dll"
+if (Test-Path $OnnxDll) {
+    $onnxSize = (Get-Item $OnnxDll).Length / 1MB
+    Write-Success "ONNX Runtime: $([math]::Round($onnxSize, 2)) MB"
+} else {
+    $ValidationWarnings += "onnxruntime.dll not found at $OnnxDll"
+}
+
+# Check TripSitter icon
+$TripSitterIco = Join-Path $UE5Root "Engine\Binaries\Win64\Resources\TripSitter.ico"
+if (Test-Path $TripSitterIco) {
+    Write-Success "TripSitter.ico found"
+} else {
+    $ValidationWarnings += "TripSitter.ico not found in Resources - window may have default UE icon"
+}
+
+# Report validation results
+if ($ValidationWarnings) {
+    foreach ($warn in $ValidationWarnings) {
+        Write-Warn $warn
+    }
+}
+
+if ($ValidationErrors) {
+    foreach ($err in $ValidationErrors) {
+        Write-Err $err
+    }
+    if (-not $DryRun) {
+        Write-Err "Validation failed - fix errors before proceeding"
+        exit 1
+    }
+} else {
+    Write-Success "All critical files validated"
+}
+
 # Stage 3: Build TripSitter.exe
 if (-not $SkipTripSitter) {
     Write-Step "Stage 3: Building TripSitter.exe"
@@ -199,6 +268,10 @@ if (-not $SkipTripSitter) {
     if ($DryRun) {
         Write-Host "Would copy: $TripSitterSource\Private\* -> $TripSitterDest\Private\" -ForegroundColor Yellow
     } else {
+        if (-not (Test-Path "$TripSitterSource\Private")) {
+            Write-Err "Source directory not found: $TripSitterSource\Private"
+            exit 1
+        }
         if (-not (Test-Path "$TripSitterDest\Private")) {
             New-Item -ItemType Directory -Path "$TripSitterDest\Private" -Force | Out-Null
         }
