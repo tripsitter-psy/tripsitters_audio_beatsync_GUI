@@ -22,12 +22,8 @@ services:
       - "4317:4317" # OTLP gRPC
       - "4318:4318" # OTLP HTTP
       - "13133:13133" # Health check
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:13133/ || wget -q --spider http://localhost:13133/"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
+    # Note: healthcheck removed - otel-collector image lacks curl/wget
+    # Rely on the collector's internal health extension instead
     depends_on:
       jaeger:
         condition: service_healthy

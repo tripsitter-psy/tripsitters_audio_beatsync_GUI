@@ -291,6 +291,7 @@ int32 SWaveformViewer::AddEffectRegion(const FString& EffectName, double StartTi
 	double EffectiveSelEnd = (SelectionEnd < 0) ? Duration : SelectionEnd;
 
 	FEffectRegion Region;
+	Region.Id = FGuid::NewGuid();  // Ensure unique GUID for this region
 	Region.EffectName = EffectName;
 	Region.StartTime = FMath::Clamp(StartTime, SelectionStart, EffectiveSelEnd);
 	Region.EndTime = FMath::Clamp(EndTime, Region.StartTime, EffectiveSelEnd);

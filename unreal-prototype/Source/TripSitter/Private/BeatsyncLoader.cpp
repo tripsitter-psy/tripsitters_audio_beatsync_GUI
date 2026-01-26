@@ -831,6 +831,11 @@ bool FBeatsyncLoader::ExtractFrame(const FString& VideoPath, double Timestamp,
         return true;
     }
 
+    // Free FrameData if it was allocated but other conditions failed
+    if (FrameData && GApi.free_frame_data)
+    {
+        GApi.free_frame_data(FrameData);
+    }
     return false;
 }
 

@@ -1467,54 +1467,79 @@ void VideoWriter::reportProgress(double progress) {
 
 // ==================== GPU Encoder Detection ====================
 
-// Cache all available encoders in a single FFmpeg call (thread-safe init)
+// Cache all available encoders in a single FFmpeg call (thread-safe, per-path cache)
 static std::set<std::string> getAvailableEncoders(const std::string& ffmpegPath) {
-    static std::set<std::string> cachedEncoders;
-    static std::once_flag encodersOnce;
+    static std::unordered_map<std::string, std::set<std::string>> cachedEncodersMap;
+    static std::mutex cachedEncodersMutex;
 
-    std::call_once(encodersOnce, [ffmpegPath]() {
-        std::string output;
-        std::string cmd = "\"" + ffmpegPath + "\" -hide_banner -encoders";
+    {
+        std::lock_guard<std::mutex> lock(cachedEncodersMutex);
+        auto it = cachedEncodersMap.find(ffmpegPath);
+        if (it != cachedEncodersMap.end()) {
+            return it->second;
+        }
+    }
+
+    // Not cached yet - run FFmpeg to get encoder list
+    std::string output;
+    std::string cmd = "\"" + ffmpegPath + "\" -hide_banner -encoders";
+    std::set<std::string> encoders;
 
 #ifdef _WIN32
-        int rc = runHiddenCommand(cmd, output);
-        if (rc != 0) return;
+    int rc = runHiddenCommand(cmd, output);
+    if (rc != 0) {
+        std::lock_guard<std::mutex> lock(cachedEncodersMutex);
+        cachedEncodersMap[ffmpegPath] = encoders;  // Cache empty set
+        return encoders;
+    }
 #else
-        std::string fullCmd = cmd + " 2>&1";
-        FILE* pipe = popen_compat(fullCmd.c_str(), "r");
-        if (!pipe) return; // leave cachedEncoders empty
-        char buffer[512];
-        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-            output += buffer;
-        }
-        int rc = pclose_compat(pipe);
-        if (rc != 0) return;
+    std::string fullCmd = cmd + " 2>&1";
+    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
+    if (!pipe) {
+        std::lock_guard<std::mutex> lock(cachedEncodersMutex);
+        cachedEncodersMap[ffmpegPath] = encoders;  // Cache empty set
+        return encoders;
+    }
+    char buffer[512];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+    int rc = pclose_compat(pipe);
+    if (rc != 0) {
+        std::lock_guard<std::mutex> lock(cachedEncodersMutex);
+        cachedEncodersMap[ffmpegPath] = encoders;  // Cache empty set
+        return encoders;
+    }
 #endif
 
-        // Parse encoder list - format: " V..... h264_nvenc           NVIDIA NVENC H.264 encoder"
-        // Extract encoder names from lines starting with " V" (video encoders)
-        std::istringstream stream(output);
-        std::string line;
-        while (std::getline(stream, line)) {
-            // Skip header lines and non-video encoders
-            if (line.size() < 8 || line[0] != ' ' || line[1] != 'V') continue;
+    // Parse encoder list - format: " V..... h264_nvenc           NVIDIA NVENC H.264 encoder"
+    // Extract encoder names from lines starting with " V" (video encoders)
+    std::istringstream stream(output);
+    std::string line;
+    while (std::getline(stream, line)) {
+        // Skip header lines and non-video encoders
+        if (line.size() < 8 || line[0] != ' ' || line[1] != 'V') continue;
 
-            // Extract encoder name: starts after " V..... " (8 chars)
-            size_t nameStart = 8;
-            while (nameStart < line.size() && line[nameStart] == ' ') nameStart++;
-            if (nameStart >= line.size()) continue;
+        // Extract encoder name: starts after " V..... " (8 chars)
+        size_t nameStart = 8;
+        while (nameStart < line.size() && line[nameStart] == ' ') nameStart++;
+        if (nameStart >= line.size()) continue;
 
-            size_t nameEnd = line.find(' ', nameStart);
-            if (nameEnd == std::string::npos) nameEnd = line.size();
+        size_t nameEnd = line.find(' ', nameStart);
+        if (nameEnd == std::string::npos) nameEnd = line.size();
 
-            std::string encoderName = line.substr(nameStart, nameEnd - nameStart);
-            if (!encoderName.empty()) {
-                cachedEncoders.insert(encoderName);
-            }
+        std::string encoderName = line.substr(nameStart, nameEnd - nameStart);
+        if (!encoderName.empty()) {
+            encoders.insert(encoderName);
         }
-    });
+    }
 
-    return cachedEncoders;
+    // Cache and return
+    {
+        std::lock_guard<std::mutex> lock(cachedEncodersMutex);
+        cachedEncodersMap[ffmpegPath] = encoders;
+    }
+    return encoders;
 }
 
 bool VideoWriter::probeEncoder(const std::string& encoder) const {

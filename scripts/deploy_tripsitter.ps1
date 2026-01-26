@@ -145,7 +145,7 @@ $copyOrder = @(
     )}
 )
 
-    $allOk = $true
+$allOk = $true
 foreach ($group in $copyOrder) {
     Write-Header $group.Name
     $isOptional = $group.Optional -eq $true

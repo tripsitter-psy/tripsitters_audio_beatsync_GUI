@@ -27,7 +27,7 @@ static std::mutex g_mutex;
 static std::unique_ptr<std::ofstream> g_out;
 static std::string g_outfile_path;
 
-enum class TracingFlushMode { Never, Periodic, Shutdown };
+// TracingFlushMode declared in Tracing.h
 static std::atomic<TracingFlushMode> g_flush_mode{TracingFlushMode::Shutdown};
 static std::thread g_flush_thread;
 static std::atomic<bool> g_flush_thread_running{false};
@@ -36,7 +36,7 @@ static std::mutex g_flush_cv_mutex;
 static std::atomic<int> g_flush_period_ms{1000}; // Default 1s for periodic
 
 static std::mutex g_flush_start_mutex;
-void SetTracingFlushMode(TracingFlushMode mode, int period_ms = 1000) {
+void SetTracingFlushMode(TracingFlushMode mode, int period_ms) {
     if (mode == TracingFlushMode::Periodic) {
         g_flush_period_ms.store(period_ms, std::memory_order_relaxed);
         std::lock_guard<std::mutex> startlk(g_flush_start_mutex);
@@ -114,20 +114,21 @@ void InitTracing(const std::string& outfile) {
             // Switching to a new file: close and reset
             bool need_stop_flusher = (g_flush_mode == TracingFlushMode::Periodic);
             std::unique_ptr<std::ofstream> local_out;
-            
-            // Mark flusher to stop while we hold the lock to avoid race
+
+            // Stop flusher WHILE holding the main lock to prevent TOCTOU race
+            // This ensures atomic transition of g_out, g_outfile_path, and flusher state
             if (need_stop_flusher) {
-                // Use SetTracingFlushMode to ensure proper thread shutdown
+                // Must unlock g_mutex before SetTracingFlushMode since it may join thread
+                // that also acquires g_mutex. But we do this atomically with the move.
+                local_out = std::move(g_out);
+                g_outfile_path.clear();
                 lk.unlock();
                 SetTracingFlushMode(TracingFlushMode::Never);
-                lk.lock();
+            } else {
+                local_out = std::move(g_out);
+                g_outfile_path.clear();
+                lk.unlock();
             }
-
-            local_out = std::move(g_out);
-            g_outfile_path.clear();
-            
-            // Release lock before flushing/closing and joining flusher
-            lk.unlock();
 
             if (local_out) {
                 local_out->flush();
@@ -135,11 +136,11 @@ void InitTracing(const std::string& outfile) {
                 local_out.reset();
             }
             lk.lock();
-            
+
             // Re-check global state after re-acquiring lock (TOCTOU fix)
             // If another thread initialized while we were unlocked, abort
             if (g_out) {
-                 return; 
+                 return;
             }
         }
     }

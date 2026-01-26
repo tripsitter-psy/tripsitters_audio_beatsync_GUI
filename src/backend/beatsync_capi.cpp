@@ -2215,7 +2215,7 @@ BEATSYNC_API int bs_audioflux_analyze_with_stems(const char* audio_path,
             out_result->beat_count = 0;
         }
         s_lastError = "Stems+AudioFlux analysis crashed with unknown exception";
-        return -6;
+        return -7;
     }
 #else
     (void)audio_path;

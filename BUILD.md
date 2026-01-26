@@ -54,8 +54,8 @@ Output: `build/Release/beatsync_backend_shared.dll`
 ```powershell
 # Install TensorRT to C:\TensorRT-10.9.0.34
 
-# Configure with overlay triplet (sets TENSORRT_HOME)
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets
+# Configure with overlay triplet (sets TENSORRT_HOME) and GPU vcpkg feature
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets -DVCPKG_MANIFEST_FEATURES="gpu"
 
 # Build (first run with TensorRT takes ~2 hours for ONNX Runtime)
 cmake --build build --config Release --target beatsync_backend_shared
@@ -123,8 +123,17 @@ Always use the deployment script to collect DLLs from their dedicated directorie
 
 Defined in `vcpkg.json`:
 
-- **FFmpeg** - avcodec, avformat, swresample, swscale, avfilter
-- **ONNX Runtime** - Neural network inference (with optional CUDA/TensorRT)
+- **libsamplerate** - High-quality audio resampling (always installed as a top-level dependency)
+
+The following dependencies are installed via vcpkg **features** (not top-level):
+
+- **FFmpeg** (avcodec, avformat, swresample, swscale, avfilter) - Installed via the `cpu` feature (default) or `gpu` feature (adds nvcodec)
+- **ONNX Runtime** - Neural network inference; installed via `cpu` feature (CPU-only) or `gpu` feature (with CUDA/TensorRT support)
+
+To select a feature during CMake configure:
+
+- CPU (default): No extra flags needed, or `-DVCPKG_MANIFEST_FEATURES="cpu"`
+- GPU: `-DVCPKG_MANIFEST_FEATURES="gpu"`
 
 ### External (manual installation)
 

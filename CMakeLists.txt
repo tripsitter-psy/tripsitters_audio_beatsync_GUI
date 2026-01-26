@@ -29,6 +29,8 @@ set(AUDIOFLUX_FFTW_DLL "" CACHE PATH "AudioFlux FFTW3 DLL path")
 
 # TripSitter.exe path (built separately by Unreal Engine)
 # Set via -DTRIPSITTER_EXE_PATH=... or env var
+option(OPTION_REQUIRE_TRIPSITTER "Fail configure if TripSitter.exe is not found" OFF)
+
 if(DEFINED ENV{TRIPSITTER_EXE_PATH})
     set(TRIPSITTER_EXE_PATH "$ENV{TRIPSITTER_EXE_PATH}" CACHE FILEPATH "Path to TripSitter.exe")
 else()
@@ -37,13 +39,13 @@ else()
         "C:/UE5_Source/UnrealEngine/Engine/Binaries/Win64"
         DOC "Path to TripSitter.exe"
     )
-    option(OPTION_REQUIRE_TRIPSITTER "Fail configure if TripSitter.exe is not found" OFF)
-    if(NOT TRIPSITTER_EXE_PATH)
-        if(OPTION_REQUIRE_TRIPSITTER)
-            message(FATAL_ERROR "TripSitter.exe not found. Please set TRIPSITTER_EXE_PATH variable or export TRIPSITTER_EXE_PATH environment variable to point to the executable.")
-        else()
-            message(WARNING "TripSitter.exe not found. Some functionality (like launching the GUI) may be disabled. Set TRIPSITTER_EXE_PATH to specify location.")
-        endif()
+endif()
+
+if(NOT TRIPSITTER_EXE_PATH)
+    if(OPTION_REQUIRE_TRIPSITTER)
+        message(FATAL_ERROR "TripSitter.exe not found. Please set TRIPSITTER_EXE_PATH variable or export TRIPSITTER_EXE_PATH environment variable to point to the executable.")
+    else()
+        message(WARNING "TripSitter.exe not found. Some functionality (like launching the GUI) may be disabled. Set TRIPSITTER_EXE_PATH to specify location.")
     endif()
 endif()
 
@@ -455,18 +457,22 @@ if(TARGET beatsync_backend_shared)
     )
 endif()
 
-# Install ONNX Runtime DLLs from build directory
-set(ONNX_DLLS
-    "${CMAKE_BINARY_DIR}/Release/onnxruntime.dll"
-    "${CMAKE_BINARY_DIR}/Release/abseil_dll.dll"
-    "${CMAKE_BINARY_DIR}/Release/libprotobuf.dll"
-    "${CMAKE_BINARY_DIR}/Release/libprotobuf-lite.dll"
-    "${CMAKE_BINARY_DIR}/Release/re2.dll"
+# Install ONNX Runtime DLLs from build directory (configuration-aware for multi-config builds)
+set(ONNX_DLL_NAMES
+    "onnxruntime.dll"
+    "abseil_dll.dll"
+    "libprotobuf.dll"
+    "libprotobuf-lite.dll"
+    "re2.dll"
 )
-foreach(DLL ${ONNX_DLLS})
-    if(EXISTS "${DLL}")
-        install(FILES "${DLL}" DESTINATION "${UE_BIN_DIR}")
-    endif()
+foreach(DLL_NAME ${ONNX_DLL_NAMES})
+    # Try Release first (most common), then other configurations
+    foreach(CONFIG Release RelWithDebInfo MinSizeRel Debug)
+        set(DLL_PATH "${CMAKE_BINARY_DIR}/${CONFIG}/${DLL_NAME}")
+        if(EXISTS "${DLL_PATH}")
+            install(FILES "${DLL_PATH}" DESTINATION "${UE_BIN_DIR}" CONFIGURATIONS ${CONFIG})
+        endif()
+    endforeach()
 endforeach()
 
 # Install ONNX GPU providers
@@ -617,7 +623,10 @@ set(CPACK_PACKAGE_VENDOR "MTV")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "MTV Trip Sitter - Audio Beat Sync")
 
 # Derive package version from project version (BEATSYNC_VERSION)
-string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)" _ ${BEATSYNC_VERSION})
+string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)" VERSION_MATCH ${BEATSYNC_VERSION})
+if(NOT VERSION_MATCH)
+    message(FATAL_ERROR "BEATSYNC_VERSION '${BEATSYNC_VERSION}' does not match expected format X.Y.Z (e.g., 1.0.0)")
+endif()
 set(CPACK_PACKAGE_VERSION_MAJOR ${CMAKE_MATCH_1})
 set(CPACK_PACKAGE_VERSION_MINOR ${CMAKE_MATCH_2})
 set(CPACK_PACKAGE_VERSION_PATCH ${CMAKE_MATCH_3})

@@ -2281,7 +2281,7 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 			// Try relative to exe for standalone builds
 			ModelPath = FPaths::Combine(ExeDir, TEXT(".."), TEXT(".."), TEXT(".."),
 				TEXT("TripSitter"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("models"), TEXT("beatnet.onnx"));
-			FPaths::NormalizeDirectoryName(ModelPath);
+			FPaths::CollapseRelativeDirectories(ModelPath);
 		}
 
 		if (!FPaths::FileExists(ModelPath))

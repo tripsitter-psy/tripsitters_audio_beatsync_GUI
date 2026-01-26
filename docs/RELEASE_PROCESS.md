@@ -81,7 +81,7 @@ $certPassword = Read-Host -AsSecureString "Enter certificate password"
 ```
 
 > **Security Note:**
-> Never expose sensitive values like -CertificatePassword on the command line or in scripts. Always use secure input methods or secret management tools. The sign-windows-binaries.ps1 script supports -BuildDir, -CertificatePassword, and -DryRun flags; substitute secure handling as appropriate for your environment.
+> Never expose sensitive values like -CertificatePassword on the command line or in scripts. Always use secure input methods or secret management tools. The sign-windows-binaries.ps1 script supports -BuildDir, -CertificatePath, -CertificatePassword, and -DryRun flags; substitute secure handling as appropriate for your environment.
 
 ## Installer Configuration
 

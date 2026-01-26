@@ -16,6 +16,10 @@ try {
         throw "CMake build failed with exit code: $buildExitCode"
     }
     $traceOut = Join-Path $PWD 'beatsync-trace.log'
+    # Remove any pre-existing trace file so we know output is from this run
+    if (Test-Path $traceOut) {
+        Remove-Item $traceOut -Force
+    }
     $env:BEATSYNC_TRACE_OUT = $traceOut
     try {
         ctest -C Debug -R tracing -V --output-on-failure

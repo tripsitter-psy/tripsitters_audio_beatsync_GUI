@@ -44,15 +44,17 @@ public class TripSitter : ModuleRules
         }
 
         // Robust parent-directory resolution for include path
+        // BeatsyncLib points to .../beatsync/lib/x64, we need .../beatsync/include
+        // So we go up one level to lib, then combine with ../include
         var beatsyncLibDir = new DirectoryInfo(BeatsyncLib);
-        var parentDir = beatsyncLibDir.Parent?.Parent;
+        var parentDir = beatsyncLibDir.Parent;
         if (parentDir == null)
         {
-            Log.TraceError("TripSitter: Could not resolve parent directories for BeatsyncLib: {0}", BeatsyncLib);
+            Log.TraceError("TripSitter: Could not resolve parent directory for BeatsyncLib: {0}", BeatsyncLib);
             throw new BuildException("Could not resolve include path for BeatsyncLib at: " + BeatsyncLib);
         }
 
-        var includePath = Path.Combine(parentDir.FullName, "include");
+        var includePath = Path.Combine(parentDir.FullName, "..", "include");
         if (!Directory.Exists(includePath))
         {
             Log.TraceError("TripSitter: Beatsync include directory not found: {0}", includePath);

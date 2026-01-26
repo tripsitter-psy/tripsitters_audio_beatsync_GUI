@@ -27,12 +27,12 @@ FBeatsyncProcessingTask::~FBeatsyncProcessingTask()
     // Wait for DoWork to complete (with timeout to prevent indefinite hangs)
     constexpr double TimeoutSeconds = 10.0;
     double StartTime = FPlatformTime::Seconds();
-    while (!bWorkCompleted.load(std::memory_order_acquire) && (FPlatformTime::Seconds() - StartTime) < TimeoutSeconds)
+    while (!bWorkCompleted && (FPlatformTime::Seconds() - StartTime) < TimeoutSeconds)
     {
         FPlatformProcess::Sleep(0.01f);
     }
 
-    if (!bWorkCompleted.load(std::memory_order_acquire))
+    if (!bWorkCompleted)
     {
         UE_LOG(LogTemp, Warning, TEXT("FBeatsyncProcessingTask: Destructor timed out waiting for DoWork to complete"));
     }
@@ -276,6 +276,8 @@ void FBeatsyncProcessingTask::DoWork()
         // Fallback to default duration when no BPM info is available
         ClipDuration = 1.0;
     }
+    // Clamp to sensible bounds (0.1s to 10.0s) to avoid pathological cases
+    ClipDuration = FMath::Clamp(ClipDuration, 0.1, 10.0);
 
     // Create temp files in system temp directory (not next to output)
     FString TempDir = FPaths::Combine(FPlatformProcess::UserTempDir(), TEXT("TripSitter"));
@@ -512,6 +514,13 @@ void FBeatsyncProcessingTask::DoWork()
     if (!TempEffectsPath.IsEmpty())
     {
         IFileManager::Get().Delete(*TempEffectsPath, false, true, true);
+    }
+    // Clean up CurrentVideoPath if it still points to a temp file
+    // (can happen if audio mux succeeded or if move failed)
+    if (!CurrentVideoPath.IsEmpty() && CurrentVideoPath != Params.OutputPath)
+    {
+        IFileManager::Get().Delete(*CurrentVideoPath, false, true, true);
+        CurrentVideoPath.Empty();
     }
 
     // Clean up Writer with mutex protection

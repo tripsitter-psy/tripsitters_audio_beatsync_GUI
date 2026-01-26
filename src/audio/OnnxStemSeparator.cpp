@@ -274,6 +274,25 @@ struct OnnxStemSeparator::Impl {
     }
 
     std::vector<float> resampleAudio(const std::vector<float>& samples, int srcRate, int dstRate, int channels) {
+        // Validate inputs to prevent UB from invalid parameters
+        if (channels <= 0) {
+            debugLog("[BeatSync] resampleAudio error: channels must be > 0, got " + std::to_string(channels));
+            return {};
+        }
+        if (srcRate <= 0 || dstRate <= 0) {
+            debugLog("[BeatSync] resampleAudio error: sample rates must be > 0, got srcRate=" +
+                     std::to_string(srcRate) + " dstRate=" + std::to_string(dstRate));
+            return {};
+        }
+        if (samples.size() % static_cast<size_t>(channels) != 0) {
+            debugLog("[BeatSync] resampleAudio error: samples.size()=" + std::to_string(samples.size()) +
+                     " is not divisible by channels=" + std::to_string(channels));
+            return {};
+        }
+        if (samples.empty()) {
+            return {};
+        }
+
         if (srcRate == dstRate) return samples;
 
         double ratio = static_cast<double>(dstRate) / srcRate;

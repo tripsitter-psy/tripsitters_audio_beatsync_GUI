@@ -634,15 +634,43 @@ static void ConvertToFAIResult(const bs_ai_result_t& In, FAIResult& Out)
     Out.BPM = In.bpm;
     Out.Duration = In.duration;
     Out.Beats.Empty();
-    if (In.beats && In.beat_count > 0) Out.Beats.Append(In.beats, In.beat_count);
     Out.Downbeats.Empty();
-    if (In.downbeats && In.downbeat_count > 0) Out.Downbeats.Append(In.downbeats, In.downbeat_count);
-    
-    // Segments
     Out.Segments.Empty();
+
+    // Validate and copy beats with overflow check
+    if (In.beats && In.beat_count > 0)
+    {
+        size_t beatCount = In.beat_count;
+        if (beatCount > static_cast<size_t>(MAX_int32))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("ConvertToFAIResult: beat_count %zu exceeds MAX_int32, clamping"), beatCount);
+            beatCount = static_cast<size_t>(MAX_int32);
+        }
+        Out.Beats.Append(In.beats, static_cast<int32>(beatCount));
+    }
+
+    // Validate and copy downbeats with overflow check
+    if (In.downbeats && In.downbeat_count > 0)
+    {
+        size_t downbeatCount = In.downbeat_count;
+        if (downbeatCount > static_cast<size_t>(MAX_int32))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("ConvertToFAIResult: downbeat_count %zu exceeds MAX_int32, clamping"), downbeatCount);
+            downbeatCount = static_cast<size_t>(MAX_int32);
+        }
+        Out.Downbeats.Append(In.downbeats, static_cast<int32>(downbeatCount));
+    }
+
+    // Validate and copy segments with overflow check
     if (In.segments && In.segment_count > 0)
     {
-        for (size_t i = 0; i < In.segment_count; ++i)
+        size_t segmentCount = In.segment_count;
+        if (segmentCount > static_cast<size_t>(MAX_int32))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("ConvertToFAIResult: segment_count %zu exceeds MAX_int32, clamping"), segmentCount);
+            segmentCount = static_cast<size_t>(MAX_int32);
+        }
+        for (size_t i = 0; i < segmentCount; ++i)
         {
             FMusicSegment Seg;
             Seg.Time = In.segments[i].time;

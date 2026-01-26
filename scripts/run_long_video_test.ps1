@@ -102,7 +102,7 @@ foreach ($argList in $cmdVariants) {
         }
         if (Test-Path $tempErr) {
             # Append this attempt's stderr to the main stderr file
-            Add-Content -Path $stderr -Value "----- ATTEMPT: $cmd -----"
+            Add-Content -Path $stderr -Value "----- ATTEMPT: $cmdDisplay -----"
             Add-Content -Path $stderr -Value (Get-Content $tempErr)
             Remove-Item $tempErr -Force
         }

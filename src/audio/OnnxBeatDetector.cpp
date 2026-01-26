@@ -248,8 +248,11 @@ std::vector<float> MelSpectrogramExtractor::extract(const std::vector<float>& sa
 }
 
 int MelSpectrogramExtractor::getNumFrames(int numSamples) const {
-    int frames = 1 + (numSamples - m_impl->nFft) / m_impl->hopLength;
-    return std::max(0, frames);  // Clamp to non-negative
+    // Return 0 for inputs smaller than FFT window (matches computeMelSpectrogram behavior)
+    if (numSamples < m_impl->nFft) {
+        return 0;
+    }
+    return 1 + (numSamples - m_impl->nFft) / m_impl->hopLength;
 }
 
 int MelSpectrogramExtractor::getNumMels() const {

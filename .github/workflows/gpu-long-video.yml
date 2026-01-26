@@ -88,7 +88,7 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_long_video_test.ps1 -OutputVideo build/tmp/out_gpu_test.mp4 -Audio build/tmp/gpu_stress.wav -DurationSeconds 600
 
       - name: Upload artifacts (Windows)
-        if: always()
+        if: always() && steps.check_gpu.outputs.has_gpu == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: long-video-test-artifacts-windows
@@ -175,7 +175,7 @@ jobs:
           scripts/run_long_video_test.sh 600
 
       - name: Upload artifacts (Linux)
-        if: always()
+        if: always() && steps.check_gpu_linux.outputs.has_gpu == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: long-video-test-artifacts-linux

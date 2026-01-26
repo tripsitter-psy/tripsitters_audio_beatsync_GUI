@@ -148,9 +148,17 @@ public:
 
     /**
      * @brief Get a BeatGrid from analysis (convenience method)
-     * @param samples Audio samples
-     * @param sampleRate Sample rate
+     *
+     * This method expects stereo-interleaved samples (L,R,L,R,...) matching
+     * the format used by analyze(). For mono audio, either duplicate each
+     * sample to create stereo (L,L,R,R becomes L,R,L,R) or use analyzeMono()
+     * first and extract the BeatGrid from the result.
+     *
+     * @param samples Stereo-interleaved audio samples (L,R,L,R,...)
+     * @param sampleRate Sample rate in Hz
      * @return BeatGrid with detected beats and BPM
+     * @see analyze() for full stereo analysis
+     * @see analyzeMono() for mono input
      */
     BeatGrid getBeatGrid(const std::vector<float>& samples, int sampleRate);
 
@@ -189,7 +197,7 @@ public:
 
 private:
     struct Impl;
-    std::unique_ptr<Impl> m_impl;
+    std::unique_ptr<Impl> m_impl;  // Non-const to allow move semantics
 };
 
 } // namespace BeatSync

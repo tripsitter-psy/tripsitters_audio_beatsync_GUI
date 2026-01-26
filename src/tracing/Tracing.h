@@ -5,8 +5,12 @@
 namespace BeatSync {
 namespace tracing {
 
+// Forward declare TracingFlushMode enum for SetTracingFlushMode declaration
+enum class TracingFlushMode { Never, Periodic, Shutdown };
+
 void InitTracing(const std::string& outfile = "");
 void ShutdownTracing();
+void SetTracingFlushMode(TracingFlushMode mode, int period_ms = 1000);
 
 class Span {
 public:

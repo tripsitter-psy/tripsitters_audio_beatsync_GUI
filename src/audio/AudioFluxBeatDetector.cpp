@@ -15,6 +15,9 @@ extern "C" {
 // Helper: resample audio to target sample rate (band-limited, anti-aliased)
 // NOTE: For production use, consider linking libsamplerate for higher quality resampling.
 #include <stdexcept>
+#ifdef HAVE_LIBSAMPLERATE
+#include <samplerate.h>
+#endif
 
 static std::vector<float> resampleAudio(const std::vector<float>& input, int inputRate, int outputRate) {
     if (inputRate == outputRate) return input;
@@ -315,14 +318,14 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
     // Pick peaks from onset envelope
     result.beats = pickPeaks(result.onsetEnvelope, adaptiveThreshold);
 
-    // Post-process: fill gaps using beat grid interpolation
-    result.beats = fillBeatGaps(result.beats, duration);
-
-    // Convert frame indices to time
+    // Convert frame indices to time (must be done BEFORE fillBeatGaps which expects seconds)
     float frameRate = static_cast<float>(m_config.sampleRate) / m_config.hopLength;
     for (auto& beat : result.beats) {
         beat = beat / frameRate;
     }
+
+    // Post-process: fill gaps using beat grid interpolation (expects beats in seconds)
+    result.beats = fillBeatGaps(result.beats, duration);
 
     if (progress && !progress(0.8f, "Estimating tempo...")) {
         result.error = "Analysis cancelled by user";

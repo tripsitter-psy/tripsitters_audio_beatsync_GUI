@@ -366,18 +366,26 @@ void FBeatsyncProcessingTask::DoWork()
     if (!bSuccess)
     {
         UE_LOG(LogTemp, Warning, TEXT("TripSitter: Audio muxing failed, using video-only output"));
-        // Fall back to video-only output
-        IFileManager::Get().Move(*Params.OutputPath, *CurrentVideoPath, true, true);
-        // Invalidate temp paths so later cleanup does not attempt to delete files that were moved
-        // If effects were applied, CurrentVideoPath == TempEffectsPath, so empty both
-        if (CurrentVideoPath == TempEffectsPath)
+        // Fall back to video-only output - check if Move succeeds
+        bool bMoveSuccess = IFileManager::Get().Move(*Params.OutputPath, *CurrentVideoPath, true, true);
+        if (bMoveSuccess)
         {
-            TempEffectsPath.Empty();
+            // Invalidate temp paths so later cleanup does not attempt to delete files that were moved
+            // If effects were applied, CurrentVideoPath == TempEffectsPath, so empty both
+            if (CurrentVideoPath == TempEffectsPath)
+            {
+                TempEffectsPath.Empty();
+            }
+            TempVideoPath.Empty();
+            CurrentVideoPath.Empty();
+            bSuccess = true; // Consider it a partial success
+            if (Span.IsValid()) FBeatsyncLoader::SpanAddEvent(Span, TEXT("audio-mux-failed"));
         }
-        TempVideoPath.Empty();
-        CurrentVideoPath.Empty();
-        bSuccess = true; // Consider it a partial success
-        if (Span.IsValid()) FBeatsyncLoader::SpanAddEvent(Span, TEXT("audio-mux-failed"));
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("TripSitter: Failed to move video file to output path"));
+            if (Span.IsValid()) FBeatsyncLoader::SpanSetError(Span, TEXT("move-failed"));
+        }
     }
 
     // Clean up temp files

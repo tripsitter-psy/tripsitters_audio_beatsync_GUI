@@ -211,16 +211,19 @@ if (-not $SkipBackend) {
 }
 
 # Check FFmpeg DLLs at UE5 destination (must be 100+MB, not 13MB vcpkg version)
-$AvcodecPath = Join-Path $UE5Root "Engine\Binaries\Win64\avcodec-62.dll"
+# Centralized FFmpeg DLL name - update this constant when upgrading FFmpeg versions
+$FFmpegAvcodecDll = "avcodec-62.dll"
+$FFmpegMinSizeMB = 100
+$AvcodecPath = Join-Path $UE5Root "Engine\Binaries\Win64\$FFmpegAvcodecDll"
 if (Test-Path $AvcodecPath) {
     $avcodecSize = (Get-Item $AvcodecPath).Length / 1MB
-    if ($avcodecSize -lt 50) {
-        $ValidationErrors += "FFmpeg avcodec-62.dll is only $([math]::Round($avcodecSize, 2))MB - should be 100+MB. Wrong FFmpeg version deployed!"
+    if ($avcodecSize -lt $FFmpegMinSizeMB) {
+        $ValidationErrors += "FFmpeg $FFmpegAvcodecDll is only $([math]::Round($avcodecSize, 2))MB - should be ${FFmpegMinSizeMB}+MB. Wrong FFmpeg version deployed!"
     } else {
-        Write-Success "FFmpeg avcodec-62.dll: $([math]::Round($avcodecSize, 2)) MB (correct version)"
+        Write-Success "FFmpeg $FFmpegAvcodecDll`: $([math]::Round($avcodecSize, 2)) MB (correct version)"
     }
 } else {
-    $ValidationWarnings += "FFmpeg avcodec-62.dll not found at $AvcodecPath"
+    $ValidationWarnings += "FFmpeg $FFmpegAvcodecDll not found in UE5 Binaries directory"
 }
 
 # Check ONNX Runtime
