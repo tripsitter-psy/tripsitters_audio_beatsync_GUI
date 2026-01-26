@@ -775,8 +775,16 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
 bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::string& outputVideo) {
     std::cout << "Pre-normalizing video: " << inputVideo << " -> " << outputVideo << "\n";
 
-    // File-based diagnostic logging
-    FILE* diagLog = fopen((getTempDir() + "beatsync_normalize_detail.log").c_str(), "a");
+    // RAII wrapper for FILE* to ensure proper cleanup on all return paths
+    struct FileGuard {
+        FILE* file = nullptr;
+        ~FileGuard() { if (file) fclose(file); }
+    };
+
+    // File-based diagnostic logging with RAII cleanup
+    FileGuard diagLogGuard;
+    diagLogGuard.file = fopen((getTempDir() + "beatsync_normalize_detail.log").c_str(), "a");
+    FILE* diagLog = diagLogGuard.file;  // Alias for convenience
     if (diagLog) {
         fprintf(diagLog, "\n=== normalizeVideo ENTER ===\n");
         fprintf(diagLog, "  input: %s\n", inputVideo.c_str());
@@ -852,12 +860,6 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
     exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
 #else
     std::string fullCmd = cmd.str() + " 2>&1";
-    
-    // RAII guard for diagLog to ensure it is closed on any return
-    struct ScopedLogClose {
-        FILE* log;
-        ~ScopedLogClose() { if (log) fclose(log); }
-    } logGuard{diagLog};
 
     FILE* pipe = popen_compat(fullCmd.c_str(), "r");
     if (!pipe) {
@@ -870,9 +872,6 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
         ffmpegOutput += buffer;
     }
     exitCode = pclose_compat(pipe);
-    // Prevent RAII guard from closing diagLog here - we still need it after #endif
-    // diagLog will be closed manually at each exit point below
-    logGuard.log = nullptr;
 #endif
 
     if (diagLog) {
@@ -893,12 +892,12 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
             fclose(test);
             if (fileSize > 1024) {
                 std::cout << "  Normalization completed (non-zero exit but file OK: " << fileSize << " bytes)\n";
-                if (diagLog) { fprintf(diagLog, "  File created despite error: %ld bytes\n", fileSize); fclose(diagLog); }
+                if (diagLog) { fprintf(diagLog, "  File created despite error: %ld bytes\n", fileSize); }
                 return true;
             }
         }
         m_lastError = "Video normalization failed: " + ffmpegOutput.substr(0, 200);
-        if (diagLog) { fprintf(diagLog, "  FAILED: %s\n", m_lastError.c_str()); fclose(diagLog); }
+        if (diagLog) { fprintf(diagLog, "  FAILED: %s\n", m_lastError.c_str()); }
         return false;
     }
 
@@ -908,9 +907,9 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
         fseek(verify, 0, SEEK_END);
         long fileSize = ftell(verify);
         fclose(verify);
-        if (diagLog) { fprintf(diagLog, "  SUCCESS: Output file %ld bytes\n", fileSize); fclose(diagLog); }
+        if (diagLog) { fprintf(diagLog, "  SUCCESS: Output file %ld bytes\n", fileSize); }
     } else {
-        if (diagLog) { fprintf(diagLog, "  WARNING: Output file not found after success exit code!\n"); fclose(diagLog); }
+        if (diagLog) { fprintf(diagLog, "  WARNING: Output file not found after success exit code!\n"); }
     }
 
     std::cout << "  Normalization complete\n";

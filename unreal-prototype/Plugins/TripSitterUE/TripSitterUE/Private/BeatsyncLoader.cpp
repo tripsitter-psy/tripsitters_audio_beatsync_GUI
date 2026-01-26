@@ -244,6 +244,7 @@ void FBeatsyncLoader::Shutdown()
 
 bool FBeatsyncLoader::IsInitialized()
 {
+    FScopeLock Lock(&GInitMutex);
     return !!GApi.DllHandle;
 }
 
@@ -262,6 +263,7 @@ FAnalyzerHandle FBeatsyncLoader::CreateAnalyzer()
 
 void FBeatsyncLoader::DestroyAnalyzer(FAnalyzerHandle handle)
 {
+    if (!handle.IsValid()) return;
     if (!GApi.destroy_analyzer) return;
     GApi.destroy_analyzer(handle.Ptr);
 }
@@ -313,6 +315,7 @@ bool FBeatsyncLoader::AnalyzeAudio(FAnalyzerHandle handle, const FString& path, 
 
 FString FBeatsyncLoader::GetVideoLastError(FVideoWriterHandle writer)
 {
+    if (!writer.IsValid()) return FString();
     if (!GApi.video_get_last_error) return FString();
     const char* p = GApi.video_get_last_error(writer.Ptr);
     return p ? FString(UTF8_TO_TCHAR(p)) : FString();
@@ -380,6 +383,7 @@ void FBeatsyncLoader::SetProgressCallback(FVideoWriterHandle writer, FProgressCb
 
 bool FBeatsyncLoader::CutVideoAtBeats(FVideoWriterHandle writer, const FString& inputVideo, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration)
 {
+    if (!writer.IsValid()) return false;
     if (!GApi.video_cut_at_beats) return false;
 
     FTCHARToUTF8 inputConverter(*inputVideo);
@@ -390,6 +394,7 @@ bool FBeatsyncLoader::CutVideoAtBeats(FVideoWriterHandle writer, const FString& 
 
 bool FBeatsyncLoader::CutVideoAtBeatsMulti(FVideoWriterHandle writer, const TArray<FString>& inputVideos, const TArray<double>& beatTimes, const FString& outputVideo, double clipDuration)
 {
+    if (!writer.IsValid()) return false;
     if (!GApi.video_cut_at_beats_multi) return false;
 
     // Build char** array with persistent converters
@@ -409,6 +414,7 @@ bool FBeatsyncLoader::CutVideoAtBeatsMulti(FVideoWriterHandle writer, const TArr
 
 void FBeatsyncLoader::SetEffectsConfig(FVideoWriterHandle writer, const FEffectsConfig& config)
 {
+    if (!writer.IsValid()) return;
     if (!GApi.video_set_effects) return;
 
     // Convert enum values to lowercase strings for C API
@@ -446,6 +452,7 @@ void FBeatsyncLoader::SetEffectsConfig(FVideoWriterHandle writer, const FEffects
 
 bool FBeatsyncLoader::ApplyEffects(FVideoWriterHandle writer, const FString& inputVideo, const FString& outputVideo, const TArray<double>& beatTimes)
 {
+    if (!writer.IsValid()) return false;
     if (!GApi.video_apply_effects) return false;
 
     FTCHARToUTF8 inConv(*inputVideo);
@@ -456,6 +463,7 @@ bool FBeatsyncLoader::ApplyEffects(FVideoWriterHandle writer, const FString& inp
 
 bool FBeatsyncLoader::AddAudioTrack(FVideoWriterHandle writer, const FString& inputVideo, const FString& audioFile, const FString& outputVideo, bool trimToShortest, double audioStart, double audioEnd)
 {
+    if (!writer.IsValid()) return false;
     if (!GApi.video_add_audio) return false;
 
     // Create persistent converters for string parameters - these RAII objects keep the
@@ -515,12 +523,14 @@ FSpanHandle FBeatsyncLoader::StartSpan(const FString& name)
 void FBeatsyncLoader::EndSpan(FSpanHandle h)
 {
     if (!GApi.end_span) return;
+    if (!h.IsValid()) return;
     GApi.end_span(h.Ptr);
 }
 
 void FBeatsyncLoader::SpanSetError(FSpanHandle h, const FString& msg)
 {
     if (!GApi.span_set_error) return;
+    if (!h.IsValid()) return;
     FTCHARToUTF8 TempMsg(*msg);
     GApi.span_set_error(h.Ptr, TempMsg.Get());
 }
@@ -528,6 +538,7 @@ void FBeatsyncLoader::SpanSetError(FSpanHandle h, const FString& msg)
 void FBeatsyncLoader::SpanAddEvent(FSpanHandle h, const FString& ev)
 {
     if (!GApi.span_add_event) return;
+    if (!h.IsValid()) return;
     FTCHARToUTF8 TempEv(*ev);
     GApi.span_add_event(h.Ptr, TempEv.Get());
 }
@@ -666,6 +677,7 @@ bool FBeatsyncLoader::AIAnalyzeQuick(FAIAnalyzerHandle Analyzer, const FString& 
 
 FString FBeatsyncLoader::GetAILastError(FAIAnalyzerHandle Analyzer)
 {
+    if (!Analyzer.IsValid()) return TEXT("");
     if (!GApi.ai_get_last_error) return TEXT("");
     const char* p = GApi.ai_get_last_error(Analyzer.Ptr);
     return p ? FString(UTF8_TO_TCHAR(p)) : TEXT("");

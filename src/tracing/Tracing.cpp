@@ -1,5 +1,6 @@
 #include "tracing/Tracing.h"
 #include <chrono>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 
@@ -32,14 +33,14 @@ static std::thread g_flush_thread;
 static std::atomic<bool> g_flush_thread_running{false};
 static std::condition_variable g_flush_cv;
 static std::mutex g_flush_cv_mutex;
-    static std::atomic<int> g_flush_period_ms{1000}; // Default 1s for periodic
+static std::atomic<int> g_flush_period_ms{1000}; // Default 1s for periodic
 
 static std::mutex g_flush_start_mutex;
 void SetTracingFlushMode(TracingFlushMode mode, int period_ms = 1000) {
-    g_flush_mode = mode;
     if (mode == TracingFlushMode::Periodic) {
         g_flush_period_ms.store(period_ms, std::memory_order_relaxed);
         std::lock_guard<std::mutex> startlk(g_flush_start_mutex);
+        g_flush_mode = mode; // Set inside lock
         // Use compare_exchange for atomic check-and-set to avoid race
         bool expected = false;
         if (g_flush_thread_running.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
@@ -56,6 +57,7 @@ void SetTracingFlushMode(TracingFlushMode mode, int period_ms = 1000) {
     } else {
         // Stop background flusher if running
         std::lock_guard<std::mutex> startlk(g_flush_start_mutex);
+        g_flush_mode = mode; // Set inside lock
         // Use compare_exchange for atomic check-and-set to avoid race
         bool expected = true;
         if (g_flush_thread_running.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) {
@@ -109,7 +111,10 @@ void InitTracing(const std::string& outfile) {
             
             // Mark flusher to stop while we hold the lock to avoid race
             if (need_stop_flusher) {
-                g_flush_mode = TracingFlushMode::Never;
+                // Use SetTracingFlushMode to ensure proper thread shutdown
+                lk.unlock();
+                SetTracingFlushMode(TracingFlushMode::Never);
+                lk.lock();
             }
 
             local_out = std::move(g_out);
@@ -117,14 +122,7 @@ void InitTracing(const std::string& outfile) {
             
             // Release lock before flushing/closing and joining flusher
             lk.unlock();
-            
-            if (need_stop_flusher) {
-                // If we were in periodic mode, notify thread to wake up and exit
-                g_flush_cv.notify_all();
-                if (g_flush_thread.joinable()) {
-                    g_flush_thread.join();
-                }
-            }
+
             if (local_out) {
                 local_out->flush();
                 local_out->close();

@@ -1427,6 +1427,7 @@ int32 SWaveformViewer::OnPaint(const FPaintArgs& Args, const FGeometry& Allotted
 			TriTop.Add(FVector2D(StartHandleX - HandleWidth, 0));
 			TriTop.Add(FVector2D(StartHandleX + HandleWidth, 0));
 			TriTop.Add(FVector2D(StartHandleX, HandleWidth * 1.5f));
+			TriTop.Add(TriTop[0]); // Close the triangle loop
 
 			FSlateDrawElement::MakeLines(
 				OutDrawElements,
@@ -1461,6 +1462,7 @@ int32 SWaveformViewer::OnPaint(const FPaintArgs& Args, const FGeometry& Allotted
 			TriBottom.Add(FVector2D(EndHandleX - HandleWidth, Height));
 			TriBottom.Add(FVector2D(EndHandleX + HandleWidth, Height));
 			TriBottom.Add(FVector2D(EndHandleX, Height - HandleWidth * 1.5f));
+			TriBottom.Add(TriBottom[0]); // Close the triangle loop
 
 			FSlateDrawElement::MakeLines(
 				OutDrawElements,

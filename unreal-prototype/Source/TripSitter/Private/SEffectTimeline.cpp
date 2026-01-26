@@ -134,6 +134,11 @@ void SEffectTimeline::ShowContextMenu(const FGeometry& MyGeometry, const FPointe
 	{
 		// Context menu for existing effect region
 		SelectedRegionIndex = RegionIndex;
+		Invalidate(EInvalidateWidget::Paint);
+		if (OnRegionSelected.IsBound())
+		{
+			OnRegionSelected.Execute(RegionIndex);
+		}
 		const FEffectRegion& Region = EffectRegions[RegionIndex];
 
 		MenuBuilder.BeginSection("EffectRegion", FText::FromString(Region.EffectName));
@@ -306,7 +311,12 @@ FReply SEffectTimeline::OnMouseButtonUp(const FGeometry& MyGeometry, const FPoin
 
 FReply SEffectTimeline::OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	if (EffectRegions.Num() == 0 || Duration <= 0) return FReply::Unhandled();
+	// Only block if no active drag - allow ongoing drags to complete even if regions cleared
+	if (CurrentDragMode == EDragMode::None && (EffectRegions.Num() == 0 || Duration <= 0))
+	{
+		return FReply::Unhandled();
+	}
+	if (Duration <= 0) return FReply::Unhandled();
 
 	FVector2D LocalPos = MyGeometry.AbsoluteToLocal(MouseEvent.GetScreenSpacePosition());
 	float Width = MyGeometry.GetLocalSize().X;
@@ -353,7 +363,7 @@ FReply SEffectTimeline::OnMouseMove(const FGeometry& MyGeometry, const FPointerE
 
 		// If the region is larger than the available selection range, preserve duration and don't allow move
 		double AvailableRange = EffectiveSelEnd - MinBound;
-		if (RegionDuration >= AvailableRange) {
+		if (RegionDuration > AvailableRange) {
 			// Region doesn't fit - preserve original duration, don't allow move
 			LastMousePos = LocalPos;
 			return FReply::Handled();

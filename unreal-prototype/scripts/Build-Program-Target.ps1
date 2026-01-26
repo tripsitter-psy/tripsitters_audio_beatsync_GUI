@@ -145,8 +145,13 @@ $timeoutMillis = 1800000
 if (-not $proc.WaitForExit($timeoutMillis)) {
     Write-Host "ERROR: Build process timed out after $($timeoutMillis/60000) minutes. Killing process..." -ForegroundColor Red
     Write-Host "See log: $LogPath" -ForegroundColor Red
-    $proc.Kill()
-    $proc.WaitForExit()
+    try {
+        $proc.Kill()
+        $proc.WaitForExit()
+    } catch {
+        # Process may have already exited between timeout check and Kill() call
+        Write-Host "Note: Process already exited before Kill() was called" -ForegroundColor Yellow
+    }
     # Exit immediately with non-zero code - don't rely on $proc.ExitCode after kill
     exit 1
 }

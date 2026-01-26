@@ -1,51 +1,45 @@
 # TripSitter Program Target Setup
 
-This document explains how to build and run TripSitter as a Program target instead of a Game target.
+This document explains how to build TripSitter as an **Unreal Engine Program**.
 
-## What Changed
+## Overview
 
-The project has been converted from a Game target to a Program target, which provides:
+TripSitter is designed to run as a standalone "Program" within the Unreal Engine ecosystem (similar to `UnrealFrontend` or `SlateViewer`). This means it does not use the standard "Game" loop but instead uses a lightweight application loop suitable for desktop tools.
 
-- **No game world**: Clean desktop application without viewport overhead
-- **Native mouse cursor**: Works automatically through FSlateApplication
-- **Simple architecture**: No PlayerController, GameMode, or complex game systems
-- **Proper desktop app**: Similar to SlateViewer or UnrealFrontend
+## Build Instructions (Integration Method)
 
-## Prerequisites
+The standard way to build TripSitter is to integrate its source code into your Unreal Engine source tree.
 
-### Platform Compatibility
-**Note: These instructions are for Windows.** The provided PowerShell script (`Setup-Engine-Symlink.ps1`), paths (e.g., `C:\Program Files\Epic Games\UE_5.7\Engine`), and the target binary path (`Binaries/Win64/TripSitter.exe`) are specific to Windows.
-For macOS or Linux users, please check the repository root or relevant documentation for shell scripts (`.sh`) and appropriate Engine paths and build targets for your platform.
+### 1. Copy Source to Engine
 
-### 1. Engine Symlink Setup
-
-For Program targets with installed engines, you need to create an Engine symlink:
+Copy the `TripSitter` folder from `unreal-prototype/Source/` to your Engine's `Source/Programs/` directory.
 
 ```powershell
-# Run PowerShell as Administrator
-& ".\scripts\Setup-Engine-Symlink.ps1"
+# Example PowerShell command
+$UE_ROOT = "C:\UE5_Source\UnrealEngine"
+Copy-Item -Path "Source\TripSitter" -Destination "$UE_ROOT\Engine\Source\Programs\" -Recurse -Force
 ```
 
-This creates a symlink from `Engine` -> `C:\Program Files\Epic Games\UE_5.7\Engine`
+### 2. Build the Program
 
-### 2. Build the Program Target
+Use the Unreal Engine `Build.bat` script to compile the program.
 
 ```powershell
-# Generate project files
-"C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\DotNET\UnrealBuildTool.exe" -projectfiles -project="TripSitter.uproject" -game -engine
-
-# Build the program
-"C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\DotNET\UnrealBuildTool.exe" TripSitter Win64 Development -Project="TripSitter.uproject"
+# Build for Windows 64-bit
+& "$UE_ROOT\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
 
 ### 3. Run the Application
 
-The built executable will be in:
+The built executable will be located in the Engine binaries folder:
 ```
-Binaries/Win64/TripSitter.exe
+$UE_ROOT/Engine/Binaries/Win64/TripSitter.exe
 ```
 
 ## Project Structure
+
+(Note: The `.uproject` file in this directory is for standalone reference or legacy use. The primary build method involves source integration.)
+
 
 ```
 Source/
@@ -70,7 +64,6 @@ Source/
 ## Troubleshooting
 
 ### Build Errors
-- Ensure the Engine symlink is created correctly
 - Verify Unreal Engine 5.7 is installed
 - Check that all dependencies are available
 

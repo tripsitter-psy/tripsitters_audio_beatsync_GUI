@@ -1915,7 +1915,10 @@ FReply STripSitterMainWidget::OnBrowseVideoFolderClicked()
 #else
 	// Non-Windows platforms: folder browsing not supported in standalone builds
 	UE_LOG(LogTemp, Warning, TEXT("TripSitter: Folder browsing not available on this platform in standalone mode"));
-	VideoPathBox->SetText(FText::FromString(TEXT("Folder browsing unavailable - enter path manually")));
+	if (VideoPathBox.IsValid())
+	{
+		VideoPathBox->SetText(FText::FromString(TEXT("Folder browsing unavailable - enter path manually")));
+	}
 #endif
 	return FReply::Handled();
 }
@@ -1943,7 +1946,7 @@ FReply STripSitterMainWidget::OnBrowseOutputClicked()
 			}
 		}
 	}
-#else
+#elif PLATFORM_WINDOWS
 	// Windows native save dialog for standalone builds
 	OPENFILENAMEW ofn;
 	WCHAR szFile[MAX_PATH] = { 0 };
@@ -1963,6 +1966,9 @@ FReply STripSitterMainWidget::OnBrowseOutputClicked()
 		OutputPath = FString(szFile);
 		OutputPathBox->SetText(FText::FromString(OutputPath));
 	}
+#else
+	// Non-Windows platforms: save dialog not supported in standalone builds
+	UE_LOG(LogTemp, Warning, TEXT("TripSitter: Save dialog not available on this platform in standalone mode"));
 #endif
 	return FReply::Handled();
 }
@@ -2363,8 +2369,8 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 	else
 	{
 		// Energy-based analysis
-		void* Analyzer = FBeatsyncLoader::CreateAnalyzer();
-		if (!Analyzer)
+		FAnalyzerHandle Analyzer = FBeatsyncLoader::CreateAnalyzer();
+		if (!Analyzer.IsValid())
 		{
 			StatusText = TEXT("ERROR: Failed to create analyzer");
 			if (StatusTextBlock.IsValid())
@@ -2981,6 +2987,13 @@ void STripSitterMainWidget::UpdatePreviewTexture(const TArray<uint8>& RGBData, i
 		return;
 	}
 
+	// Release old dynamic image resource to prevent GPU texture leak
+	if (PreviewImageBrush.IsValid())
+	{
+		Renderer->ReleaseDynamicResource(*PreviewImageBrush);
+		PreviewImageBrush.Reset();
+	}
+
 	FName BrushName = FName(*FString::Printf(TEXT("PreviewTexture_%d"), FMath::Rand()));
 	UE_LOG(LogTemp, Log, TEXT("UpdatePreviewTexture: Generating dynamic image resource '%s'..."), *BrushName.ToString());
 
@@ -3025,4 +3038,5 @@ void STripSitterMainWidget::UpdatePreviewTexture(const TArray<uint8>& RGBData, i
 }
 
 #undef LOCTEXT_NAMESPACE
+
 

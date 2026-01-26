@@ -13,6 +13,8 @@
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <Windows.h>
 #include "Windows/HideWindowsPlatformTypes.h"
+// Store custom icon handle for cleanup on exit
+static HICON GWindowIcon = nullptr;
 #endif
 
 IMPLEMENT_APPLICATION(TripSitter, "TripSitter");
@@ -76,11 +78,11 @@ int RunTripSitter(const TCHAR* CommandLine)
 
             if (FPaths::FileExists(IconPath))
             {
-                HICON hIcon = (HICON)LoadImageW(NULL, *IconPath, IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE);
-                if (hIcon)
+                GWindowIcon = (HICON)LoadImageW(NULL, *IconPath, IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE);
+                if (GWindowIcon)
                 {
-                    SendMessage(Hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
-                    SendMessage(Hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
+                    SendMessage(Hwnd, WM_SETICON, ICON_BIG, (LPARAM)GWindowIcon);
+                    SendMessage(Hwnd, WM_SETICON, ICON_SMALL, (LPARAM)GWindowIcon);
                     UE_LOG(LogTemp, Log, TEXT("Custom window icon set from: %s"), *IconPath);
                 }
                 else
@@ -113,6 +115,16 @@ int RunTripSitter(const TCHAR* CommandLine)
 
     // Cleanup
     FBeatsyncLoader::Shutdown();
+
+#if PLATFORM_WINDOWS
+    // Destroy custom window icon to prevent GDI resource leak
+    if (GWindowIcon)
+    {
+        DestroyIcon(GWindowIcon);
+        GWindowIcon = nullptr;
+    }
+#endif
+
     FCoreDelegates::OnExit.Broadcast();
     FSlateApplication::Shutdown();
     FModuleManager::Get().UnloadModulesAtShutdown();
