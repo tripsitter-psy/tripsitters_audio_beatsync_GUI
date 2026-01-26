@@ -30,7 +30,6 @@
       "Bash(reg query:*)",
       "Bash(powershell -Command Get-ChildItem:*)",
       "Bash(powershell -Command Test-Path:*)",
-      "Bash(powershell -Command Copy-Item:*)",
       "Bash(powershell -Command Get-Process:*)",
       "Bash(powershell -Command Stop-Process -Name TripSitter)",
       "Bash(powershell -Command Stop-Process -Name ffmpeg)",
@@ -57,6 +56,9 @@
   "_machine_specific_permissions": {
     "_description": "Add these to the 'allow' array above, replacing paths with your local UE5 installation",
     "ue5_build": "Bash(<YOUR_UE5_PATH>/Engine/Build/BatchFiles/Build.bat:*)",
+    "copy_to_ue5": "Bash(powershell -Command Copy-Item * <YOUR_UE5_PATH>/Engine/*)",
+    "copy_build_artifacts": "Bash(powershell -Command Copy-Item * build/*)",
+    "copy_thirdparty": "Bash(powershell -Command Copy-Item * unreal-prototype/ThirdParty/*)",
     "desktop_check": "Bash(powershell -Command \"Get-ChildItem -Path \\\"$env:USERPROFILE\\\\Desktop\\\\TripSitterBuild\\\\Windows\\\" -ErrorAction SilentlyContinue | Select-Object Name, Length\")"
   }
 }

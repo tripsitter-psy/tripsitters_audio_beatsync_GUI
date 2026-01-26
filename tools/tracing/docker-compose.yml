@@ -23,7 +23,7 @@ services:
       - "4318:4318" # OTLP HTTP
       - "13133:13133" # Health check
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:13133/ || wget -q --spider http://localhost:13133/"]
       interval: 10s
       timeout: 5s
       retries: 5

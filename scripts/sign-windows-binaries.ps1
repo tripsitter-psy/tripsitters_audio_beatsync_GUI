@@ -37,6 +37,11 @@ if (-not $BuildDir -and -not $InstallerPath) {
     exit 1
 }
 
+# Override TimestampUrl from environment variable if set
+if ($env:CODESIGN_TIMESTAMP_URL) {
+    $TimestampUrl = $env:CODESIGN_TIMESTAMP_URL
+}
+
 $ErrorActionPreference = "Stop"
 
 Write-Host "=== MTV TripSitter Windows Code Signing ===" -ForegroundColor Cyan
@@ -119,14 +124,17 @@ function Get-CertificateFromEnv {
             $fs = [System.IO.File]::Open($tempCert, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
             $fs.SetAccessControl($acl)
             $script:createdTempCert = $true
-            $bytes = [System.Convert]::FromBase64String($env:CODESIGN_CERTIFICATE_BASE64)
+            # Decode base64 - catch invalid encoding errors
+            try {
+                $bytes = [System.Convert]::FromBase64String($env:CODESIGN_CERTIFICATE_BASE64)
+            } catch {
+                Write-Error "CODESIGN_CERTIFICATE_BASE64 contains invalid base64 data: $_"
+                return $null
+            }
             $fs.Write($bytes, 0, $bytes.Length)
         } finally {
             if ($fs) { $fs.Close() }
         }
-
-        # Mark that we created this temp cert so cleanup knows to delete it
-        $script:createdTempCert = $true
 
         return $tempCert
     }

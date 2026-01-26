@@ -19,7 +19,11 @@ foreach ($pattern in $forbiddenPatterns) {
     if ($foundFiles) {
         foreach ($file in $foundFiles) {
             Write-Warning "Removing prohibited FFmpeg DLL from build output: $($file.Name). This implies vcpkg or another process copied the wrong FFmpeg version."
-            Remove-Item $file.FullName -Force
+            try {
+                Remove-Item $file.FullName -Force -ErrorAction Stop
+            } catch {
+                Write-Error "Failed to remove $($file.FullName): $_"
+            }
             $found = $true
         }
     }

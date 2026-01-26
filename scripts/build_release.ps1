@@ -200,11 +200,11 @@ $ValidationErrors = @()
 $ValidationWarnings = @()
 
 # Check backend DLL
-$BackendDll = Join-Path $BuildDir "Release\beatsync_backend_shared.dll"
+$BackendDll = Join-Path $BuildDir "$Configuration\beatsync_backend_shared.dll"
 if (-not $SkipBackend) {
     if (Test-Path $BackendDll) {
         $backendSize = (Get-Item $BackendDll).Length / 1MB
-        Write-Success "Backend DLL: $([math]::Round($backendSize, 2)) MB"
+        Write-Success "Backend DLL ($Configuration): $([math]::Round($backendSize, 2)) MB"
     } else {
         $ValidationErrors += "Backend DLL not found at $BackendDll"
     }

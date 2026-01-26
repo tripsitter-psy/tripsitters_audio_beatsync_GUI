@@ -17,7 +17,6 @@ This repository contains some vendor-supplied and legacy files with non-HTTPS (h
 -->
 - http://homes.cs.washington.edu/~moreau/ (required for provenance; site may be outdated)
 - http://homes.cs.washington.edu/~haichen/ (required for provenance; site may be outdated)
-- (Google Code Search URL removed - defunct service)
 
 ### src/backend/tracing.cpp
 - http://localhost:4317

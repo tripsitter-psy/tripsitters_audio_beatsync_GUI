@@ -29,9 +29,9 @@ typedef void (*bs_progress_cb)(double progress, void* user_data);
 BEATSYNC_API extern const char* const BS_VERSION;
 
 // Library version and lifecycle
-BEATSYNC_API const char* bs_get_version();
-BEATSYNC_API int bs_init();
-BEATSYNC_API void bs_shutdown();
+BEATSYNC_API const char* bs_get_version(void);
+BEATSYNC_API int bs_init(void);
+BEATSYNC_API void bs_shutdown(void);
 
 // Simple C representation of a beat grid
 typedef struct bs_beatgrid_t {

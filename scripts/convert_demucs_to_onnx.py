@@ -63,6 +63,10 @@ def main():
 
     os.makedirs(os.path.dirname(args.out) if os.path.dirname(args.out) else ".", exist_ok=True)
 
+    # Track stem info for verification/output messages
+    n_stems = 4  # Default for lightweight model
+    stem_names = ['drums', 'bass', 'other', 'vocals']  # Default stem names
+
     if USE_DEMUCS:
         print(f"Loading Demucs model: {args.model}...")
         try:
@@ -72,9 +76,11 @@ def main():
 
             # Get model info
             sample_rate = model.samplerate  # Usually 44100
-            sources = model.sources  # ['drums', 'bass', 'other', 'vocals']
+            sources = model.sources  # ['drums', 'bass', 'other', 'vocals'] or 6 stems for htdemucs_6s
+            n_stems = len(sources)
+            stem_names = list(sources)
             print(f"  Sample rate: {sample_rate}")
-            print(f"  Sources: {sources}")
+            print(f"  Sources ({n_stems}): {sources}")
 
             # Create dummy input
             # Demucs expects: (batch, channels=2, samples)
@@ -192,7 +198,6 @@ def main():
 
             def forward(self, x):
                 # x: (batch, 2, samples)
-                batch_size = x.shape[0]
                 orig_length = x.shape[2]
 
                 # Encode
@@ -339,7 +344,7 @@ def main():
 
             print(f"  Test inference: OK")
             print(f"    Output shape: {outputs[0].shape}")
-            print(f"    Expected: (1, 4, 2, {test_length})")
+            print(f"    Expected: (1, {n_stems}, 2, {test_length})")
 
         except Exception as e:
             print(f"  Verification failed: {e}", file=sys.stderr)
@@ -349,8 +354,8 @@ def main():
     print("\nModel expects:")
     print("  - Input: Stereo audio (batch, 2, samples)")
     print("  - Sample rate: 44100 Hz")
-    print("  - Output: 4 stems (drums, bass, other, vocals)")
-    print("  - Output shape: (batch, 4, 2, samples)")
+    print(f"  - Output: {n_stems} stems ({', '.join(stem_names)})")
+    print(f"  - Output shape: (batch, {n_stems}, 2, samples)")
 
     return 0
 

@@ -471,29 +471,37 @@ install(FILES ... DESTINATION Engine/Binaries/Win64/Resources)
 
 **Important**: After changing CMakeLists.txt install destinations, you MUST run `cmake -S . -B build ...` to reconfigure before running `cpack`. Otherwise the old cached install rules will be used.
 
-### CRITICAL: Use pre-packaged UE build for installer
-**Symptom**: Installed app shows black screen, missing UI, missing fonts, or crashes.
+### TripSitter is a PROGRAM TARGET, not a Game
 
-**Root cause**: UE5 Program targets (like TripSitter.exe built from source) require extensive engine runtime files (725+ DLLs, shaders, cooked content) that are impractical to assemble manually.
+**CRITICAL**: TripSitter is a standalone Slate Program target built via `Build.bat`, NOT a Game packaged via the Editor.
 
-**Solution**: Use a pre-packaged UE build created by the UE packaging system. The CMakeLists.txt now installs from:
+**Do NOT use "Package Project"** - that creates a Game build with cooked Paks which will launch the game engine instead of the TripSitter application.
+
+**Correct build process**:
+
+1. Build TripSitter.exe via: `Build.bat TripSitter Win64 Development`
+2. The executable is at: `C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe`
+3. CMakeLists.txt installs this Program target with required Engine runtime files
+
+**Installer layout** (Program target structure):
 
 ```
-%USERPROFILE%\Desktop\TripSitterBuild\Windows\
-├── MyProject.exe         -> installed as TripSitter.exe (launcher)
-├── Engine/               -> Engine/ (runtime, ThirdParty DLLs, Slate, shaders)
-├── MyProject/            -> TripSitter/ (game binaries and cooked content)
-│   ├── Binaries/Win64/   -> Contains actual game exe and all DLLs
-│   └── Content/Paks/     -> Cooked game assets
-└── Manifest_*.txt        -> UE manifest files
+MTV TripSitter/
+├── Engine/
+│   ├── Binaries/Win64/
+│   │   ├── TripSitter.exe          <- Program target executable
+│   │   ├── beatsync_backend_shared.dll
+│   │   ├── onnxruntime.dll
+│   │   ├── av*.dll, sw*.dll        <- FFmpeg
+│   │   ├── audioflux.dll           <- AudioFlux (optional)
+│   │   ├── Resources/              <- UI assets
+│   │   └── *.dll                   <- UE runtime DLLs
+│   └── Content/Slate/              <- Slate UI textures
+├── models/                         <- ONNX models
+└── licenses/
 ```
 
-**To create the pre-packaged build**:
-1. Open the TripSitter UE project in Unreal Editor
-2. Package for Windows (File > Package Project > Windows)
-3. Output to `%USERPROFILE%\Desktop\TripSitterBuild\Windows`
-
-**Files affected**: `CMakeLists.txt` (install section starting around line 379).
+**Files affected**: `CMakeLists.txt` (install section starting around line 431).
 
 ## Streamlined Release Workflow
 
@@ -557,10 +565,23 @@ Before running the release script, ensure:
 
 - [ ] vcpkg submodule initialized (`git submodule update --init --recursive`)
 - [ ] UE5 Source build at `C:\UE5_Source\UnrealEngine`
-- [ ] Pre-packaged UE build at `%USERPROFILE%\Desktop\TripSitterBuild\Windows\`
+- [ ] Pre-packaged UE runtime folder at `%USERPROFILE%\Desktop\TripSitterBuild\Windows\` (see below)
 - [ ] AudioFlux installed at `C:\audioFlux` (optional, for Flux mode)
 - [ ] NSIS installed and in PATH (for installer creation)
 - [ ] rcedit installed (for custom icon)
+
+#### Creating the Pre-packaged UE Runtime Folder
+
+The `TripSitterBuild\Windows\` folder contains UE5 runtime DLLs and Slate content required by TripSitter.exe. This folder is **not** created by `build_release.ps1` - it must be prepared manually once:
+
+1. **Copy UE5 runtime DLLs** from `C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\` to `%USERPROFILE%\Desktop\TripSitterBuild\Windows\Engine\Binaries\Win64\`
+   - Required: Core UE DLLs (`*.dll` excluding debug/editor-only)
+2. **Copy Slate content** from `C:\UE5_Source\UnrealEngine\Engine\Content\Slate\` to `%USERPROFILE%\Desktop\TripSitterBuild\Windows\Engine\Content\Slate\`
+   - Required folders: `Common`, `Fonts`, `Cursor`, `Old`
+
+Alternatively, run `scripts/deploy_tripsitter.ps1` which handles DLL deployment to UE5 Binaries, then manually copy the Engine folder structure to the TripSitterBuild location.
+
+**Note**: This is a one-time setup. Once created, the folder is reused for all subsequent builds.
 
 ### Output Files
 

@@ -106,7 +106,16 @@ try {
     }
 } catch {
     # Handle UNC/network path or other errors
-    $psDrive = Get-PSDrive -Name ((Get-Item $temp).PSDrive.Name) -ErrorAction SilentlyContinue
+    # Protect Get-Item and Get-PSDrive calls to avoid nested exceptions
+    $psDrive = $null
+    try {
+        $tempItem = Get-Item $temp -ErrorAction SilentlyContinue
+        if ($tempItem -and $tempItem.PSDrive -and $tempItem.PSDrive.Name) {
+            $psDrive = Get-PSDrive -Name $tempItem.PSDrive.Name -ErrorAction SilentlyContinue
+        }
+    } catch {
+        # Silently ignore - $psDrive remains $null
+    }
     if ($psDrive -and $psDrive.Free) {
         $freeGB = [Math]::Round($psDrive.Free / 1GB, 2)
         Write-Host "Temp path: $temp (Free: $freeGB GB via PSDrive)"

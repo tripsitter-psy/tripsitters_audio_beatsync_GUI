@@ -31,8 +31,8 @@ public:
     struct STFTResult {
         std::vector<float> real;
         std::vector<float> imag;
-        int numFrames;
-        int numBins;
+        int numFrames = 0;
+        int numBins = 0;
     };
 
     AudioFluxBeatDetector();

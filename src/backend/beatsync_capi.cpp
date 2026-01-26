@@ -1559,6 +1559,8 @@ BEATSYNC_API int bs_ai_analyze_file(void* analyzer, const char* audio_path,
             out_result->segments = static_cast<decltype(out_result->segments)>(malloc(segSize));
 
             if (out_result->segments) {
+                // Track allocated count incrementally so exception handler can clean up correctly
+                out_result->segment_count = 0;
                 for (size_t i = 0; i < result.segments.size(); ++i) {
                     out_result->segments[i].start_time = result.segments[i].startTime;
                     out_result->segments[i].end_time = result.segments[i].endTime;
@@ -1567,8 +1569,8 @@ BEATSYNC_API int bs_ai_analyze_file(void* analyzer, const char* audio_path,
                         size_t len = result.segments[i].label.size();
                         char* labelCopy = static_cast<char*>(malloc(len + 1));
                         if (!labelCopy) {
-                            // Allocation failed, cleanup all previous allocations
-                            for (size_t j = 0; j < i; ++j) {
+                            // Allocation failed, cleanup all previous allocations (segment_count already tracks them)
+                            for (size_t j = 0; j < out_result->segment_count; ++j) {
                                 if (out_result->segments[j].label) free(out_result->segments[j].label);
                             }
                             free(out_result->segments);
@@ -1585,8 +1587,9 @@ BEATSYNC_API int bs_ai_analyze_file(void* analyzer, const char* audio_path,
                         out_result->segments[i].label = nullptr;
                     }
                     out_result->segments[i].confidence = result.segments[i].confidence;
+                    // Increment count after fully initializing segment so exception handler knows what to free
+                    out_result->segment_count++;
                 }
-                out_result->segment_count = result.segments.size();
             } else {
                 // Allocation failed, cleanup previous allocations
                 if (out_result->beats) { free(out_result->beats); out_result->beats = nullptr; out_result->beat_count = 0; }
@@ -1654,20 +1657,28 @@ BEATSYNC_API int bs_ai_analyze_samples(void* analyzer,
     try {
         auto* a = static_cast<BeatSync::OnnxMusicAnalyzer*>(analyzer);
 
+        // sample_count is total number of float values (frames * num_channels)
+        // Compute number of frames for consistent handling across all channel counts
+        size_t numFrames = (num_channels > 0) ? sample_count / static_cast<size_t>(num_channels) : 0;
+        if (numFrames == 0) {
+            s_aiLastError = "Invalid sample_count or num_channels";
+            return -1;
+        }
+
         // Prepare samples (ensure stereo interleaved)
         std::vector<float> stereoSamples;
         if (num_channels == 1) {
-            // Convert mono to stereo
-            stereoSamples.resize(sample_count * 2);
-            for (size_t i = 0; i < sample_count; ++i) {
+            // Convert mono to stereo: expand each frame into left+right
+            stereoSamples.resize(numFrames * 2);
+            for (size_t i = 0; i < numFrames; ++i) {
                 stereoSamples[i * 2] = samples[i];
                 stereoSamples[i * 2 + 1] = samples[i];
             }
         } else if (num_channels == 2) {
+            // Already stereo interleaved: copy all sample_count floats directly
             stereoSamples.assign(samples, samples + sample_count);
         } else {
-            // Mix down to stereo
-            size_t numFrames = sample_count / num_channels;
+            // Mix down multi-channel to stereo: average all channels per frame
             stereoSamples.resize(numFrames * 2);
             for (size_t i = 0; i < numFrames; ++i) {
                 float sum = 0.0f;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "TripSitter.h"  // Module API header for TRIPSITTER_API macro
 #include "Framework/Application/SlateApplication.h"
 #include "Widgets/SWindow.h"
 

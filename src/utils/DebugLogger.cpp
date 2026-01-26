@@ -10,8 +10,11 @@
 namespace BeatSync {
 
 DebugLogger& DebugLogger::getInstance() {
-    static DebugLogger instance;
-    return instance;
+    // Use a pointer that's never deleted to avoid static destruction order issues.
+    // This prevents crashes if other static destructors try to log during shutdown.
+    // The intentional "leak" is acceptable for a singleton that lives until program exit.
+    static DebugLogger* instance = new DebugLogger();
+    return *instance;
 }
 
 DebugLogger::DebugLogger() {

@@ -35,9 +35,36 @@ import numpy as np
 
 
 class MadmomUnpickler(pickle.Unpickler):
-    """Custom unpickler that handles madmom classes without requiring madmom installed."""
+    """Custom unpickler that handles madmom classes without requiring madmom installed.
+
+    Security: Only allows madmom classes (as dummy stubs) and a strict allowlist of
+    safe standard library/numpy classes. All other classes are rejected.
+    """
+
+    # Explicit allowlist of (module, name) pairs that madmom pickle files may reference.
+    # This is intentionally restrictive - only add entries that are actually needed.
+    SAFE_CLASSES = frozenset({
+        # builtins - basic container types only
+        ('builtins', 'dict'),
+        ('builtins', 'list'),
+        ('builtins', 'tuple'),
+        ('builtins', 'set'),
+        ('builtins', 'frozenset'),
+        ('builtins', 'bytes'),
+        ('builtins', 'bytearray'),
+        # numpy - only specific safe functions, NOT arbitrary module access
+        ('numpy', 'ndarray'),
+        ('numpy', 'dtype'),
+        ('numpy.core.multiarray', '_reconstruct'),
+        ('numpy.core.multiarray', 'scalar'),
+        ('numpy._core.multiarray', '_reconstruct'),
+        ('numpy._core.multiarray', 'scalar'),
+        # collections
+        ('collections', 'OrderedDict'),
+    })
 
     def find_class(self, module, name):
+        # Allow madmom classes as dummy stubs
         if 'madmom' in module:
             class DummyMadmomClass:
                 def __init__(self, *args, **kwargs):
@@ -56,7 +83,16 @@ class MadmomUnpickler(pickle.Unpickler):
             DummyMadmomClass.__module__ = module
             return DummyMadmomClass
 
-        return super().find_class(module, name)
+        # Only allow explicitly listed (module, name) pairs - no broad module fallback
+        if (module, name) in self.SAFE_CLASSES:
+            return super().find_class(module, name)
+
+        # Reject all other classes for security (including dangerous numpy functions
+        # like numpy.core.multiarray.fromfile which can read arbitrary files)
+        raise pickle.UnpicklingError(
+            f"Unsafe class rejected: {module}.{name}. "
+            f"Only madmom and explicitly allowlisted classes are permitted."
+        )
 
 
 def load_pkl_safe(pkl_path):
@@ -396,7 +432,10 @@ def main():
 
             # Load conv layer weights
             conv_layers = ['conv1', 'conv2', 'conv3']
-            for i, (name, w) in enumerate(zip(conv_layers, weights['conv_layers'])):
+            weights_conv = weights['conv_layers']
+            if len(conv_layers) != len(weights_conv):
+                print(f"  WARNING: conv_layers count mismatch: expected {len(conv_layers)}, got {len(weights_conv)}")
+            for i, (name, w) in enumerate(zip(conv_layers, weights_conv)):
                 if 'weights' in w and w['weights'] is not None:
                     weight = w['weights']
                     if weight.ndim == 4:
@@ -436,7 +475,10 @@ def main():
 
             # Load output weights
             output_names = ['output_beat', 'output_downbeat']
-            for i, (name, w) in enumerate(zip(output_names, weights.get('output_layers', []))):
+            output_weights = weights.get('output_layers', [])
+            if len(output_names) != len(output_weights):
+                print(f"  WARNING: output_layers count mismatch: expected {len(output_names)}, got {len(output_weights)}")
+            for i, (name, w) in enumerate(zip(output_names, output_weights)):
                 if 'weights' in w and w['weights'] is not None:
                     weight = w['weights']
                     if weight.ndim == 2:
@@ -466,7 +508,10 @@ def main():
 
             # Load conv layer weights
             conv_layers = ['conv1', 'conv2', 'conv3']
-            for i, (name, w) in enumerate(zip(conv_layers, weights['conv_layers'])):
+            weights_conv = weights['conv_layers']
+            if len(conv_layers) != len(weights_conv):
+                print(f"  WARNING: conv_layers count mismatch: expected {len(conv_layers)}, got {len(weights_conv)}")
+            for i, (name, w) in enumerate(zip(conv_layers, weights_conv)):
                 if 'weights' in w and w['weights'] is not None:
                     weight = w['weights']
                     # madmom uses (in_ch, out_ch, h, w), PyTorch uses (out_ch, in_ch, h, w)
@@ -508,7 +553,10 @@ def main():
 
             # Load output weights
             output_names = ['output_beat', 'output_downbeat']
-            for i, (name, w) in enumerate(zip(output_names, weights.get('output_layers', []))):
+            output_weights = weights.get('output_layers', [])
+            if len(output_names) != len(output_weights):
+                print(f"  WARNING: output_layers count mismatch: expected {len(output_names)}, got {len(output_weights)}")
+            for i, (name, w) in enumerate(zip(output_names, output_weights)):
                 if 'weights' in w and w['weights'] is not None:
                     weight = w['weights']
                     if weight.ndim == 2:

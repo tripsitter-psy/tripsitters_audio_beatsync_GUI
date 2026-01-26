@@ -34,12 +34,14 @@ The project consists of two main components:
 - CMake 3.20+
 - Visual Studio 2022 (MSVC - Microsoft Visual C++ compiler)
 - Unreal Engine 5 — installed or source build (e.g., from Epic Launcher or GitHub)
-  - *Note:* If using an installed engine, you don't need to rebuild the engine itself. See the [Unreal Prototype README](unreal-prototype/README.md) for details on generating project files.
+  - *Note:* If using an installed engine, you don't need to rebuild the engine itself. See [BUILD.md](BUILD.md) for detailed build instructions.
 
 ### Dependencies (via vcpkg)
 
 - FFmpeg (avcodec, avformat, swresample, swscale, avfilter)
 - ONNX Runtime 1.23.2
+
+**Important License Note**: This project may optionally link against **AudioFlux/FFTW3**. If enabled (via `-DAUDIOFLUX_ROOT`), the resulting binaries effectively become **GPL-licensed**. By default, AudioFlux detection is disabled to preserve MIT compliance. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for details.
 
 vcpkg baseline
 
@@ -86,16 +88,18 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmak
 cmake --build build --config Release --target beatsync_backend_shared
 ```
 
-### Build TripSitter GUI
+### Build TripSitter GUI (Engine Program)
+
+TripSitter is an **Unreal Engine Program** (standalone desktop application). The recommended build method is to integrate it into the Engine source tree:
 
 ```powershell
 # Set your Unreal Engine path (Windows example)
 $Env:UE_ENGINE_PATH = 'C:\UE5_Source\UnrealEngine'
 
-# Copy source to UE engine
-Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "$Env:UE_ENGINE_PATH\Engine\Source\Programs\TripSitter\Private\" -Recurse -Force
+# Copy source to UE engine (Integration)
+Copy-Item -Path 'unreal-prototype\Source\TripSitter' -Destination "$Env:UE_ENGINE_PATH\Engine\Source\Programs\" -Recurse -Force
 
-# Build
+# Build using Unreal's Build.bat
 & "$Env:UE_ENGINE_PATH\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
 

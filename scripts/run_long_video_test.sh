@@ -63,16 +63,17 @@ fi
 
 set +e
 # Try several CLI forms
-$BEATSYNC create "$OUT_VIDEO" "$AUDIO" --strategy downbeat --gpu > "$STDOUT_LOG" 2>"$STDERR_LOG"
+# Quote $BEATSYNC to handle paths with spaces
+"$BEATSYNC" create "$OUT_VIDEO" "$AUDIO" --strategy downbeat --gpu > "$STDOUT_LOG" 2>"$STDERR_LOG"
 RC=$?
 if [ $RC -ne 0 ] || [ ! -f "$OUT_VIDEO" ]; then
   echo "First form failed (exit $RC), trying without --gpu"
-  $BEATSYNC create "$OUT_VIDEO" "$AUDIO" --strategy downbeat >> "$STDOUT_LOG" 2>>"$STDERR_LOG"
+  "$BEATSYNC" create "$OUT_VIDEO" "$AUDIO" --strategy downbeat >> "$STDOUT_LOG" 2>>"$STDERR_LOG"
   RC=$?
 fi
 if [ $RC -ne 0 ] || [ ! -f "$OUT_VIDEO" ]; then
   echo "Second form failed (exit $RC), trying without strategy"
-  $BEATSYNC create "$OUT_VIDEO" "$AUDIO" >> "$STDOUT_LOG" 2>>"$STDERR_LOG"
+  "$BEATSYNC" create "$OUT_VIDEO" "$AUDIO" >> "$STDOUT_LOG" 2>>"$STDERR_LOG"
   RC=$?
 fi
 set -e

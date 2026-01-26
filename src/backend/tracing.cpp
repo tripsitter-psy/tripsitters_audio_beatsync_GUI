@@ -27,10 +27,6 @@ static std::mutex g_providerMutex;  // Protects g_provider access
 namespace BeatSync {
 
 bool InitializeTracing(const std::string& serviceName) {
-    const char* env = std::getenv("OTEL_EXPORTER_OTLP_ENDPOINT");
-    // Use port 4317 for gRPC (OTLP/gRPC default), not 4318 (OTLP/HTTP)
-    std::string endpoint = env ? env : "http://localhost:4317";
-
     std::lock_guard<std::mutex> lock(g_providerMutex);
 
     // Check if already initialized (only check our module-level pointer, not GetTracerProvider()
@@ -39,6 +35,11 @@ bool InitializeTracing(const std::string& serviceName) {
         std::clog << "BeatSync: Tracing already initialized, skipping re-initialization.\n";
         return true;
     }
+
+    // Read environment variable while holding lock to avoid race with setenv/putenv
+    // Use port 4317 for gRPC (OTLP/gRPC default), not 4318 (OTLP/HTTP)
+    const char* env = std::getenv("OTEL_EXPORTER_OTLP_ENDPOINT");
+    std::string endpoint = env ? env : "http://localhost:4317";
 
     try {
         // Create OTLP exporter (gRPC) with configured endpoint
@@ -65,14 +66,18 @@ void ShutdownTracing() {
     std::lock_guard<std::mutex> lock(g_providerMutex);
 
     if (g_provider) {
-        // Attempt to cast to SDK provider for Shutdown
-        auto sdk_provider = std::dynamic_pointer_cast<opentelemetry::sdk::trace::TracerProvider>(g_provider);
-        if (sdk_provider) {
-            bool ok = sdk_provider->Shutdown();
-            if (!ok) {
-                std::cerr << "BeatSync: Warning - tracing shutdown failed (Shutdown() returned false)\n";
-            }
+        // Shutdown call directly on the TracerProvider base class (which has Shutdown in API)
+        // or check if sdk::trace::TracerProvider is required.
+        // In OpenTelemetry C++, opentelemetry::trace::TracerProvider is the interface,
+        // and opentelemetry::sdk::trace::TracerProvider implements it.
+        // g_provider is already std::shared_ptr<sdktrace::TracerProvider> static global in anon namespace.
+        // So no cast is needed if we use g_provider directly.
+        
+        bool ok = g_provider->Shutdown();
+        if (!ok) {
+            std::cerr << "BeatSync: Warning - tracing shutdown failed (Shutdown() returned false)\n";
         }
+
         // Set to no-op provider instead of nullptr
         opentelemetry::trace::Provider::SetTracerProvider(std::make_shared<opentelemetry::trace::NoopTracerProvider>());
         g_provider.reset();

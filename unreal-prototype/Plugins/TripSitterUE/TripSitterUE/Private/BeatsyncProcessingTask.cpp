@@ -255,8 +255,25 @@ void FBeatsyncProcessingTask::DoWork()
     }
     else
     {
-        FString SingleVideo = Params.VideoPaths.Num() > 0 ? Params.VideoPaths[0] : Params.VideoPath;
-        bSuccess = FBeatsyncLoader::CutVideoAtBeats(FVideoWriterHandle{Writer}, SingleVideo, FilteredBeats, TempVideoPath, ClipDuration);
+        FString SingleVideo;
+        if (Params.VideoPaths.Num() > 0 && !Params.VideoPaths[0].IsEmpty())
+        {
+            SingleVideo = Params.VideoPaths[0];
+        }
+        else if (!Params.VideoPath.IsEmpty())
+        {
+            SingleVideo = Params.VideoPath;
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("TripSitter: No valid video path provided for processing"));
+            bSuccess = false;
+        }
+
+        if (!SingleVideo.IsEmpty())
+        {
+            bSuccess = FBeatsyncLoader::CutVideoAtBeats(FVideoWriterHandle{Writer}, SingleVideo, FilteredBeats, TempVideoPath, ClipDuration);
+        }
     }
 
     if (!bSuccess)

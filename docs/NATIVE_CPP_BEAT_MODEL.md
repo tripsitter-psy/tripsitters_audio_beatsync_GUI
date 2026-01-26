@@ -19,7 +19,7 @@ Goal: remove Python at runtime from beat detection packaging by providing a nati
 Checklist / Tasks for final packaging
 
 - License check: ensure model weights and training data license (e.g., CC-BY) permit redistribution in packaged app.
-- Repro script: Create `tools/convert_pytorch_to_onnx.py` to convert from PyTorch weights to ONNX and validate shape/outputs.
+- Repro script: Use `tools/convert_pytorch_to_onnx.py` to convert from PyTorch weights to ONNX and validate shape/outputs.
 - CI: Add validation step to run a small inference on a test asset and assert expected behavior (beat times within tolerance).
 - Packaging: Decide whether to ship ONNX model blob in repo (recommended) or generate it during release build via reproducible conversion.
 - Fallbacks: Keep the high-quality spectral-flux C++ fallback for cases where model can't be used (no runtime, GPU missing, etc.).

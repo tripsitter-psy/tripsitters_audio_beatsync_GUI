@@ -74,7 +74,9 @@ jobs:
 
       - name: Generate long audio
         if: steps.check_gpu.outputs.has_gpu == 'true'
+        shell: powershell
         run: |
+          New-Item -ItemType Directory -Force -Path build/tmp
           python tools/generate_long_test_wav.py build/tmp/gpu_stress.wav 600
 
       - name: Run long video test (PowerShell)
@@ -124,6 +126,11 @@ jobs:
             echo "has_gpu=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Notice when GPU is absent (Linux)
+        if: steps.check_gpu_linux.outputs.has_gpu == 'false'
+        run: |
+          echo "::notice::No NVIDIA GPU detected on runner - long video test will be skipped. Use a self-hosted runner with label 'gpu' to run this test."
+
       - name: Install dependencies (Linux)
         if: steps.check_gpu_linux.outputs.has_gpu == 'true'
         run: |
@@ -146,19 +153,25 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DUSE_ONNX=ON \
-            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+            -DBUILD_TESTS=ON \
+            -DBUILD_GUI=OFF \
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
           cmake --build build -j $(nproc)
 
       - name: Generate long audio (Linux)
         if: steps.check_gpu_linux.outputs.has_gpu == 'true'
-        run: python3 tools/generate_long_test_wav.py build/tmp/gpu_stress.wav 600
+        run: |
+          mkdir -p build/tmp
+          python3 tools/generate_long_test_wav.py build/tmp/gpu_stress.wav 600
 
       - name: Run long video test (Linux)
         if: steps.check_gpu_linux.outputs.has_gpu == 'true'
         env:
           TEST_MODEL_DIR: models
+          TEST_AUDIO: build/tmp/gpu_stress.wav
         run: |
           chmod +x scripts/run_long_video_test.sh
+          # Updated to accept duration as first arg, optionally audio path via env
           scripts/run_long_video_test.sh 600
 
       - name: Upload artifacts (Linux)

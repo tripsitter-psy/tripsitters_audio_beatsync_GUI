@@ -158,13 +158,16 @@ function Sync-ToEngine {
             }
         }
 
+        Write-Host "`nSync complete!" -ForegroundColor Cyan
         if (-not (Test-Path $EngineRoot)) {
-            Write-Error "Engine root directory '$EngineRoot' does not exist. Sync aborted."
-            exit 1
+            Write-Warning "Engine root directory '$EngineRoot' does not exist. Cannot provide build instructions."
+            Write-Host "Manually navigate to your UE5 source root and run:" -ForegroundColor Yellow
+            Write-Host "  .\Engine\Build\BatchFiles\Build.bat TripSitter Win64 Shipping" -ForegroundColor White
+        } else {
+            Write-Host "Now run:" -ForegroundColor Cyan
+            Write-Host "  cd '$EngineRoot'" -ForegroundColor White
+            Write-Host "  .\Engine\Build\BatchFiles\Build.bat TripSitter Win64 Shipping" -ForegroundColor White
         }
-        Write-Host "`nSync complete! Now run:" -ForegroundColor Cyan
-        Write-Host "  cd '$EngineRoot'" -ForegroundColor White
-        Write-Host "  .\Engine\Build\BatchFiles\Build.bat TripSitter Win64 Shipping" -ForegroundColor White
     } catch {
         Write-Error "Sync-ToEngine failed: $_"
         exit 1

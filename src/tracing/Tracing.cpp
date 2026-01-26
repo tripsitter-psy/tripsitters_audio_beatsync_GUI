@@ -61,7 +61,13 @@ void SetTracingFlushMode(TracingFlushMode mode, int period_ms = 1000) {
         // Use compare_exchange for atomic check-and-set to avoid race
         bool expected = true;
         if (g_flush_thread_running.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) {
-            g_flush_cv.notify_all();
+            // Hold the condition variable mutex when calling notify_all to prevent
+            // missed wakeups if the flusher thread is between checking the condition
+            // and entering wait_for
+            {
+                std::lock_guard<std::mutex> cvlk(g_flush_cv_mutex);
+                g_flush_cv.notify_all();
+            }
             if (g_flush_thread.joinable()) g_flush_thread.join();
         }
     }

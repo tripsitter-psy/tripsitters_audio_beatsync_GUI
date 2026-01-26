@@ -21,7 +21,7 @@ This repository includes optional OpenTelemetry tracing support for the backend 
    - Jaeger UI: http://localhost:16686
 
 3. Build with tracing enabled:
-   - cmake -S . -B build -DBEATSYNC_ENABLE_TRACING=ON
+   - cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DBEATSYNC_ENABLE_TRACING=ON
    - cmake --build build --config Release --target beatsync_backend_shared
 
 4. In Unreal plugin, the `TripSitterUE` module calls `bs_initialize_tracing("tripsitter")` on startup when the backend DLL is present. You can also call `bs_initialize_tracing` manually.

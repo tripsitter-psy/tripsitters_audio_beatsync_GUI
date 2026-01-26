@@ -5,6 +5,7 @@
 #include <memory>
 #include <functional>
 #include <array>
+#include <stdexcept>
 
 namespace BeatSync {
 
@@ -70,13 +71,23 @@ struct StemSeparationResult {
     bool cancelled = false;
 
     /// Get a specific stem by StemType (convenience accessor)
+    /// @throws std::out_of_range if stem index is invalid
     const std::vector<float>& getStem(StemType stem) const {
-        return stems[static_cast<int>(stem)];
+        int stemIndex = static_cast<int>(stem);
+        if (stemIndex < 0 || stemIndex >= static_cast<int>(stems.size())) {
+            throw std::out_of_range("Invalid stem type index");
+        }
+        return stems[stemIndex];
     }
 
     /// Get a specific stem by StemType (mutable version)
+    /// @throws std::out_of_range if stem index is invalid
     std::vector<float>& getStem(StemType stem) {
-        return stems[static_cast<int>(stem)];
+        int stemIndex = static_cast<int>(stem);
+        if (stemIndex < 0 || stemIndex >= static_cast<int>(stems.size())) {
+            throw std::out_of_range("Invalid stem type index");
+        }
+        return stems[stemIndex];
     }
 
     /// Get mono mix of a specific stem

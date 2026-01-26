@@ -306,7 +306,13 @@ bool FBeatsyncLoader::AnalyzeAudio(FAnalyzerHandle handle, const FString& path, 
     outGrid.Duration = grid.duration;
     outGrid.Beats.Empty();
     if (grid.beats != nullptr && grid.count > 0) {
-        outGrid.Beats.Append(grid.beats, grid.count);
+        // Validate count fits in int32 to prevent truncation on 64-bit builds
+        size_t safeCount = grid.count;
+        if (safeCount > static_cast<size_t>(MAX_int32)) {
+            UE_LOG(LogTemp, Warning, TEXT("AnalyzeAudio: beat count %zu exceeds MAX_int32, clamping"), grid.count);
+            safeCount = static_cast<size_t>(MAX_int32);
+        }
+        outGrid.Beats.Append(grid.beats, static_cast<int32>(safeCount));
     }
 
     if (GApi.free_beatgrid) GApi.free_beatgrid(&grid);
@@ -439,7 +445,8 @@ void FBeatsyncLoader::SetEffectsConfig(FVideoWriterHandle writer, const FEffects
     cfg.flashIntensity = config.FlashIntensity;
     cfg.enableBeatZoom = config.bEnableBeatZoom ? 1 : 0;
     cfg.zoomIntensity = config.ZoomIntensity;
-    cfg.effectBeatDivisor = config.EffectBeatDivisor;
+    // Ensure EffectBeatDivisor is at least 1 to prevent division by zero
+    cfg.effectBeatDivisor = FMath::Max(1, config.EffectBeatDivisor);
     cfg.effectStartTime = config.EffectStartTime;
     cfg.effectEndTime = config.EffectEndTime;
 
@@ -561,7 +568,13 @@ bool FBeatsyncLoader::GetWaveform(FAnalyzerHandle handle, const FString& path, T
     outPeaks.Empty();
     if (peaks && count > 0)
     {
-        outPeaks.Append(peaks, count);
+        // Validate count fits in int32 to prevent truncation on 64-bit builds
+        if (count > static_cast<size_t>(MAX_int32))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("GetWaveform: peak count %zu exceeds MAX_int32, clamping"), count);
+            count = static_cast<size_t>(MAX_int32);
+        }
+        outPeaks.Append(peaks, static_cast<int32>(count));
     }
     if (GApi.free_waveform) GApi.free_waveform(peaks);
     return true;

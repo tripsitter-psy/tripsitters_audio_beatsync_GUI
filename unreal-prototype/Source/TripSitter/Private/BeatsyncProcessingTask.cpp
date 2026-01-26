@@ -18,18 +18,32 @@ FBeatsyncProcessingTask::FBeatsyncProcessingTask(const FBeatsyncProcessingParams
 
 FBeatsyncProcessingTask::~FBeatsyncProcessingTask()
 {
+    // Signal DoWork to abort as soon as possible
+    if (SharedCancelFlag.IsValid())
+    {
+        *SharedCancelFlag = true;
+    }
+
     // Wait for DoWork to complete before destroying resources it may be using
     // This prevents race conditions where destructor runs while DoWork is still accessing Writer
     if (WorkCompletedEvent && !bWorkCompleted)
     {
-        // Give DoWork a reasonable time to finish (5 seconds max)
-        WorkCompletedEvent->Wait(5000);
+        // Wait longer (30 seconds) to give DoWork time to clean up properly
+        constexpr uint32 TimeoutMs = 30000;
+        bool bWaitSucceeded = WorkCompletedEvent->Wait(TimeoutMs);
+
+        // Re-check completion state after wait
+        if (!bWaitSucceeded && !bWorkCompleted)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("FBeatsyncProcessingTask: Timeout (%u ms) waiting for DoWork to complete. Proceeding with cleanup."), TimeoutMs);
+        }
     }
 
     // Clean up the video writer if it was created
+    // Only safe to do this after DoWork has signaled completion
     if (Writer)
     {
-        // Clear callback first to prevent use-after-free - callback captures &bCancelRequested
+        // Clear callback first to prevent use-after-free - callback captures SharedCancelFlag
         FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
         FBeatsyncLoader::DestroyVideoWriter(Writer);
         Writer = nullptr;
@@ -473,7 +487,29 @@ void FBeatsyncProcessingTask::DoWork()
     else
     {
         // Single video - no normalization needed
-        VideosToProcess.Add(Params.VideoPaths.Num() > 0 ? Params.VideoPaths[0] : Params.VideoPath);
+        FString SingleVideo;
+        if (Params.VideoPaths.Num() > 0 && !Params.VideoPaths[0].IsEmpty())
+        {
+            SingleVideo = Params.VideoPaths[0];
+        }
+        else if (!Params.VideoPath.IsEmpty())
+        {
+            SingleVideo = Params.VideoPath;
+        }
+
+        if (SingleVideo.IsEmpty())
+        {
+            UE_LOG(LogTemp, Error, TEXT("TripSitter: No valid video path provided for processing"));
+            Result.bSuccess = false;
+            Result.ErrorMessage = TEXT("No video path provided");
+            auto LocalOnComplete = OnComplete;
+            AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+                LocalOnComplete.ExecuteIfBound(Result);
+            });
+            SignalWorkComplete();
+            return;
+        }
+        VideosToProcess.Add(SingleVideo);
     }
 
     // Cut video at beats

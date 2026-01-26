@@ -335,7 +335,8 @@ endif()
 find_package(SampleRate CONFIG QUIET)
 if(SampleRate_FOUND)
     message(STATUS "libsamplerate found - enabling high-quality resampling")
-    add_definitions(-DUSE_LIBSAMPLERATE)
+    # Use HAVE_LIBSAMPLERATE to match the macro checked in AudioFluxBeatDetector.cpp
+    add_definitions(-DHAVE_LIBSAMPLERATE)
 endif()
 
 if(USE_ESSENTIA)

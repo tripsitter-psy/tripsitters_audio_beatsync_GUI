@@ -621,7 +621,8 @@ bool FBeatsyncLoader::GetWaveform(void* Analyzer, const FString& FilePath, TArra
     size_t Count = 0;
     double Duration = 0.0;
 
-    int Result = GApi.get_waveform(Analyzer, TCHAR_TO_UTF8(*FilePath), &Peaks, &Count, &Duration);
+    FTCHARToUTF8 FilePathUtf8(*FilePath);
+    int Result = GApi.get_waveform(Analyzer, FilePathUtf8.Get(), &Peaks, &Count, &Duration);
 
     UE_LOG(LogTemp, Log, TEXT("TripSitter: get_waveform returned %d, Count=%llu, Duration=%.2f"), Result, (unsigned long long)Count, Duration);
     // Note: Peaks is always freed internally after copying. Caller never owns or frees this buffer.
@@ -664,7 +665,8 @@ bool FBeatsyncLoader::GetWaveformBands(void* Analyzer, const FString& FilePath,
     UE_LOG(LogTemp, Log, TEXT("TripSitter: Loading frequency-band waveform from: %s"), *FilePath);
 
     bs_waveform_bands_t Bands = {};
-    int Result = GApi.get_waveform_bands(Analyzer, TCHAR_TO_UTF8(*FilePath), &Bands);
+    FTCHARToUTF8 FilePathUtf8(*FilePath);
+    int Result = GApi.get_waveform_bands(Analyzer, FilePathUtf8.Get(), &Bands);
 
     UE_LOG(LogTemp, Log, TEXT("TripSitter: get_waveform_bands returned %d, Count=%llu, Duration=%.2f"),
            Result, (unsigned long long)Bands.count, Bands.duration);
@@ -755,7 +757,8 @@ void FBeatsyncLoader::SetEffectsConfig(void* Handle, const FEffectsConfig& Confi
     CConfig.flashIntensity = Config.FlashIntensity;
     CConfig.enableBeatZoom = Config.bEnableBeatZoom ? 1 : 0;
     CConfig.zoomIntensity = Config.ZoomIntensity;
-    CConfig.effectBeatDivisor = Config.EffectBeatDivisor;
+    // Ensure EffectBeatDivisor is at least 1 to prevent division by zero
+    CConfig.effectBeatDivisor = FMath::Max(1, Config.EffectBeatDivisor);
     CConfig.effectStartTime = Config.EffectStartTime;
     CConfig.effectEndTime = Config.EffectEndTime;
 
@@ -886,9 +889,9 @@ bool FBeatsyncLoader::AIAnalyzeFile(void* Analyzer, const FString& FilePath, FAI
 {
     if (!GApi.ai_analyze_file || !Analyzer) return false;
     FTCHARToUTF8 Utf8(*FilePath);
-    
+
     bs_ai_result_t CResult = {0};
-    int Result = GApi.ai_analyze_file(Analyzer, TCHAR_TO_UTF8(*FilePath), &CResult, nullptr, nullptr);
+    int Result = GApi.ai_analyze_file(Analyzer, Utf8.Get(), &CResult, nullptr, nullptr);
 
     if (Result == 0) {
         // Copy beats
@@ -921,7 +924,8 @@ bool FBeatsyncLoader::AIAnalyzeQuick(void* Analyzer, const FString& FilePath, FA
 {
     if (!GApi.ai_analyze_quick || !Analyzer) return false;
     bs_ai_result_t CResult = {};
-    int Result = GApi.ai_analyze_quick(Analyzer, TCHAR_TO_UTF8(*FilePath), &CResult, nullptr, nullptr);
+    FTCHARToUTF8 FilePathUtf8(*FilePath);
+    int Result = GApi.ai_analyze_quick(Analyzer, FilePathUtf8.Get(), &CResult, nullptr, nullptr);
 
     if (Result == 0) {
         // Copy beats
@@ -1121,7 +1125,8 @@ bool FBeatsyncLoader::AudioFluxAnalyze(const FString& FilePath, FAIResult& OutRe
     UE_LOG(LogTemp, Log, TEXT("AudioFlux: Starting analysis of %s"), *FilePath);
     bs_ai_result_t CResult = {};
     UE_LOG(LogTemp, Log, TEXT("AudioFlux: Calling bs_audioflux_analyze..."));
-    int Result = GApi.audioflux_analyze(TCHAR_TO_UTF8(*FilePath), &CResult, nullptr, nullptr);
+    FTCHARToUTF8 FilePathUtf8(*FilePath);
+    int Result = GApi.audioflux_analyze(FilePathUtf8.Get(), &CResult, nullptr, nullptr);
     UE_LOG(LogTemp, Log, TEXT("AudioFlux: bs_audioflux_analyze returned %d"), Result);
 
     if (Result == 0) {

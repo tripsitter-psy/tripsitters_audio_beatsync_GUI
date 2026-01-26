@@ -62,26 +62,26 @@ New-Item -ItemType File -Path $stderr -Force | Out-Null
 
 $exe = "./build/bin/Release/beatsync.exe"
 # Try a few variants if CLI supports different flags
-$cmds = @(
-    "$exe create `"$OutputVideo`" `"$Audio`" --strategy downbeat --gpu",
-    "$exe create `"$OutputVideo`" `"$Audio`" --strategy downbeat",
-    "$exe create `"$OutputVideo`" `"$Audio`""
+# Use argument arrays instead of string interpolation to handle special characters in paths
+$cmdVariants = @(
+    @("create", $OutputVideo, $Audio, "--strategy", "downbeat", "--gpu"),
+    @("create", $OutputVideo, $Audio, "--strategy", "downbeat"),
+    @("create", $OutputVideo, $Audio)
 )
 
 $exitCode = 1
 
 $proc = $null
-foreach ($cmd in $cmds) {
-    Write-Host "Running: $cmd"
+foreach ($argList in $cmdVariants) {
+    $cmdDisplay = "$exe " + ($argList -join ' ')
+    Write-Host "Running: $cmdDisplay"
     Add-Content -Path $stdout -Value "----- BEGIN OUTPUT -----"
 
     $tempOut = [System.IO.Path]::GetTempFileName()
     $tempErr = [System.IO.Path]::GetTempFileName()
     try {
-        # Using -FilePath to executable allows direct exit code capture.
-        # But since $cmd has args and escaping, nested powershell is used.
-        # We append "; exit `$LASTEXITCODE" to ensure the wrapper returns the real code.
-        $proc = Start-Process -FilePath powershell -ArgumentList "-NoProfile -Command $cmd; exit `$LASTEXITCODE" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempOut -RedirectStandardError $tempErr
+        # Use Start-Process with ArgumentList array for proper escaping of paths with special characters
+        $proc = Start-Process -FilePath $exe -ArgumentList $argList -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempOut -RedirectStandardError $tempErr
         $exitCode = $proc.ExitCode
     } catch {
         if ($null -ne $proc) {

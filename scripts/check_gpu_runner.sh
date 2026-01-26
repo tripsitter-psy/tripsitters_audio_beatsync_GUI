@@ -53,7 +53,7 @@ fi
 # Optional GitHub runner check (requires GITHUB_TOKEN and GITHUB_REPOSITORY in OWNER/REPO form)
 if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
   if ! command -v jq >/dev/null 2>&1; then
-    echo "WARNING: jq is not installed. Skipping GitHub runner check for GPU label."
+    echo "WARNING: jq not found. Install jq to enable GitHub runner label check." >&2
   else
     echo "Checking GitHub self-hosted runners for repo: $GITHUB_REPOSITORY"
     api="https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners"
@@ -63,7 +63,7 @@ if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
     if curl -fS --max-time 20 -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "$api" >"$RUNNERS_JSON"; then
       echo "Runners in repo (name => labels):"
       jq -r '.runners[] | "\(.name) => \(.labels | map(.name) | join(", "))"' "$RUNNERS_JSON" || true
-      if jq -e '.runners | any(.labels[]?.name == "gpu")' "$RUNNERS_JSON" >/dev/null 2>&1; then
+      if jq -e '.runners | any(.labels[]?.name | ascii_downcase == "gpu")' "$RUNNERS_JSON" >/dev/null 2>&1; then
         echo "Found runner with 'gpu' label."
       else
         echo "WARNING: No runner with 'gpu' label found in repo runners." >&2

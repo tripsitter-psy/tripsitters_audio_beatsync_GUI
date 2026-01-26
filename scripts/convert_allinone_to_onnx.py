@@ -72,7 +72,7 @@ def main():
 
             n_sources = 4
             n_mels = 128
-            time_frames = 1000  # ~10 seconds at 100 FPS
+            time_frames = 1000  # ~5 seconds at ~200.5 FPS (hop_length=220, sr=44100)
 
             dummy_input = torch.randn(1, n_sources, n_mels, time_frames)
 
@@ -177,6 +177,8 @@ def main():
             def forward(self, x):
                 # x: (batch, time, dim)
                 B, T, C = x.shape
+                half_window = self.kernel_size // 2
+
                 # Project to Q, K, V
                 qkv = self.qkv(x)  # (B, T, 3 * C)
                 q, k, v = torch.chunk(qkv, 3, dim=-1)
@@ -185,37 +187,52 @@ def main():
                 k = k.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
                 v = v.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
 
-                # Compute attention scores with local window
-                attn_scores = torch.zeros(B, self.num_heads, T, self.kernel_size, device=x.device)
-                half_window = self.kernel_size // 2
-                # NOTE: This per-timestep loop creates a large ONNX graph for long sequences.
-                # For production, consider a vectorized implementation or fixed-length inputs.
-                for t in range(T):
-                    # Get window indices
-                    start = max(0, t - half_window * self.dilation)
-                    end = min(T, t + half_window * self.dilation + 1)
-                    window_idx = torch.arange(start, end, self.dilation, device=x.device)
-                    q_t = q[:, :, t, :]  # (B, num_heads, head_dim)
-                    k_window = k[:, :, window_idx, :]  # (B, num_heads, window, head_dim)
-                    # Dot product attention
-                    attn = torch.einsum('bnh,bnwh->bnw', q_t, k_window) * self.scale
-                    # Pad to kernel_size, masking padded positions with -inf so softmax gives them zero probability
-                    pad = self.kernel_size - attn.shape[-1]
-                    if pad > 0:
-                        attn = torch.nn.functional.pad(attn, (0, pad), value=float('-inf'))
-                    attn_scores[:, :, t, :] = attn
+                # Vectorized sliding-window attention (avoids O(T) ONNX graph nodes)
+                # Pad k and v for sliding window extraction
+                pad_left = half_window * self.dilation
+                pad_right = half_window * self.dilation
+                # k, v: (B, num_heads, T, head_dim) -> pad time dimension
+                k_padded = torch.nn.functional.pad(k, (0, 0, pad_left, pad_right), value=0.0)
+                v_padded = torch.nn.functional.pad(v, (0, 0, pad_left, pad_right), value=0.0)
 
+                # Create attention mask for padded positions
+                # mask: 1 for valid, 0 for padded
+                ones = torch.ones(B, self.num_heads, T, device=x.device)
+                mask_padded = torch.nn.functional.pad(ones, (pad_left, pad_right), value=0.0)
+
+                # Extract sliding windows using unfold
+                # k_padded: (B, num_heads, T + 2*pad, head_dim)
+                # After unfold on dim=2 with size=kernel_size*dilation, step=1:
+                # k_windows: (B, num_heads, T, kernel_size, head_dim) after proper indexing
+                window_size = self.kernel_size * self.dilation
+                k_unfolded = k_padded.unfold(2, window_size, 1)  # (B, num_heads, T, head_dim, window_size)
+                v_unfolded = v_padded.unfold(2, window_size, 1)  # (B, num_heads, T, head_dim, window_size)
+                mask_unfolded = mask_padded.unfold(2, window_size, 1)  # (B, num_heads, T, window_size)
+
+                # Select dilated positions: indices 0, dilation, 2*dilation, ...
+                dilation_indices = torch.arange(0, window_size, self.dilation, device=x.device)
+                k_windows = k_unfolded.index_select(-1, dilation_indices).permute(0, 1, 2, 4, 3)  # (B, num_heads, T, kernel_size, head_dim)
+                v_windows = v_unfolded.index_select(-1, dilation_indices).permute(0, 1, 2, 4, 3)  # (B, num_heads, T, kernel_size, head_dim)
+                mask_windows = mask_unfolded.index_select(-1, dilation_indices)  # (B, num_heads, T, kernel_size)
+
+                # Compute attention scores: q @ k^T for each window
+                # q: (B, num_heads, T, head_dim), k_windows: (B, num_heads, T, kernel_size, head_dim)
+                # Output: (B, num_heads, T, kernel_size)
+                attn_scores = (q.unsqueeze(3) * k_windows).sum(dim=-1) * self.scale
+
+                # Apply mask: set padded positions to -inf
+                # mask_windows is already (B, num_heads, T, kernel_size)
+                attn_scores = attn_scores.masked_fill(mask_windows == 0, float('-inf'))
+
+                # Softmax over kernel dimension
                 attn_probs = torch.softmax(attn_scores, dim=-1)
+                # Handle NaN from all-inf rows (shouldn't happen with proper padding)
+                attn_probs = torch.nan_to_num(attn_probs, nan=0.0)
 
-                # Aggregate weighted values
-                out = torch.zeros(B, self.num_heads, T, self.head_dim, device=x.device)
-                for t in range(T):
-                    start = max(0, t - half_window * self.dilation)
-                    end = min(T, t + half_window * self.dilation + 1)
-                    window_idx = torch.arange(start, end, self.dilation, device=x.device)
-                    v_window = v[:, :, window_idx, :]  # (B, num_heads, window, head_dim)
-                    attn = attn_probs[:, :, t, :v_window.shape[2]].unsqueeze(-1)
-                    out[:, :, t, :] = torch.sum(attn * v_window, dim=2)
+                # Weighted sum of values
+                # attn_probs: (B, num_heads, T, kernel_size)
+                # v_windows: (B, num_heads, T, kernel_size, head_dim)
+                out = torch.einsum('bntk,bntkh->bnth', attn_probs, v_windows)  # (B, num_heads, T, head_dim)
 
                 # Merge heads and project out
                 out = out.transpose(1, 2).reshape(B, T, C)
@@ -398,7 +415,9 @@ def main():
         # Export
         n_sources = 4
         n_mels = 128
-        time_frames = 500  # ~5 seconds at 100 FPS
+        # Frame rate is ~200.5 FPS (hop_length=220, sr=44100: 44100/220 ≈ 200.5)
+        # 500 frames ≈ 2.5 seconds at 200.5 FPS
+        time_frames = 500
 
         dummy_input = torch.randn(1, n_sources, n_mels, time_frames)
 
@@ -468,7 +487,7 @@ def main():
     print("  - Input: 4-source spectrograms (drums, bass, other, vocals)")
     print("  - Each source: 128 mel bands")
     print("  - Sample rate: 44100 Hz (standard for Demucs)")
-    print("  - Frame rate: 100 FPS (hop_length=220)")
+    print("  - Frame rate: ~200.5 FPS (hop_length=220)")
     print("\nNote: For best results, use with Demucs source separation.")
     print("      Without separation, duplicate the mono spectrogram across 4 channels.")
 

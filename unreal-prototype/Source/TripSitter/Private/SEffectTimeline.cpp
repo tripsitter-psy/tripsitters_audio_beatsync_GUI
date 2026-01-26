@@ -31,8 +31,14 @@ void SEffectTimeline::SetTimeParameters(double InDuration, float InZoomLevel, do
 
 void SEffectTimeline::SetSelectionRange(double InStart, double InEnd)
 {
-	SelectionStart = InStart;
-	SelectionEnd = InEnd;
+	// Clamp selection to valid range [0, Duration] to prevent out-of-bounds rendering
+	SelectionStart = FMath::Clamp(InStart, 0.0, Duration > 0.0 ? Duration : 0.0);
+	SelectionEnd = FMath::Clamp(InEnd, 0.0, Duration > 0.0 ? Duration : 0.0);
+	// Ensure Start <= End
+	if (SelectionStart > SelectionEnd)
+	{
+		Swap(SelectionStart, SelectionEnd);
+	}
 	Invalidate(EInvalidateWidget::Paint);
 }
 

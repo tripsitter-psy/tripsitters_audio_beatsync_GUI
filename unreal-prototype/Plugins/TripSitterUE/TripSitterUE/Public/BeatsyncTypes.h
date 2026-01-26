@@ -79,6 +79,8 @@ struct FEffectsConfig
     bool bEnableBeatZoom = false;
     float ZoomIntensity = 0.5f;
 
+    /** Beat divisor for effects (must be >= 1 to prevent division by zero).
+     *  Value of 1 = every beat, 2 = every other beat, etc. */
     int32 EffectBeatDivisor = 1;
 
     double EffectStartTime = 0.0;   // Start time for effects (0 = from beginning)

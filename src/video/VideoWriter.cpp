@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <thread>
 #include <mutex>
+#include <atomic>
 
 // libavformat for audio stream probing
 extern "C" {
@@ -151,7 +152,17 @@ std::string getTempDir() {
             return tempDir;
         }
     }
-    // Fallback to a safe default
+    // Fallback: try TEMP/TMP environment variables before using hardcoded path
+    const char* tempEnv = std::getenv("TEMP");
+    if (!tempEnv) tempEnv = std::getenv("TMP");
+    if (tempEnv && tempEnv[0] != '\0') {
+        std::string tempDir(tempEnv);
+        if (!tempDir.empty() && tempDir.back() != '\\') {
+            tempDir += '\\';
+        }
+        return tempDir;
+    }
+    // Last resort fallback
     return "C:\\Temp\\";
 #else
     try {
@@ -534,9 +545,9 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
     bool useScaleCuda = useCuda && scaleCudaAvailable;
 
     // DEBUG: Log GPU decision for every segment
-    static int segmentNum = 0;
-    segmentNum++;
-    std::cout << "[GPU DEBUG] Segment " << segmentNum << ": allowGpu=" << allowGpuThisSegment
+    static std::atomic<int> segmentNum{0};
+    int currentSegment = ++segmentNum;
+    std::cout << "[GPU DEBUG] Segment " << currentSegment << ": allowGpu=" << allowGpuThisSegment
               << " cudaHwaccel=" << cudaAvailable << " scaleCuda=" << scaleCudaAvailable
               << " -> useCuda=" << useCuda << " useScaleCuda=" << useScaleCuda << "\n";
 
@@ -1129,11 +1140,12 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
                     // This is more reliable for long sequences and avoids memory pressure from libavformat probing
                     std::ostringstream audioFilter;
 
-                    // Only probe first file to determine if source has audio
+                    // Check all files for audio - any file having audio means we should concatenate audio
+                    // We stop at first file with audio to avoid excessive probing
                     bool sourceHasAudio = false;
-                    if (!inputVideos.empty()) {
+                    for (const auto& videoPath : inputVideos) {
                         AVFormatContext* probeCtx = nullptr;
-                        int openErr = avformat_open_input(&probeCtx, inputVideos[0].c_str(), nullptr, nullptr);
+                        int openErr = avformat_open_input(&probeCtx, videoPath.c_str(), nullptr, nullptr);
                         if (openErr == 0) {
                             int infoErr = avformat_find_stream_info(probeCtx, nullptr);
                             if (infoErr >= 0) {
@@ -1146,6 +1158,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
                             }
                             avformat_close_input(&probeCtx);
                         }
+                        if (sourceHasAudio) break;  // Found audio, no need to check more files
                     }
 
                     // If source has audio, concatenate audio from all inputs
@@ -1969,8 +1982,6 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
     // FFmpeg's expression parser has a limit on expression complexity (~50 terms max).
     // We chain multiple eq filters, each handling a subset of beats.
     static constexpr size_t BEATS_PER_FILTER = 30;  // Safe limit per expression
-
-    std::string sendcmdPath;  // Placeholder for cleanup compatibility
 
     // Track if we need to output a label for the zoom filter to consume
     // When prior filters exist and zoom is enabled, we need proper filter graph syntax

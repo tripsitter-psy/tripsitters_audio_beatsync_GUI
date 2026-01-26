@@ -22,8 +22,7 @@ if (-not $ProjectPath -or -not (Test-Path $ProjectPath -PathType Leaf)) {
     Write-Error "ProjectPath is not set or does not point to an existing .uproject file: $ProjectPath"
     exit 1
 }
-
-# Clean intermediate files to force rebuild (derive from ProjectPath)
+$ProjectPath = Resolve-Path $ProjectPath
 $ProjectDir = Split-Path -Parent $ProjectPath
 $IntermediatePath = Join-Path $ProjectDir "Intermediate"
 if (Test-Path "$IntermediatePath\Build") {

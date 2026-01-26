@@ -113,11 +113,19 @@ cmake --build build --config Release --target beatsync_backend_shared
 
 
 # Build TripSitter
-# Set the UE5 root directory as an environment variable (e.g., $Env:UE5_ROOT in PowerShell or %UE5_ROOT% in cmd), or adjust the path below as needed.
+# Set the UE5 root directory as an environment variable (e.g., $Env:UE5_ROOT in PowerShell or %UE5_ROOT% in cmd).
 # Example (PowerShell): $Env:UE5_ROOT="C:\UE5_Source\UnrealEngine"
-# Example (cmd): set UE5_ROOT=C:\UE5_Source\UnrealEngine
-Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination "$Env:UE5_ROOT\Engine\Source\Programs\TripSitter\Private\" -Recurse -Force
-& "$Env:UE5_ROOT\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+if (-not (Test-Path "$Env:UE5_ROOT\Engine\Build\BatchFiles\Build.bat")) {
+    Write-Error "UE5_ROOT not valid or Build.bat missing."
+} else {
+    $destIdx = "$Env:UE5_ROOT\Engine\Source\Programs\TripSitter\Private\"
+    Write-Warning "Deploying to: $destIdx"
+    $conf = Read-Host "Proceed with overwrite? (y/n)"
+    if ($conf -eq 'y') {
+        Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination $destIdx -Recurse -Force
+        & "$Env:UE5_ROOT\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+    }
+}
 
 # Run tests
 cmake --build build --config Release --target test_backend_api

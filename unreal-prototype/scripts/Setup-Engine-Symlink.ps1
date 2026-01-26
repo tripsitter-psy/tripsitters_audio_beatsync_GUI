@@ -9,6 +9,14 @@ Write-Host "Setting up Engine symlink for TripSitter Program target..." -Foregro
 
 $ProjectEnginePath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\Engine"))
 
+# Check for Administrator privileges early - required for both removing broken symlinks and creating new ones
+$currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = New-Object System.Security.Principal.WindowsPrincipal($currentIdentity)
+if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "ERROR: This script must be run as Administrator to manage symlinks." -ForegroundColor Red
+    Write-Host "Right-click PowerShell and select 'Run as administrator', then re-run this script." -ForegroundColor Yellow
+    exit 1
+}
 
 # Check if Engine directory or symlink already exists
 if (Test-Path $ProjectEnginePath -Force) {
@@ -24,7 +32,14 @@ if (Test-Path $ProjectEnginePath -Force) {
             exit 0
         } else {
             Write-Warning "Broken symlink detected at $ProjectEnginePath. Removing..."
-            Remove-Item $ProjectEnginePath -Force
+            try {
+                Remove-Item $ProjectEnginePath -Force
+            } catch {
+                Write-Host "ERROR: Failed to remove broken symlink at: $ProjectEnginePath" -ForegroundColor Red
+                Write-Host "Exception: $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "Please ensure you are running this script as Administrator and try again." -ForegroundColor Yellow
+                exit 1
+            }
         }
     } else {
         Write-Error "A real directory exists at '$ProjectEnginePath' instead of a symlink. Remove or rename this directory before running this script."
@@ -38,18 +53,7 @@ if (!(Test-Path $EnginePath)) {
     exit 1
 }
 
-
-# Check for Administrator privileges before attempting mklink
-$currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-$principal = New-Object System.Security.Principal.WindowsPrincipal($currentIdentity)
-if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "ERROR: This script must be run as Administrator to create a symlink." -ForegroundColor Red
-    Write-Host "Right-click PowerShell and select 'Run as administrator', then re-run this script." -ForegroundColor Yellow
-    exit 1
-}
-
-
-# Create the symlink (requires Administrator privileges)
+# Create the symlink (admin privileges already verified at script start)
 try {
     cmd /c "mklink /d \"$ProjectEnginePath\" \"$EnginePath\""
     if ($LASTEXITCODE -eq 0) {

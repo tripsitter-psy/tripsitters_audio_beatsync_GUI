@@ -139,18 +139,16 @@ FFTW3 is licensed under the **GPL**, which is a strong copyleft license. This im
     3. Not distribute the FFTW3 DLLs and require the end-user to provide them (dynamic linking).
 
 **Build Configuration:**
-To build without AudioFlux/FFTW3 (avoids GPL concerns for commercial distribution):
-```powershell
-# Option 1: Do not set AUDIOFLUX_ROOT (AudioFlux will not be found)
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
+To build without AudioFlux/FFTW3 (avoids GPL concerns for commercial distribution), simply do not set `AUDIOFLUX_ROOT`.
 
-# Option 2: Explicitly disable via empty path
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DAUDIOFLUX_ROOT=""
+```powershell
+# AudioFlux is DISABLED by default. To enable (GPL applies):
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DAUDIOFLUX_ROOT="C:/audioFlux"
 ```
 
 When built without AudioFlux, the "Flux" and "Stems + Flux" analysis modes will be unavailable and the app will use energy-based beat detection instead.
 
-By default, the `AUDIOFLUX_ROOT` option enables AudioFlux/FFTW3 if the path is valid. Please verify your licensing status before distributing binaries.
+**Default Behavior:** AudioFlux is **disabled** unless `AUDIOFLUX_ROOT` is explicitly defined. Please verify your licensing status before enabling this option and distributing binaries.
 
 ```
 FFTW is free software; you can redistribute it and/or modify it under the terms
@@ -314,22 +312,29 @@ applications built with the engine.
 
 ## ONNX Models
 
-The following ONNX models may be included:
+The following ONNX models are optional and may be downloaded/used by the application. They are NOT typically bundled in the source repository but may be included in binary releases.
 
 ### Demucs (Meta AI)
 **License:** MIT
-**Source:** https://github.com/facebookresearch/demucs
-**Used for:** Audio source separation (stem separation)
+**Copyright:** Copyright (c) 2019-present, Facebook, Inc.
+**Source:** https://github.com/facebookresearch/demucs (v4 / Hybrid Transformer)
+**Weights License:** [MIT License](https://github.com/facebookresearch/demucs/blob/main/LICENSE)
+**Used for:** Audio source separation (stem separation). Weights are redistributable under MIT.
 
 ### BeatNet
 **License:** MIT
-**Source:** https://github.com/mjhydri/BeatNet
-**Used for:** Beat and downbeat tracking
+**Copyright:** Copyright (c) 2021 Mojtaba Heydari
+**Source:** https://github.com/mjhydri/BeatNet (v0.0.1)
+**Weights License:** [MIT License](https://github.com/mjhydri/BeatNet/blob/master/LICENSE)
+**Used for:** Beat and downbeat tracking (particle filtering + Monte Carlo).
 
 ### TCN Beat Detector
 **License:** MIT
-**Source:** Based on Temporal Convolutional Network architectures
-**Used for:** Beat detection via temporal convolution
+**Copyright:** Copyright (c) 2016 Sebastian Böck (madmom)
+**Source:** Derived from [madmom](https://github.com/CPJKU/madmom) (TCN models)
+**Weights Policy:** Weights trained by the community/contributors on public datasets.
+**Reference:** "Temporal Convolutional Networks for Action Segmentation and Detection", Lea et al.
+**Used for:** Beat detection via temporal convolution.
 
 ---
 

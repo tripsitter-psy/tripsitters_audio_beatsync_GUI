@@ -92,7 +92,7 @@ int main() {
         if (result.bpm > 110 && result.bpm < 130) {
             std::cout << "\n  SUCCESS: BPM is in expected range (110-130)" << std::endl;
         } else {
-            std::cout << "\n  WARNING: BPM " << result.bpm << " is outside expected range" << std::endl;
+            std::cout << "\n  ERROR: BPM " << result.bpm << " is outside expected range" << std::endl;
             return 1;
         }
 

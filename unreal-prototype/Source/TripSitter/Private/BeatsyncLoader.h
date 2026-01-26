@@ -106,6 +106,8 @@ struct FEffectsConfig
     double FlashIntensity = 0.5;
     bool bEnableBeatZoom = false;
     double ZoomIntensity = 0.1;
+    /** Beat divisor for effects (must be >= 1 to prevent division by zero).
+     *  Value of 1 = every beat, 2 = every other beat, etc. */
     int32 EffectBeatDivisor = 1;
     double EffectStartTime = 0.0;
     double EffectEndTime = -1.0;
@@ -165,6 +167,11 @@ public:
     static void* CreateVideoWriter();
     static void DestroyVideoWriter(void* Handle);
     static FString GetVideoLastError(void* Handle);
+    /** Set progress callback for video processing operations.
+     *  WARNING: The callback may be invoked from a worker thread. If updating UI,
+     *  the callback implementation MUST marshal calls to the GameThread using
+     *  AsyncTask(ENamedThreads::GameThread, ...) to avoid Slate threading assertions.
+     *  The callback must remain valid for the lifetime of the video processing operation. */
     static void SetProgressCallback(void* Handle, TFunction<void(double)> Callback);
 
     // Video Processing

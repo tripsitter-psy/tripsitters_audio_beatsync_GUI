@@ -9,10 +9,12 @@
 #include "tracing/Tracing.h"
 
 #include <algorithm>
+#include <limits>
 #include <numeric>
 #include <sstream>
 #include <iostream>
 #include <fstream>
+#include <stdexcept>
 
 #include "utils/DebugLogger.h"
 
@@ -78,6 +80,14 @@ struct OnnxMusicAnalyzer::Impl {
     }
 
     std::vector<float> monoToStereo(const std::vector<float>& mono) {
+        if (mono.empty()) {
+            return {};
+        }
+        // Check for overflow before allocating: mono.size() * 2 must fit in size_t
+        if (mono.size() > std::numeric_limits<size_t>::max() / 2) {
+            debugLog("[BeatSync] Error: monoToStereo buffer size overflow");
+            return {};
+        }
         std::vector<float> stereo(mono.size() * 2);
         for (size_t i = 0; i < mono.size(); ++i) {
             stereo[i * 2] = mono[i];
@@ -87,10 +97,18 @@ struct OnnxMusicAnalyzer::Impl {
     }
 
     std::vector<float> stereoToMono(const std::vector<float>& stereo) {
+        if (stereo.empty()) {
+            return {};
+        }
         if (stereo.size() % 2 != 0) {
-            debugLog("[BeatSync] Warning: stereoToMono received odd-sized input, truncating");
+            debugLog("[BeatSync] Warning: stereoToMono received odd-sized input (" +
+                     std::to_string(stereo.size()) + " samples), truncating last sample");
         }
         size_t numSamples = stereo.size() / 2;
+        if (numSamples == 0) {
+            debugLog("[BeatSync] Warning: stereoToMono input too small for stereo conversion");
+            return {};
+        }
         std::vector<float> mono(numSamples);
         for (size_t i = 0; i < numSamples; ++i) {
             mono[i] = (stereo[i * 2] + stereo[i * 2 + 1]) * 0.5f;
@@ -356,6 +374,12 @@ MusicAnalysisResult OnnxMusicAnalyzer::analyzeMono(const std::vector<float>& mon
 BeatGrid OnnxMusicAnalyzer::getBeatGrid(const std::vector<float>& samples, int sampleRate) {
     TRACE_FUNC();
     MusicAnalysisResult result = analyze(samples, sampleRate);
+
+    // Check for analysis failure
+    std::string error = getLastError();
+    if (result.beats.empty() && !error.empty()) {
+        throw std::runtime_error("Music analysis failed: " + error);
+    }
 
     BeatGrid grid;
     grid.setBeats(result.beats);

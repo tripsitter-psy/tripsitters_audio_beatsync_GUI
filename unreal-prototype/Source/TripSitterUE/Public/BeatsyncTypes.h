@@ -111,6 +111,8 @@ struct FEffectsConfig
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BeatSync|BeatEffects", meta = (ClampMin = "0.0", ClampMax = "1.0"))
     float ZoomIntensity = 0.04f;
 
+    /** Beat divisor for effects (must be >= 1 to prevent division by zero).
+     *  Value of 1 = every beat, 2 = every other beat, etc. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BeatSync|BeatEffects", meta = (ClampMin = "1", ClampMax = "16"))
     int32 EffectBeatDivisor = 1;
 };

@@ -2001,7 +2001,7 @@ FReply STripSitterMainWidget::OnBrowseStemClicked(int32 StemIndex)
 			}
 		}
 	}
-#else
+#elif PLATFORM_WINDOWS
 	// Windows native file dialog for standalone builds
 	OPENFILENAMEW ofn;
 	WCHAR szFile[MAX_PATH] = { 0 };
@@ -2020,6 +2020,8 @@ FReply STripSitterMainWidget::OnBrowseStemClicked(int32 StemIndex)
 		StemConfigs[StemIndex].bEnabled = true;
 		AnalyzeStemFile(StemIndex);
 	}
+#else
+	UE_LOG(LogTemp, Warning, TEXT("File dialog not available on this platform"));
 #endif
 	return FReply::Handled();
 }

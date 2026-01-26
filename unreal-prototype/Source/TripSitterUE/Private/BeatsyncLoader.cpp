@@ -291,6 +291,14 @@ bool FBeatsyncLoader::AnalyzeAudio(void* handle, const FString& path, FBeatGrid&
         return false;
     }
 
+    // Validate that free_beatgrid is available BEFORE calling analyze_audio - prevents memory leak
+    // if analyze_audio allocates grid.beats but the DLL doesn't provide the free function
+    if (!GApi.free_beatgrid)
+    {
+        UE_LOG(LogTemp, Error, TEXT("FBeatsyncLoader::AnalyzeAudio: DLL does not provide bs_free_beatgrid function - cannot safely call analyze_audio (would leak memory)"));
+        return false;
+    }
+
     // Prepare C beatgrid
     bs_beatgrid_t grid = {};
 
@@ -305,7 +313,7 @@ bool FBeatsyncLoader::AnalyzeAudio(void* handle, const FString& path, FBeatGrid&
         outGrid.Beats.Append(grid.beats, grid.count);
     }
 
-    if (GApi.free_beatgrid) GApi.free_beatgrid(&grid);
+    GApi.free_beatgrid(&grid);
     return true;
 }
 
@@ -406,7 +414,8 @@ void FBeatsyncLoader::SetEffectsConfig(void* writer, const FEffectsConfig& confi
     cfg.flashIntensity = config.FlashIntensity;
     cfg.enableBeatZoom = config.bEnableBeatZoom ? 1 : 0;
     cfg.zoomIntensity = config.ZoomIntensity;
-    cfg.effectBeatDivisor = config.EffectBeatDivisor;
+    // Ensure EffectBeatDivisor is at least 1 to prevent division by zero
+    cfg.effectBeatDivisor = FMath::Max(1, config.EffectBeatDivisor);
     cfg.effectStartTime = config.EffectStartTime;
     cfg.effectEndTime = config.EffectEndTime;
 
@@ -443,7 +452,13 @@ bool FBeatsyncLoader::AddAudioTrack(void* writer, const FString& inputVideo, con
 
 bool FBeatsyncLoader::ExtractFrame(const FString& videoPath, double timestamp, TArray<uint8>& outRgb24, int32& outWidth, int32& outHeight)
 {
-    if (!GApi.video_extract_frame) return false;
+    // Check both extract and free functions are available to prevent memory leaks
+    if (!GApi.video_extract_frame || !GApi.free_frame_data)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("FBeatsyncLoader::ExtractFrame: Required functions not available (extract=%d, free=%d)"),
+            !!GApi.video_extract_frame, !!GApi.free_frame_data);
+        return false;
+    }
 
     FTCHARToUTF8 VideoPathUtf8(*videoPath);
     unsigned char* data = nullptr;

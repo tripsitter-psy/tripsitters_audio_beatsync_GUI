@@ -27,12 +27,12 @@ FBeatsyncProcessingTask::~FBeatsyncProcessingTask()
     // Wait for DoWork to complete (with timeout to prevent indefinite hangs)
     constexpr double TimeoutSeconds = 10.0;
     double StartTime = FPlatformTime::Seconds();
-    while (!bWorkCompleted && (FPlatformTime::Seconds() - StartTime) < TimeoutSeconds)
+    while (!bWorkCompleted.load(std::memory_order_acquire) && (FPlatformTime::Seconds() - StartTime) < TimeoutSeconds)
     {
         FPlatformProcess::Sleep(0.01f);
     }
 
-    if (!bWorkCompleted)
+    if (!bWorkCompleted.load(std::memory_order_acquire))
     {
         UE_LOG(LogTemp, Warning, TEXT("FBeatsyncProcessingTask: Destructor timed out waiting for DoWork to complete"));
     }
@@ -281,45 +281,83 @@ void FBeatsyncProcessingTask::DoWork()
     FString TempDir = FPaths::Combine(FPlatformProcess::UserTempDir(), TEXT("TripSitter"));
 
     // Ensure the TripSitter temp directory exists
-    if (
+    if (!IFileManager::Get().DirectoryExists(*TempDir))
+    {
+        if (!IFileManager::Get().MakeDirectory(*TempDir, true))
         {
-            FScopeLock Lock(&WriterMutex);
-            if (Writer) {
-                FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
-                FBeatsyncLoader::DestroyVideoWriter(Writer);
-                Writer = nullptr;
+            UE_LOG(LogTemp, Error, TEXT("TripSitter: Failed to create temp directory: %s"), *TempDir);
+            Result.bSuccess = false;
+            Result.ErrorMessage = FString::Printf(TEXT("Failed to create temp directory: %s"), *TempDir);
+            if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
+            if (Span) FBeatsyncLoader::EndSpan(Span);
+            {
+                FScopeLock Lock(&WriterMutex);
+                if (Writer) {
+                    FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
+                    FBeatsyncLoader::DestroyVideoWriter(Writer);
+                    Writer = nullptr;
+                }
             }
+            auto LocalOnComplete = OnComplete;
+            AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+                LocalOnComplete.ExecuteIfBound(Result);
+            });
+            bWorkCompleted.AtomicSet(true);
+            return;
         }
-        rror, TEXT("TripSitter: Failed to create temp directory: %s"), *TempDir);
-        Result.bSuccess = false;
-        Result.ErrorMessage = FString::Printf(TEXT("Failed to create temp directory: %s"), *TempDir);
-        if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
-        if (Span) FBeatsyncLoader::EndSpan(Span);
-        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
-        FBeatsyncLoader::DestroyVideoWriter(Writer);
-        Writer = nullptr;
-        auto LocalOnComplete = OnComplete;
-        AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
-            LocalOnComplete.ExecuteIfBound(Result);
-        });
-        bWorkCompleted.AtomicSet(true);
-        return;
     }
 
     // Generate unique temp filenames using GUID
     FString TempBaseName = FString::Printf(TEXT("temp_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     FString TempVideoPath = FPaths::Combine(TempDir, TempBaseName + TEXT("_video.mp4"));
-    FStrFScopeLock Lock(&WriterMutex);
+    FString TempEffectsPath = FPaths::Combine(TempDir, TempBaseName + TEXT("_effects.mp4"));
+
+    // Cut video at beats - use mutex to protect Writer access
+    if (Params.bIsMultiClip && Params.VideoPaths.Num() > 1)
+    {
+        FScopeLock Lock(&WriterMutex);
         if (Writer) {
             bSuccess = FBeatsyncLoader::CutVideoAtBeatsMulti(Writer, Params.VideoPaths, FilteredBeats, TempVideoPath, ClipDuration);
         } else {
-             bSuccess = false;
+            bSuccess = false;
         }
     }
     else
     {
         FString SingleVideo = Params.VideoPaths.Num() > 0 ? Params.VideoPaths[0] : Params.VideoPath;
-        FScopeLock Lock(;
+        if (SingleVideo.IsEmpty())
+        {
+            UE_LOG(LogTemp, Error, TEXT("TripSitter: No valid video path provided"));
+            Result.bSuccess = false;
+            Result.ErrorMessage = TEXT("No video path provided");
+            if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
+            if (Span) FBeatsyncLoader::EndSpan(Span);
+            {
+                FScopeLock Lock(&WriterMutex);
+                if (Writer) {
+                    FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
+                    FBeatsyncLoader::DestroyVideoWriter(Writer);
+                    Writer = nullptr;
+                }
+            }
+            auto LocalOnComplete = OnComplete;
+            AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
+                LocalOnComplete.ExecuteIfBound(Result);
+            });
+            bWorkCompleted.AtomicSet(true);
+            return;
+        }
+        FScopeLock Lock(&WriterMutex);
+        if (Writer) {
+            bSuccess = FBeatsyncLoader::CutVideoAtBeats(Writer, SingleVideo, FilteredBeats, TempVideoPath, ClipDuration);
+        } else {
+            bSuccess = false;
+        }
+    }
+
+    if (!bSuccess)
+    {
+        FString ErrorMsg;
         {
             FScopeLock Lock(&WriterMutex);
             if (Writer) ErrorMsg = FBeatsyncLoader::GetVideoLastError(Writer);
@@ -327,7 +365,7 @@ void FBeatsyncProcessingTask::DoWork()
         Result.bSuccess = false;
         Result.ErrorMessage = ErrorMsg.IsEmpty() ? TEXT("Failed to cut video") : ErrorMsg;
         if (Span) FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage);
-        
+
         {
             FScopeLock Lock(&WriterMutex);
             if (Writer) {
@@ -338,7 +376,6 @@ void FBeatsyncProcessingTask::DoWork()
         }
 
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
-        TempVideoPath.Empty();
         if (Span) FBeatsyncLoader::EndSpan(Span);
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
@@ -351,24 +388,34 @@ void FBeatsyncProcessingTask::DoWork()
     if (SharedCancelFlag.IsValid() && *SharedCancelFlag)
     {
         if (Span) FBeatsyncLoader::SpanAddEvent(Span, TEXT("cancelled-after-cut"));
-        
+
         {
             FScopeLock Lock(&WriterMutex);
             if (Writer) {
+                FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
                 FBeatsyncLoader::DestroyVideoWriter(Writer);
                 Writer = nullptr;
             }
         }
-        DestroyVideoWriter(Writer);
-        Writer = nullptr;
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
-        TempVideoPath.Empty();
         if (Span) FBeatsyncLoader::EndSpan(Span);
+        Result.bSuccess = false;
+        Result.ErrorMessage = TEXT("Cancelled");
         auto LocalOnComplete = OnComplete;
         AsyncTask(ENamedThreads::GameThread, [LocalOnComplete, Result]() {
             LocalOnComplete.ExecuteIfBound(Result);
         });
         bWorkCompleted.AtomicSet(true);
+        return;
+    }
+
+    // Step 5: Apply effects if enabled
+    FString CurrentVideoPath = TempVideoPath;
+    if (HasAnyEffectsEnabled())
+    {
+        ReportProgress(0.75f, TEXT("Applying effects..."));
+
+        // Set effects config
         {
             FScopeLock Lock(&WriterMutex);
             if (Writer) FBeatsyncLoader::SetEffectsConfig(Writer, Params.EffectsConfig);
@@ -383,40 +430,6 @@ void FBeatsyncProcessingTask::DoWork()
                 bSuccess = false;
             }
         }
-    {
-        if (Span) FBeatsyncLoader::SpanAddEvent(Span, TEXT("cancelled-after-cut"));
-        FBeatsyncLoader::DestroyVideoWriter(Writer);
-        Writer = nullptr;
-        IFileManager::Get().Delete(*TempVideoPath, false, true, true);
-        TempVideoPath.Empty();
-        Result.bSuccess = false;
-        Result.ErrorMessage = TEXT("Cancelled");
-        if (Span) { FBeatsyncLoader::SpanSetError(Span, Result.ErrorMessage); FBeatsyncLoader::EndSpan(Span); }
-        {
-            FScopeLock Lock(&WriterMutex);
-            if (Writer) {
-                FBeatsyncLoader::DestroyVideoWriter(Writer);
-                Writer = nullptr;
-            }
-        }
-        hreads::GameThread, [LocalOnComplete, Result]() {
-            LocalOnComplete.ExecuteIfBound(Result);
-        });
-        bWorkCompleted.AtomicSet(true);
-        return;
-    }
-
-    // Step 5: Apply effects if enabled
-    FString CurrentVideoPath = TempVideoPath;
-    if (HasAnyEffectsEnabled())
-    {
-        ReportProgress(0.75f, TEXT("Applying effects..."));
-
-        // Set effects config
-        FBeatsyncLoader::SetEffectsConfig(Writer, Params.EffectsConfig);
-
-        // Apply effects
-        bSuccess = FBeatsyncLoader::ApplyEffects(Writer, CurrentVideoPath, TempEffectsPath, FilteredBeats);
 
         if (bSuccess)
         {
@@ -436,8 +449,14 @@ void FBeatsyncProcessingTask::DoWork()
 
     if (SharedCancelFlag.IsValid() && *SharedCancelFlag)
     {
-        FBeatsyncLoader::DestroyVideoWriter(Writer);
-        Writer = nullptr;
+        {
+            FScopeLock Lock(&WriterMutex);
+            if (Writer) {
+                FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
+                FBeatsyncLoader::DestroyVideoWriter(Writer);
+                Writer = nullptr;
+            }
+        }
         IFileManager::Get().Delete(*CurrentVideoPath, false, true, true);
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("Cancelled");
@@ -453,21 +472,36 @@ void FBeatsyncProcessingTask::DoWork()
     // Step 6: Mux audio
     ReportProgress(0.9f, TEXT("Adding audio track..."));
 
-    bSuccess = FBeatsyncLoader::AddAudioTrack(Writer, CurrentVideoPath, Params.AudioPath, Params.OutputPath,
-                                               true, Params.AudioStart, Params.AudioEnd);
+    {
+        FScopeLock Lock(&WriterMutex);
+        if (Writer) {
+            bSuccess = FBeatsyncLoader::AddAudioTrack(Writer, CurrentVideoPath, Params.AudioPath, Params.OutputPath,
+                                                       true, Params.AudioStart, Params.AudioEnd);
+        } else {
+            bSuccess = false;
+        }
+    }
 
     if (!bSuccess)
     {
         UE_LOG(LogTemp, Warning, TEXT("TripSitter: Audio muxing failed, using video-only output"));
         // Fall back to video-only output
-        IFileManager::Get().Move(*Params.OutputPath, *CurrentVideoPath, true, true);
-        // Invalidate temp paths so later cleanup does not attempt to delete files that were moved
-        TempVideoPath.Empty();
-        CurrentVideoPath.Empty();
-        // Set result flag for mux failure so caller can detect partial success
-        Result.bAudioMuxFailed = true;
-        bSuccess = true; // Consider it a partial success
-        if (Span) FBeatsyncLoader::SpanAddEvent(Span, TEXT("audio-mux-failed"));
+        bool bMoveSuccess = IFileManager::Get().Move(*Params.OutputPath, *CurrentVideoPath, true, true);
+        if (bMoveSuccess)
+        {
+            // Invalidate temp paths so later cleanup does not attempt to delete files that were moved
+            TempVideoPath.Empty();
+            CurrentVideoPath.Empty();
+            // Set result flag for mux failure so caller can detect partial success
+            Result.bAudioMuxFailed = true;
+            bSuccess = true; // Consider it a partial success
+            if (Span) FBeatsyncLoader::SpanAddEvent(Span, TEXT("audio-mux-failed"));
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("TripSitter: Failed to move video file from %s to %s"), *CurrentVideoPath, *Params.OutputPath);
+            if (Span) FBeatsyncLoader::SpanSetError(Span, TEXT("move-failed"));
+        }
     }
 
     // Clean up temp files
@@ -478,11 +512,17 @@ void FBeatsyncProcessingTask::DoWork()
     if (!TempEffectsPath.IsEmpty())
     {
         IFileManager::Get().Delete(*TempEffectsPath, false, true, true);
-        TempEffectsPath.Empty();
     }
 
-    FBeatsyncLoader::DestroyVideoWriter(Writer);
-    Writer = nullptr;  // Prevent double-destroy in destructor
+    // Clean up Writer with mutex protection
+    {
+        FScopeLock Lock(&WriterMutex);
+        if (Writer) {
+            FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
+            FBeatsyncLoader::DestroyVideoWriter(Writer);
+            Writer = nullptr;
+        }
+    }
 
     // Report completion
     Result.bSuccess = bSuccess;

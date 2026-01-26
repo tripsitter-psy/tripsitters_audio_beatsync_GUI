@@ -78,7 +78,8 @@ def main():
             output = original_model(test_input)
             print(f"  Input shape: {test_input.shape}")
             print(f"  Output shape: {output.shape}")
-            print(f"  Output sample: {output[0, :5]}")
+            # Output is (batch, seq_len, 3) - show first frame's [no_beat, beat, downbeat] probs
+            print(f"  Output sample (frame 0): {output[0, 0]}")
     except Exception as e:
         print(f"  Error with test input: {e}")
         return 1
@@ -128,7 +129,7 @@ def main():
         )
         print(f"  Saved: {args.out}")
     except Exception as e:
-        print(f"  Export failed: {e}")
+        print(f"  Export failed: {e}", file=sys.stderr)
 
         # Try without dynamic axes
         print("\n  Retrying with fixed input size...")
@@ -149,8 +150,16 @@ def main():
     if args.verify:
         print("\n=== Verifying ===")
         try:
-            import onnxruntime as ort
-            import numpy as np
+            try:
+                import onnxruntime as ort
+            except ImportError:
+                print("ERROR: onnxruntime not installed. Run: pip install onnxruntime", file=sys.stderr)
+                return 1
+            try:
+                import numpy as np
+            except ImportError:
+                print("ERROR: numpy not installed. Run: pip install numpy", file=sys.stderr)
+                return 1
 
             onnx_model = onnx.load(args.out)
             onnx.checker.check_model(onnx_model)
@@ -169,7 +178,8 @@ def main():
             outputs = session.run(None, {input_info.name: test_input})
             print(f"  Test inference: OK")
             print(f"    Output shape: {outputs[0].shape}")
-            print(f"    Output sample (probabilities): {outputs[0][0, 0]}")
+            # Output is (batch, seq_len, 3) - show first frame's [no_beat, beat, downbeat] probs
+            print(f"    Output sample (frame 0): {outputs[0][0, 0, :]}")
 
         except Exception as e:
             print(f"  Verification failed: {e}")

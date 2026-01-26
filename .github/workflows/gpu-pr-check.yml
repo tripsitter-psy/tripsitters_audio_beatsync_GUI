@@ -4,7 +4,7 @@ permissions:
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 jobs:
   detect-gpu-changes:
@@ -19,12 +19,20 @@ jobs:
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          # Script exits 0 if GPU changes detected, 1 if no GPU changes
-          # We capture the result in an output variable for clarity
-          if python3 tools/check_gpu_changes.py --base "$BASE_REF"; then
+          set +e
+          python3 tools/check_gpu_changes.py --base "$BASE_REF"
+          EXIT_CODE=$?
+          set -e
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "GPU changes detected"
             echo "gpu_changes=true" >> $GITHUB_OUTPUT
-          else
+          elif [ $EXIT_CODE -eq 1 ]; then
+            echo "No GPU changes detected"
             echo "gpu_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "Error running check_gpu_changes.py (Exit code: $EXIT_CODE)"
+            exit $EXIT_CODE
           fi
 
       - name: Find existing GPU PR comment

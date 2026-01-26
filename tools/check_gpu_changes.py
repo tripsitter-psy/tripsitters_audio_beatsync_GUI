@@ -5,6 +5,7 @@ Usage: python tools/check_gpu_changes.py --base main
 Exit codes:
   0 = GPU-related changes detected (success = found what we're looking for)
   1 = No GPU-related changes found
+  2 = Error running git commands
 Prints matched files and matching keywords.
 """
 import sys
@@ -34,11 +35,11 @@ try:
     res = subprocess.run(['git', 'diff', '--name-only', f'origin/{BASE}...HEAD'], capture_output=True, text=True, check=False)
     if res.returncode != 0:
         print(f'Error running git diff (BASE={BASE}): {res.stderr}')
-        sys.exit(1)
+        sys.exit(2)  # Distinct exit code for git errors
     files = [f for f in res.stdout.splitlines() if f.strip()]
 except Exception as e:
     print('Error running git diff:', e)
-    sys.exit(1)
+    sys.exit(2)  # Distinct exit code for git errors
 
 matched = []
 for f in files:

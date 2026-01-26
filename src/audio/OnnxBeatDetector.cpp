@@ -178,20 +178,32 @@ struct MelSpectrogramExtractor::Impl {
     }
 
     std::vector<float> computeMelSpectrogram(const std::vector<float>& samples) {
-        int numFrames = 1 + (static_cast<int>(samples.size()) - nFft) / hopLength;
-        if (numFrames <= 0) numFrames = 1;
+        // Use size_t for intermediate calculation to avoid overflow with large inputs
+        size_t sampleCount = samples.size();
+        int numFrames = 0;
+        if (sampleCount >= static_cast<size_t>(nFft)) {
+            size_t frameCount = 1 + (sampleCount - static_cast<size_t>(nFft)) / static_cast<size_t>(hopLength);
+            // Clamp to INT_MAX to avoid overflow when casting to int
+            numFrames = (frameCount > static_cast<size_t>(std::numeric_limits<int>::max()))
+                        ? std::numeric_limits<int>::max()
+                        : static_cast<int>(frameCount);
+        }
+        // numFrames is 0 if input is too short (sampleCount < nFft)
+
+        if (numFrames == 0) return {};
 
         std::vector<float> melSpec(nMels * numFrames, 0.0f);
         int fftSize = nextPow2(nFft);
         int nBins = nFft / 2 + 1;
 
         for (int frame = 0; frame < numFrames; ++frame) {
-            int offset = frame * hopLength;
+            // Use size_t to prevent overflow when frame * hopLength exceeds INT_MAX
+            size_t offset = static_cast<size_t>(frame) * static_cast<size_t>(hopLength);
 
             // Fill FFT buffer with windowed samples
             for (int i = 0; i < fftSize; ++i) {
-                if (i < nFft && offset + i < static_cast<int>(samples.size())) {
-                    fftBuffer[i] = std::complex<double>(samples[offset + i] * window[i], 0.0);
+                if (i < nFft && offset + static_cast<size_t>(i) < samples.size()) {
+                    fftBuffer[i] = std::complex<double>(samples[offset + static_cast<size_t>(i)] * window[i], 0.0);
                 } else {
                     fftBuffer[i] = std::complex<double>(0.0, 0.0);
                 }
@@ -376,7 +388,7 @@ struct OnnxBeatDetector::Impl {
 
             // Auto-detect model type based on input/output names
             config = cfg;
-            if (config.modelType == OnnxModelType::Custom) {
+            if (config.modelType == OnnxModelType::Custom || config.modelType == OnnxModelType::Unknown) {
                 // Try to detect from output names
                 for (const auto& name : outputNames) {
                     if (name.find("segment") != std::string::npos) {
@@ -384,7 +396,7 @@ struct OnnxBeatDetector::Impl {
                         break;
                     }
                 }
-                if (config.modelType == OnnxModelType::Custom) {
+                if (config.modelType == OnnxModelType::Custom || config.modelType == OnnxModelType::Unknown) {
                     config.modelType = OnnxModelType::BeatNet;  // Default
                 }
             }
@@ -403,7 +415,9 @@ struct OnnxBeatDetector::Impl {
                     config.nMels = 81;
                     config.hopLength = 441;
                     break;
-                default:
+                case OnnxModelType::Unknown:
+                case OnnxModelType::Custom:
+                    // Use default config values
                     break;
             }
 
@@ -427,6 +441,7 @@ struct OnnxBeatDetector::Impl {
     }
 
     std::vector<float> resampleAudio(const std::vector<float>& samples, int srcRate, int dstRate) {
+        if (samples.empty()) return {};
         if (srcRate == dstRate) return samples;
 
 #ifdef USE_LIBSAMPLERATE
@@ -583,8 +598,13 @@ struct OnnxBeatDetector::Impl {
             // Beat activation (first output)
             if (outputs.size() > 0) {
                 auto& beatOutput = outputs[0];
+                auto typeInfo = beatOutput.GetTensorTypeAndShapeInfo();
+                if (typeInfo.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+                     lastError = "Model output 0 (beats) is not float type";
+                     return result;
+                }
                 auto* beatData = beatOutput.GetTensorData<float>();
-                auto beatShape = beatOutput.GetTensorTypeAndShapeInfo().GetShape();
+                auto beatShape = typeInfo.GetShape();
 
                 // Copy activation
                 size_t beatSize = 1;
@@ -599,22 +619,35 @@ struct OnnxBeatDetector::Impl {
             // Downbeat activation (second output)
             if (outputs.size() > 1) {
                 auto& downbeatOutput = outputs[1];
-                auto* downbeatData = downbeatOutput.GetTensorData<float>();
-                auto downbeatShape = downbeatOutput.GetTensorTypeAndShapeInfo().GetShape();
+                auto typeAndShape = downbeatOutput.GetTensorTypeAndShapeInfo();
 
-                size_t downbeatSize = 1;
-                for (auto dim : downbeatShape) downbeatSize *= dim;
-                result.downbeatActivation.assign(downbeatData, downbeatData + downbeatSize);
+                // Verify tensor element type is float before casting
+                if (typeAndShape.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+                    std::cerr << "[OnnxBeatDetector] Warning: Downbeat output tensor is not float type, skipping\n";
+                } else {
+                    auto* downbeatData = downbeatOutput.GetTensorData<float>();
+                    auto downbeatShape = typeAndShape.GetShape();
 
-                result.downbeats = peakPicking(result.downbeatActivation, config.downbeatThreshold,
-                                               config.minBeatInterval * 2, frameRate);
+                    size_t downbeatSize = 1;
+                    for (auto dim : downbeatShape) downbeatSize *= dim;
+                    result.downbeatActivation.assign(downbeatData, downbeatData + downbeatSize);
+
+                    result.downbeats = peakPicking(result.downbeatActivation, config.downbeatThreshold,
+                                                   config.minBeatInterval * 2, frameRate);
+                }
             }
 
             // Segment activation (third output for AllInOne)
             if (config.modelType == OnnxModelType::AllInOne && outputs.size() > 2) {
                 auto& segmentOutput = outputs[2];
+                auto segmentTypeInfo = segmentOutput.GetTensorTypeAndShapeInfo();
+
+                // Verify tensor element type is float before casting
+                if (segmentTypeInfo.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+                    std::cerr << "[OnnxBeatDetector] Warning: Segment output tensor is not float type, skipping segment analysis\n";
+                } else {
                 auto* segmentData = segmentOutput.GetTensorData<float>();
-                auto segmentShape = segmentOutput.GetTensorTypeAndShapeInfo().GetShape();
+                auto segmentShape = segmentTypeInfo.GetShape();
 
                 size_t segmentSize = 1;
                 for (auto dim : segmentShape) segmentSize *= dim;
@@ -627,8 +660,14 @@ struct OnnxBeatDetector::Impl {
 
                     // Get segment labels (fourth output)
                     auto& labelOutput = outputs[3];
+                    auto labelTypeInfo = labelOutput.GetTensorTypeAndShapeInfo();
+
+                    // Verify tensor element type is float before casting
+                    if (labelTypeInfo.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+                        std::cerr << "[OnnxBeatDetector] Warning: Label output tensor is not float type, skipping segment labeling\n";
+                    } else {
                     auto* labelData = labelOutput.GetTensorData<float>();
-                    auto labelShape = labelOutput.GetTensorTypeAndShapeInfo().GetShape();
+                    auto labelShape = labelTypeInfo.GetShape();
 
                     static const std::vector<std::string> SEGMENT_LABELS = {
                         "intro", "verse", "pre-chorus", "chorus", "post-chorus",
@@ -639,12 +678,36 @@ struct OnnxBeatDetector::Impl {
                     if (labelShape.empty() || !labelData) {
                         std::cerr << "[OnnxBeatDetector] Warning: Label tensor has empty shape or null data, skipping segment labeling\n";
                     } else {
-                        int numClasses = static_cast<int>(labelShape.back());
+                        // Check rank and dimensions
+                        // Expected: [numFrames, numClasses] or [1, numFrames, numClasses]
+                        int numClasses = 0;
+                        int numFramesDim = 0;
+                        size_t strideFrames = 0;
+                        size_t strideClasses = 0;
+
+                        if (labelShape.size() == 2) {
+                            numFramesDim = static_cast<int>(labelShape[0]);
+                            numClasses = static_cast<int>(labelShape[1]);
+                            strideFrames = numClasses;
+                            strideClasses = 1;
+                        } else if (labelShape.size() == 3 && labelShape[0] == 1) {
+                            numFramesDim = static_cast<int>(labelShape[1]);
+                            numClasses = static_cast<int>(labelShape[2]);
+                            strideFrames = numClasses;
+                            strideClasses = 1;
+                        } else {
+                            std::cerr << "[OnnxBeatDetector] Warning: Unexpected label shape rank " << labelShape.size() << ", skipping\n";
+                            numClasses = 0; // Skip loop
+                        }
 
                         // Compute total label tensor size for bounds checking
                         size_t labelTensorSize = 1;
                         for (auto dim : labelShape) labelTensorSize *= dim;
 
+                        // Skip segment labeling if no frames available
+                        if (numFramesDim <= 0 || numClasses <= 0) {
+                            std::cerr << "[OnnxBeatDetector] Warning: Label tensor has no frames or classes, skipping segment labeling\n";
+                        } else {
                         for (size_t i = 0; i < segmentBoundaries.size(); ++i) {
                             MusicSegment seg;
                             seg.startTime = segmentBoundaries[i];
@@ -654,12 +717,13 @@ struct OnnxBeatDetector::Impl {
 
                             // Find label with highest probability at segment start
                             int frameIdx = static_cast<int>(seg.startTime * frameRate);
-                            frameIdx = std::clamp(frameIdx, 0, numFrames - 1);
+                            // Clamp to model output frames (numFramesDim > 0 guaranteed by outer check)
+                            frameIdx = std::clamp(frameIdx, 0, numFramesDim - 1);
 
                             float maxProb = -1e9f;
                             int maxClass = 0;
                             for (int c = 0; c < numClasses && c < static_cast<int>(SEGMENT_LABELS.size()); ++c) {
-                                size_t labelIdx = static_cast<size_t>(frameIdx) * numClasses + c;
+                                size_t labelIdx = static_cast<size_t>(frameIdx) * strideFrames + c * strideClasses;
                                 if (labelIdx >= labelTensorSize) continue;  // Bounds check
                                 float prob = labelData[labelIdx];
                                 if (prob > maxProb) {
@@ -672,8 +736,11 @@ struct OnnxBeatDetector::Impl {
                             seg.confidence = 1.0f / (1.0f + std::exp(-maxProb));  // Sigmoid
                             result.segments.push_back(seg);
                         }
+                        } // end else (numFramesDim > 0 && numClasses > 0)
                     }
+                    } // end else (label tensor is float type)
                 }
+                } // end else (segment tensor is float type)
             }
 
             // Estimate BPM from beats
@@ -822,6 +889,7 @@ std::string OnnxBeatDetector::getModelInfoImpl() const {
     oss << "Model: " << m_impl->modelPath << "\n";
     oss << "Type: ";
     switch (m_impl->config.modelType) {
+        case OnnxModelType::Unknown: oss << "Unknown"; break;
         case OnnxModelType::BeatNet: oss << "BeatNet"; break;
         case OnnxModelType::AllInOne: oss << "All-In-One"; break;
         case OnnxModelType::TCN: oss << "TCN"; break;

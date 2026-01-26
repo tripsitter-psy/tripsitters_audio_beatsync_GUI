@@ -25,6 +25,14 @@
 
 ## Quick Start
 
+### Initial Setup
+
+Before starting, initialize the vcpkg submodule:
+
+```powershell
+git submodule update --init --recursive
+```
+
 ### Backend DLL Only
 
 ```powershell
@@ -124,7 +132,8 @@ Defined in `vcpkg.json`:
   - Download from NVIDIA Developer
   - Extract to `C:\TensorRT-10.9.0.34`
   - The overlay triplet handles environment setup
-  - Runtime DLLs (~515 MB) are copied automatically during build
+  - Runtime DLLs (~515 MB) are staged during deployment only (NOT copied to `build/Release/`)
+  - Per the separation policy, TensorRT DLLs are copied to the UE5 Binaries directory or installer staging area at deployment time via `scripts/deploy_tripsitter.ps1`, keeping `build/Release/` clean for project-only binaries
 
 - **CUDA Toolkit 12.x** - Required for GPU acceleration
   - Download from NVIDIA Developer
@@ -218,8 +227,11 @@ cmake --build build --config Release
 
 - FFmpeg libraries: ~100-200 MB
 - ONNX Runtime: ~50-100 MB
+- TensorRT runtime DLLs: ~515 MB (optional)
+- AudioFlux runtime: ~40 MB (optional)
 - Project executable: ~2-5 MB (Release)
-- Total with dependencies: ~300-400 MB
+- Total with minimal dependencies: ~300-400 MB
+- Total with full GPU support: ~900 MB - 1 GB
 
 ---
 

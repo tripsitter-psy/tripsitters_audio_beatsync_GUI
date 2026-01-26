@@ -68,7 +68,7 @@ Options:
 
 
 ```powershell
-# Sign a single file (do NOT pass -CertificatePassword in plaintext)
+# Sign files in a build directory (do NOT pass -CertificatePassword in plaintext)
 # Use secure alternatives: prompt for password interactively, read from a protected secret store or key vault, or pass via a secure environment variable.
 # Example (prompt for password):
 $certPassword = Read-Host -AsSecureString "Enter certificate password"
@@ -120,7 +120,7 @@ cmake --build build --config Release
 cd build && cpack -C Release -G NSIS
 
 # Install silently
-.\MTVTripSitter-v0.2.0-Windows-AMD64.exe /S
+.\MTVTripSitter-1.0.0-Windows-AMD64.exe /S
 
 # Verify
 Test-Path "$env:ProgramFiles\MTV TripSitter\bin\beatsync.exe"

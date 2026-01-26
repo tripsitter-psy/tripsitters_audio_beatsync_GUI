@@ -14,6 +14,7 @@ namespace BeatSync {
  * @brief Model types supported by OnnxBeatDetector
  */
 enum class OnnxModelType {
+    Unknown,      ///< No model loaded or invalid state
     BeatNet,      ///< BeatNet CRNN - real-time beat/downbeat tracking
     AllInOne,     ///< All-In-One - full structure analysis (beat, downbeat, segments, tempo)
     TCN,          ///< Temporal Convolutional Network - lightweight beat tracking
@@ -128,12 +129,12 @@ public:
 
     /**
      * @brief Get the loaded model type
-     * @note Returns default OnnxModelType if not loaded; call isLoaded() first
+     * @note Returns OnnxModelType::Unknown if not loaded; call isLoaded() first
      */
     OnnxModelType getModelType() const {
         if (!m_impl) {
             std::cerr << "[OnnxBeatDetector::getModelType] Warning: called on unloaded detector\n";
-            return OnnxModelType();
+            return OnnxModelType::Unknown;
         }
         return getModelTypeImpl();
     }

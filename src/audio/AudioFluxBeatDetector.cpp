@@ -341,18 +341,22 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
         std::sort(intervals.begin(), intervals.end());
         double medianInterval = intervals[intervals.size() / 2];
 
-        // Calculate variance from median
-        double variance = 0.0;
-        for (double interval : intervals) {
-            double diff = interval - medianInterval;
-            variance += diff * diff;
-        }
-        variance /= intervals.size();
+        if (medianInterval <= std::numeric_limits<double>::epsilon()) {
+            result.confidence = 0.0;
+        } else {
+            // Calculate variance from median
+            double variance = 0.0;
+            for (double interval : intervals) {
+                double diff = interval - medianInterval;
+                variance += diff * diff;
+            }
+            variance /= intervals.size();
 
-        // Confidence: inverse of normalized variance
-        double stdDev = std::sqrt(variance);
-        double relativeStdDev = stdDev / medianInterval;
-        result.confidence = std::max(0.0, 1.0 - relativeStdDev * 2.0);
+            // Confidence: inverse of normalized variance
+            double stdDev = std::sqrt(variance);
+            double relativeStdDev = stdDev / medianInterval;
+            result.confidence = std::max(0.0, 1.0 - relativeStdDev * 2.0);
+        }
     }
 
     if (progress && !progress(1.0f, "Done")) {
@@ -649,6 +653,7 @@ double AudioFluxBeatDetector::estimateBPM(const std::vector<double>& beats, doub
         }
     }
 
+    if (bestCandidate <= 1e-6) return 0.0;
     double bpm = 60.0 / bestCandidate;
 
     // Normalize to common range (70-180 BPM)

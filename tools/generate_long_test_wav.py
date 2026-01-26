@@ -10,6 +10,12 @@ import struct
 import math
 
 def generate(path='build/tmp/gpu_stress.wav', duration=600, rate=22050):
+    # Ensure parent directory exists
+    import os
+    dirpath = os.path.dirname(path)
+    if dirpath:
+        os.makedirs(dirpath, exist_ok=True)
+
     nframes = int(duration * rate)
     # Use a sweeping sine wave to exercise analysis
     freq0 = 220.0
@@ -26,10 +32,11 @@ def generate(path='build/tmp/gpu_stress.wav', duration=600, rate=22050):
             chunk_data = []
             for i in range(start_idx, end_idx):
                 t = i / float(rate)
-                # linear sweep
-                frac = t / float(duration)
-                freq = freq0 + (freq1 - freq0) * frac
-                sample = amplitude * math.sin(2.0 * math.pi * freq * t)
+                # Linear frequency sweep (chirp) with proper phase integration
+                # For instantaneous frequency f(t) = freq0 + (freq1 - freq0) * t / duration,
+                # the phase is the integral: phase(t) = 2*pi*(freq0*t + (freq1-freq0)*t^2/(2*duration))
+                phase = 2.0 * math.pi * (freq0 * t + (freq1 - freq0) * t * t / (2.0 * duration))
+                sample = amplitude * math.sin(phase)
                 # small added noise to avoid pure tone
                 # no external RNG to keep deterministic
                 noise = 0.001 * math.sin(2.0 * math.pi * 1234.0 * t)

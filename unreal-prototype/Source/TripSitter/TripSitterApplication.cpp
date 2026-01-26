@@ -47,6 +47,13 @@ bool FTripSitterApplication::Initialize()
 
 int32 FTripSitterApplication::Run()
 {
+    // Verify Slate was initialized before running
+    if (!FSlateApplication::IsInitialized())
+    {
+        UE_LOG(LogTemp, Error, TEXT("TripSitterApplication::Run: Slate application not initialized"));
+        return 1;
+    }
+
     // Main application loop
     while (!IsEngineExitRequested())
     {
@@ -68,7 +75,13 @@ void FTripSitterApplication::Shutdown()
     // Destroy main window before tearing down Slate
     if (MainWindow.IsValid())
     {
-        MainWindow->RequestDestroyWindow();
+        // RequestDestroyWindow schedules async destruction; use DestroyWindowImmediately
+        // to ensure the window is fully destroyed before we reset our reference and
+        // shutdown Slate, preventing race conditions
+        if (FSlateApplication::IsInitialized())
+        {
+            FSlateApplication::Get().DestroyWindowImmediately(MainWindow.ToSharedRef());
+        }
         MainWindow.Reset();
     }
 

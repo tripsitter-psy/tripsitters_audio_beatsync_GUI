@@ -21,14 +21,12 @@ try {
         ctest -C Debug -R tracing -V --output-on-failure
         $ctestExitCode = $LASTEXITCODE
         if ($ctestExitCode -ne 0) {
-            Write-Error "ctest failed with exit code: $ctestExitCode"
-            exit $ctestExitCode
+            throw "ctest failed with exit code: $ctestExitCode"
         }
         if (Test-Path $traceOut) {
             Write-Host "Tracing output written to: $traceOut"
         } else {
-            Write-Error "No trace file found. Tracing may not have been enabled for the test run."
-            exit 1
+            throw "No trace file found. Tracing may not have been enabled for the test run."
         }
     } finally {
         # Cleanup: remove the environment variable so it doesn't affect future runs

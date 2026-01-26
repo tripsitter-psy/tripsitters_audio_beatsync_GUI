@@ -107,8 +107,31 @@ jobs:
           }
 
           # Copy FFmpeg DLLs from ThirdParty (these are from checkout, not artifacts)
-          Copy-Item 'unreal-prototype\ThirdParty\beatsync\lib\x64\av*.dll' $ue5Bin -Force
-          Copy-Item 'unreal-prototype\ThirdParty\beatsync\lib\x64\sw*.dll' $ue5Bin -Force
+          $ffmpegDir = 'unreal-prototype\ThirdParty\beatsync\lib\x64'
+
+          # Verify FFmpeg DLLs exist before copying
+          $avDlls = Get-ChildItem -Path $ffmpegDir -Filter 'av*.dll' -ErrorAction SilentlyContinue
+          $swDlls = Get-ChildItem -Path $ffmpegDir -Filter 'sw*.dll' -ErrorAction SilentlyContinue
+
+          if (-not $avDlls -or $avDlls.Count -eq 0) {
+            Write-Error "FFmpeg av*.dll not found in $ffmpegDir - cannot deploy to $ue5Bin"
+            exit 1
+          }
+          if (-not $swDlls -or $swDlls.Count -eq 0) {
+            Write-Error "FFmpeg sw*.dll not found in $ffmpegDir - cannot deploy to $ue5Bin"
+            exit 1
+          }
+
+          try {
+            Copy-Item "$ffmpegDir\av*.dll" $ue5Bin -Force -ErrorAction Stop
+            foreach ($dll in $avDlls) { Write-Host "Copied FFmpeg DLL: $($dll.Name)" }
+
+            Copy-Item "$ffmpegDir\sw*.dll" $ue5Bin -Force -ErrorAction Stop
+            foreach ($dll in $swDlls) { Write-Host "Copied FFmpeg DLL: $($dll.Name)" }
+          } catch {
+            Write-Error "Failed to copy FFmpeg DLLs to $ue5Bin : $_"
+            exit 1
+          }
 
           Write-Host "DLLs deployed to $ue5Bin"
         shell: powershell
