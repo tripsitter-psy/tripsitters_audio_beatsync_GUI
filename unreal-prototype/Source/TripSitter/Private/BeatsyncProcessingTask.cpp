@@ -183,11 +183,14 @@ void FBeatsyncProcessingTask::DoWork()
             {
                 FAIConfig AIConfig;
                 AIConfig.BeatModelPath = ModelPath;
-                AIConfig.bEnableGPU = true;  // Enable CUDA
+                AIConfig.bEnableGPU = true;  // Enable CUDA/TensorRT
                 AIConfig.bEnableStemSeparation = bEnableStemSeparation;
                 AIConfig.bEnableDrumsForBeats = true;
-                AIConfig.BeatThreshold = 0.66f;
-                AIConfig.DownbeatThreshold = 0.66f;
+                AIConfig.BeatThreshold = 0.5f;      // More sensitive for psytrance
+                AIConfig.DownbeatThreshold = 0.5f;  // More sensitive for psytrance
+                // Enable kick-only mode for psytrance/EDM - isolates kick frequencies
+                AIConfig.bKickOnlyMode = true;
+                AIConfig.KickFreqCutoff = 200.0f;
 
                 // Set stem model path if using stem separation
                 if (bEnableStemSeparation && FPaths::FileExists(StemModelPath))
