@@ -124,6 +124,9 @@ struct FAIConfig
     int32 GPUDeviceId = 0;
     float BeatThreshold = 0.66f;
     float DownbeatThreshold = 0.66f;
+    // Kick-only mode for psytrance/EDM (applies 200Hz low-pass filter before beat detection)
+    bool bKickOnlyMode = false;
+    float KickFreqCutoff = 200.0f;
 };
 
 // AI analysis result
@@ -173,6 +176,15 @@ public:
      *  AsyncTask(ENamedThreads::GameThread, ...) to avoid Slate threading assertions.
      *  The callback must remain valid for the lifetime of the video processing operation. */
     static void SetProgressCallback(void* Handle, TFunction<void(double)> Callback);
+
+    /** Set cancel flag for video processing operations.
+     *  Pass a pointer to an int that will be checked periodically during processing.
+     *  Set *CancelFlag to non-zero to request cancellation.
+     *  The flag must remain valid for the lifetime of the video processing operation. */
+    static void SetCancelFlag(void* Handle, const int* CancelFlag);
+
+    /** Check if video processing was cancelled */
+    static bool IsCancelled(void* Handle);
 
     // Video Processing
     static bool CutVideoAtBeats(void* Handle, const FString& InputVideo, const TArray<double>& BeatTimes,

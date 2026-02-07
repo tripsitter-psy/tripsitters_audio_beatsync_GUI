@@ -23,6 +23,8 @@ using bs_destroy_video_writer_t = void (*)(void*);
 using bs_video_get_last_error_t = const char* (*)(void*);
 using bs_progress_cb = void (*)(double, void*);
 using bs_video_set_progress_callback_t = void (*)(void*, bs_progress_cb, void*);
+using bs_video_set_cancel_flag_t = void (*)(void*, const int*);
+using bs_video_is_cancelled_t = int (*)(void*);
 using bs_video_cut_at_beats_t = int (*)(void*, const char*, const double*, size_t, const char*, double);
 using bs_video_cut_at_beats_multi_t = int (*)(void*, const char**, size_t, const double*, size_t, const char*, double);
 using bs_video_concatenate_t = int (*)(const char**, size_t, const char*);
@@ -77,6 +79,8 @@ struct bs_ai_config_t {
     int gpu_device_id;
     float beat_threshold;
     float downbeat_threshold;
+    int kick_only_mode;
+    float kick_freq_cutoff;
 };
 
 struct bs_ai_result_t {
@@ -119,6 +123,8 @@ struct FBeatsyncApi
     bs_destroy_video_writer_t destroy_video_writer = nullptr;
     bs_video_get_last_error_t video_get_last_error = nullptr;
     bs_video_set_progress_callback_t video_set_progress_callback = nullptr;
+    bs_video_set_cancel_flag_t video_set_cancel_flag = nullptr;
+    bs_video_is_cancelled_t video_is_cancelled = nullptr;
     bs_video_cut_at_beats_t video_cut_at_beats = nullptr;
     bs_video_cut_at_beats_multi_t video_cut_at_beats_multi = nullptr;
     bs_video_concatenate_t video_concatenate = nullptr;
@@ -252,6 +258,8 @@ bool FBeatsyncLoader::Initialize()
     GApi.destroy_video_writer = (bs_destroy_video_writer_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_destroy_video_writer"));
     GApi.video_get_last_error = (bs_video_get_last_error_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_get_last_error"));
     GApi.video_set_progress_callback = (bs_video_set_progress_callback_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_progress_callback"));
+    GApi.video_set_cancel_flag = (bs_video_set_cancel_flag_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_cancel_flag"));
+    GApi.video_is_cancelled = (bs_video_is_cancelled_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_is_cancelled"));
     GApi.video_cut_at_beats = (bs_video_cut_at_beats_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_cut_at_beats"));
     GApi.video_cut_at_beats_multi = (bs_video_cut_at_beats_multi_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_cut_at_beats_multi"));
     GApi.video_concatenate = (bs_video_concatenate_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_concatenate"));
@@ -874,6 +882,8 @@ void* FBeatsyncLoader::CreateAIAnalyzer(const FAIConfig& Config)
     CConfig.gpu_device_id = Config.GPUDeviceId;
     CConfig.beat_threshold = Config.BeatThreshold;
     CConfig.downbeat_threshold = Config.DownbeatThreshold;
+    CConfig.kick_only_mode = Config.bKickOnlyMode ? 1 : 0;
+    CConfig.kick_freq_cutoff = Config.KickFreqCutoff;
 
     void* Handle = GApi.create_ai_analyzer(&CConfig);
     if (Handle) {
@@ -1209,4 +1219,21 @@ bool FBeatsyncLoader::AudioFluxAnalyzeWithStems(const FString& FilePath, const F
         GApi.free_ai_result(&CResult);
     }
     return false;
+}
+
+// =============================================================================
+// Cancel Flag (for aborting long-running video processing)
+// =============================================================================
+
+void FBeatsyncLoader::SetCancelFlag(void* Handle, const int* CancelFlag)
+{
+    if (GApi.video_set_cancel_flag && Handle) {
+        GApi.video_set_cancel_flag(Handle, CancelFlag);
+    }
+}
+
+bool FBeatsyncLoader::IsCancelled(void* Handle)
+{
+    if (!GApi.video_is_cancelled || !Handle) return false;
+    return GApi.video_is_cancelled(Handle) != 0;
 }

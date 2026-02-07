@@ -116,6 +116,56 @@ struct OnnxMusicAnalyzer::Impl {
         return mono;
     }
 
+    /**
+     * @brief Apply a simple 2nd-order Butterworth low-pass filter for kick isolation
+     *
+     * This filters out frequencies above the cutoff (typically 200Hz) to isolate
+     * kick drum transients from snares, hi-hats, and other higher-frequency content.
+     * Critical for psytrance/EDM where we only want to detect kick drums.
+     *
+     * @param samples Audio samples to filter (modified in-place)
+     * @param sampleRate Sample rate in Hz
+     * @param cutoffHz Low-pass cutoff frequency in Hz
+     */
+    void applyLowPassFilter(std::vector<float>& samples, int sampleRate, float cutoffHz) {
+        if (samples.empty() || sampleRate <= 0 || cutoffHz <= 0) return;
+
+        // 2nd-order Butterworth low-pass filter coefficients
+        constexpr float PI = 3.14159265358979323846f;
+        float omega = 2.0f * PI * cutoffHz / sampleRate;
+        float cosOmega = std::cos(omega);
+        float sinOmega = std::sin(omega);
+        float alpha = sinOmega / (2.0f * 1.0f);  // Q factor of 1.0 (no resonance)
+
+        // IIR filter coefficients
+        float b0 = (1.0f - cosOmega) / 2.0f;
+        float b1 = 1.0f - cosOmega;
+        float b2 = (1.0f - cosOmega) / 2.0f;
+        float a0 = 1.0f + alpha;
+        float a1 = -2.0f * cosOmega;
+        float a2 = 1.0f - alpha;
+
+        // Normalize coefficients
+        b0 /= a0;
+        b1 /= a0;
+        b2 /= a0;
+        a1 /= a0;
+        a2 /= a0;
+
+        // Apply filter (Direct Form II Transposed)
+        float z1 = 0.0f, z2 = 0.0f;  // State variables
+        for (size_t i = 0; i < samples.size(); ++i) {
+            float input = samples[i];
+            float output = b0 * input + z1;
+            z1 = b1 * input - a1 * output + z2;
+            z2 = b2 * input - a2 * output;
+            samples[i] = output;
+        }
+
+        debugLog("[BeatSync] Applied low-pass filter: cutoff=" + std::to_string(cutoffHz) +
+                 "Hz, samples=" + std::to_string(samples.size()));
+    }
+
     MusicAnalysisResult runPipeline(const std::vector<float>& stereoSamples, int sampleRate,
                                     bool useStemSep, MusicAnalysisProgress progress) {
         MusicAnalysisResult result;
@@ -227,6 +277,13 @@ struct OnnxMusicAnalyzer::Impl {
         }
 
         debugLog("[BeatSync] About to start beat detection stage");
+
+        // Apply kick-only low-pass filter if enabled (for psytrance/EDM kick isolation)
+        if (config.kickOnlyMode && config.kickFreqCutoff > 0) {
+            debugLog("[BeatSync] Applying kick-only low-pass filter at " +
+                     std::to_string(config.kickFreqCutoff) + " Hz");
+            applyLowPassFilter(audioForBeatDetection, sampleRate, config.kickFreqCutoff);
+        }
 
         // Stage 2: Beat Detection
         if (progress) {

@@ -23,6 +23,10 @@ struct MusicAnalyzerConfig {
     bool useDrumsForBeats = true;      ///< Use drums stem for beat detection (most accurate)
     bool analyzePerStemBeats = false;  ///< Perform beat detection separately for each stem
 
+    // Kick-only mode for psytrance/EDM (applies 200Hz low-pass filter before beat detection)
+    bool kickOnlyMode = false;         ///< Apply low-pass filter to isolate kick drum frequencies
+    float kickFreqCutoff = 200.0f;     ///< Low-pass filter cutoff frequency in Hz
+
     // Beat detection config
     OnnxConfig beatConfig;
 
@@ -150,9 +154,10 @@ public:
      * @brief Get a BeatGrid from analysis (convenience method)
      *
      * This method expects stereo-interleaved samples (L,R,L,R,...) matching
-     * the format used by analyze(). For mono audio, either duplicate each
-     * sample to create stereo (L,L,R,R becomes L,R,L,R) or use analyzeMono()
-     * first and extract the BeatGrid from the result.
+     * the format used by analyze(). For mono audio [M1, M2, M3, ...], duplicate
+     * each sample into a stereo pair to produce interleaved stereo:
+     * [M1, M1, M2, M2, M3, M3, ...]. Alternatively, use analyzeMono() which
+     * accepts mono samples directly.
      *
      * @param samples Stereo-interleaved audio samples (L,R,L,R,...)
      * @param sampleRate Sample rate in Hz

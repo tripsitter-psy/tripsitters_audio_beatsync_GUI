@@ -334,7 +334,11 @@ FReply SEffectTimeline::OnMouseMove(const FGeometry& MyGeometry, const FPointerE
 		double MinBound = FMath::Max(0.0, SelectionStart);
 		NewTime = FMath::Clamp(NewTime, MinBound, EndTime - 0.1);
 
-		// Need non-const access - fire delegate to update
+		// Update local array for immediate visual feedback during drag
+		EffectRegions[DragRegionIndex].StartTime = NewTime;
+		Invalidate(EInvalidateWidget::Paint);
+
+		// Fire delegate to notify parent
 		if (OnRegionChanged.IsBound())
 		{
 			OnRegionChanged.Execute(DragRegionIndex, NewTime, EndTime);
@@ -349,6 +353,11 @@ FReply SEffectTimeline::OnMouseMove(const FGeometry& MyGeometry, const FPointerE
 		double EffectiveSelEnd = (SelectionEnd < 0) ? Duration : SelectionEnd;
 		NewTime = FMath::Clamp(NewTime, StartTime + 0.1, EffectiveSelEnd);
 
+		// Update local array for immediate visual feedback during drag
+		EffectRegions[DragRegionIndex].EndTime = NewTime;
+		Invalidate(EInvalidateWidget::Paint);
+
+		// Fire delegate to notify parent
 		if (OnRegionChanged.IsBound())
 		{
 			OnRegionChanged.Execute(DragRegionIndex, StartTime, NewTime);
@@ -390,6 +399,12 @@ FReply SEffectTimeline::OnMouseMove(const FGeometry& MyGeometry, const FPointerE
 		NewStart = FMath::Clamp(NewStart, MinBound, EffectiveSelEnd - RegionDuration);
 		NewEnd = FMath::Clamp(NewEnd, MinBound + RegionDuration, EffectiveSelEnd);
 
+		// Update local array for immediate visual feedback during drag
+		EffectRegions[DragRegionIndex].StartTime = NewStart;
+		EffectRegions[DragRegionIndex].EndTime = NewEnd;
+		Invalidate(EInvalidateWidget::Paint);
+
+		// Fire delegate to notify parent
 		if (OnRegionChanged.IsBound())
 		{
 			OnRegionChanged.Execute(DragRegionIndex, NewStart, NewEnd);

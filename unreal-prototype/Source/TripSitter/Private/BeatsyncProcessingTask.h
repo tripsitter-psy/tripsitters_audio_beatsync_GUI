@@ -90,8 +90,9 @@ public:
     ~FBeatsyncProcessingTask();
 
     void DoWork();
-    void RequestCancel() { 
-        bCancelRequested.AtomicSet(true); 
+    void RequestCancel() {
+        bCancelRequested.AtomicSet(true);
+        BackendCancelFlag.store(1, std::memory_order_release);  // Signal backend to cancel
         if (SharedCancelFlag.IsValid()) {
             SharedCancelFlag->AtomicSet(true);
         }
@@ -110,6 +111,7 @@ private:
     FThreadSafeBool bCancelRequested;
     TSharedPtr<FThreadSafeBool> SharedCancelFlag;
     TSharedPtr<FThreadSafeBool> ProgressGuard;  // Guard for progress callbacks
+    std::atomic<int> BackendCancelFlag{0};  // Cancel flag for backend C API (must be int, not bool)
     FThreadSafeBool bWorkCompleted;  // Set when DoWork finishes, used for destructor synchronization
     FEvent* WorkCompletedEvent = nullptr;  // Signaled when DoWork finishes, destructor waits on this
     void* Writer = nullptr;

@@ -395,6 +395,10 @@ void FBeatsyncProcessingTask::DoWork()
         return;
     }
 
+    // Set up cancel flag for video processing (allows backend to check for cancellation)
+    // Pass address of atomic int - backend will check this periodically during long operations
+    FBeatsyncLoader::SetCancelFlag(Writer, reinterpret_cast<const int*>(&BackendCancelFlag));
+
     // Set up progress callback for video processing
     // Note: SharedCancelFlag is a shared member that reflects runtime cancellation state
     // CRITICAL: This callback is called from a worker thread in the backend DLL,

@@ -528,6 +528,18 @@ BEATSYNC_API void bs_video_set_progress_callback(void* writer, bs_progress_cb cb
     }
 }
 
+BEATSYNC_API void bs_video_set_cancel_flag(void* writer, const int* cancel_flag) {
+    if (!writer) return;
+    auto* w = static_cast<BeatSync::VideoWriter*>(writer);
+    w->setCancelFlag(cancel_flag);
+}
+
+BEATSYNC_API int bs_video_is_cancelled(void* writer) {
+    if (!writer) return 0;
+    auto* w = static_cast<BeatSync::VideoWriter*>(writer);
+    return w->isCancelled() ? 1 : 0;
+}
+
 BEATSYNC_API int bs_video_cut_at_beats(void* writer, const char* inputVideo,
                                         const double* beatTimes, size_t count,
                                         const char* outputVideo, double clipDuration) {
@@ -1445,6 +1457,12 @@ BEATSYNC_API void* bs_create_ai_analyzer(const bs_ai_config_t* config) {
         // Stem separation config
         cfg.stemConfig.useGPU = config->use_gpu != 0;
         cfg.stemConfig.gpuDeviceId = config->gpu_device_id;
+
+        // Kick-only mode for psytrance/EDM
+        cfg.kickOnlyMode = config->kick_only_mode != 0;
+        if (config->kick_freq_cutoff > 0.0f) {
+            cfg.kickFreqCutoff = config->kick_freq_cutoff;
+        } // else: use default 200.0 Hz
 
         if (!analyzer->initialize(cfg)) {
             s_aiLastError = analyzer->getLastError();

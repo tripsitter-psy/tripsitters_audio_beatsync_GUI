@@ -117,74 +117,142 @@ struct OnnxStemSeparator::Impl {
             // Don't use environment allocators (prefer per-session allocation)
             sessionOptions->AddConfigEntry("session.use_env_allocators", "0");
 
-            // Try to use GPU if requested
+            // Try to use GPU if requested - use TensorRT -> CUDA -> DirectML -> CPU fallback chain
+            std::string activeProvider = "CPU";
             if (cfg.useGPU) {
                 gpuEnabled_ = false;
-                std::cerr << "[BeatSync] GPU acceleration requested (device_id=" << cfg.gpuDeviceId << ")" << std::endl;
+                std::cerr << "[BeatSync] GPU acceleration requested for StemSeparator (device_id=" << cfg.gpuDeviceId << ")" << std::endl;
+                const OrtApi& ortApi = Ort::GetApi();
+
+                // ============================================================
+                // TensorRT Execution Provider (Best performance on RTX GPUs)
+                // ============================================================
                 try {
-                    OrtCUDAProviderOptionsV2* cudaOptions = nullptr;
-                    const OrtApi& ortApi = Ort::GetApi();
-                    OrtStatus* status = ortApi.CreateCUDAProviderOptions(&cudaOptions);
-                    if (status != nullptr) {
-                        const char* msg = ortApi.GetErrorMessage(status);
-                        std::cerr << "[BeatSync] CreateCUDAProviderOptions failed (StemSep): " << (msg ? msg : "unknown error") << std::endl;
-                        ortApi.ReleaseStatus(status);
-                    } else if (cudaOptions != nullptr) {
-                        const char* keys[] = {"device_id"};
+                    OrtTensorRTProviderOptionsV2* trtOptions = nullptr;
+                    OrtStatus* status = ortApi.CreateTensorRTProviderOptions(&trtOptions);
+                    if (status == nullptr && trtOptions != nullptr) {
+                        // Configure TensorRT for maximum performance
+                        const char* trtKeys[] = {
+                            "device_id",
+                            "trt_max_workspace_size",
+                            "trt_fp16_enable",           // Enable FP16 for Tensor Cores (2x speedup)
+                            "trt_engine_cache_enable",   // Cache compiled engines
+                            "trt_engine_cache_path"
+                        };
                         char deviceIdStr[16];
                         snprintf(deviceIdStr, sizeof(deviceIdStr), "%d", cfg.gpuDeviceId);
-                        const char* values[] = {deviceIdStr};
-                        status = ortApi.UpdateCUDAProviderOptions(cudaOptions, keys, values, 1);
+                        // Use 8GB workspace for large Demucs models
+                        const char* workspaceSize = "8589934592";  // 8GB
+
+                        // Cache path for compiled TensorRT engines
+                        std::string cachePath;
+                        const char* tempDir = std::getenv("TEMP");
+                        if (tempDir) {
+                            cachePath = std::string(tempDir) + "\\beatsync_stemsep_trt_cache";
+                        } else {
+                            cachePath = "beatsync_stemsep_trt_cache";
+                        }
+
+                        const char* trtValues[] = {
+                            deviceIdStr,
+                            workspaceSize,
+                            "1",  // FP16 enabled
+                            "1",  // Engine cache enabled
+                            cachePath.c_str()
+                        };
+
+                        status = ortApi.UpdateTensorRTProviderOptions(trtOptions, trtKeys, trtValues, 5);
                         if (status == nullptr) {
-                            status = ortApi.SessionOptionsAppendExecutionProvider_CUDA_V2(static_cast<OrtSessionOptions*>(*sessionOptions), cudaOptions);
+                            status = ortApi.SessionOptionsAppendExecutionProvider_TensorRT_V2(
+                                static_cast<OrtSessionOptions*>(*sessionOptions), trtOptions);
                             if (status == nullptr) {
+                                activeProvider = "TensorRT";
                                 gpuEnabled_ = true;
-                                std::cerr << "[BeatSync] CUDA execution provider enabled successfully (StemSep)" << std::endl;
+                                std::cerr << "[BeatSync] TensorRT EP enabled for StemSeparator with FP16 and 8GB workspace" << std::endl;
                             } else {
-                                const char* msg = ortApi.GetErrorMessage(status);
-                                std::cerr << "[BeatSync] CUDA provider append failed (StemSep): " << (msg ? msg : "unknown error") << std::endl;
+                                std::cerr << "[BeatSync] TensorRT session append failed (StemSep): "
+                                          << ortApi.GetErrorMessage(status) << std::endl;
                                 ortApi.ReleaseStatus(status);
                             }
                         } else {
-                            const char* msg = ortApi.GetErrorMessage(status);
-                            std::cerr << "[BeatSync] CUDA options update failed (StemSep): " << (msg ? msg : "unknown error") << std::endl;
+                            std::cerr << "[BeatSync] TensorRT options update failed (StemSep): "
+                                      << ortApi.GetErrorMessage(status) << std::endl;
                             ortApi.ReleaseStatus(status);
                         }
-                        ortApi.ReleaseCUDAProviderOptions(cudaOptions);
+                        ortApi.ReleaseTensorRTProviderOptions(trtOptions);
+                    } else if (status != nullptr) {
+                        std::cerr << "[BeatSync] TensorRT provider creation failed (StemSep): "
+                                  << ortApi.GetErrorMessage(status) << std::endl;
+                        ortApi.ReleaseStatus(status);
                     }
                 } catch (const std::exception& e) {
-                    std::cerr << "[BeatSync] CUDA provider failed with exception (StemSep): " << e.what() << std::endl;
-#ifdef _WIN32
-                    try {
-                        std::cerr << "[BeatSync] CUDA failed, attempting DirectML fallback (StemSep)" << std::endl;
-                        sessionOptions->AppendExecutionProvider("DML", {});
-                        gpuEnabled_ = true;
-                        std::cerr << "[BeatSync] DirectML enabled successfully (StemSep)" << std::endl;
-                    } catch (const std::exception& e2) {
-                        std::cerr << "[BeatSync] DirectML fallback failed with exception (StemSep): " << e2.what() << std::endl;
-                        // Fall back to CPU
-                    } catch (...) {
-                        std::cerr << "[BeatSync] DirectML fallback failed with unknown exception (StemSep)" << std::endl;
-                        // Fall back to CPU
-                    }
-#endif
+                    std::cerr << "[BeatSync] TensorRT exception (StemSep): " << e.what() << std::endl;
                 } catch (...) {
-                    std::cerr << "[BeatSync] CUDA provider failed with unknown exception (StemSep)" << std::endl;
-#ifdef _WIN32
+                    std::cerr << "[BeatSync] TensorRT unknown exception (StemSep)" << std::endl;
+                }
+
+                // ============================================================
+                // CUDA Execution Provider (Fallback if TensorRT unavailable)
+                // ============================================================
+                if (activeProvider == "CPU") {
                     try {
-                        std::cerr << "[BeatSync] CUDA failed, attempting DirectML fallback (StemSep)" << std::endl;
+                        OrtCUDAProviderOptionsV2* cudaOptions = nullptr;
+                        OrtStatus* status = ortApi.CreateCUDAProviderOptions(&cudaOptions);
+                        if (status != nullptr) {
+                            const char* msg = ortApi.GetErrorMessage(status);
+                            std::cerr << "[BeatSync] CreateCUDAProviderOptions failed (StemSep): " << (msg ? msg : "unknown error") << std::endl;
+                            ortApi.ReleaseStatus(status);
+                        } else if (cudaOptions != nullptr) {
+                            const char* keys[] = {"device_id", "arena_extend_strategy"};
+                            char deviceIdStr[16];
+                            snprintf(deviceIdStr, sizeof(deviceIdStr), "%d", cfg.gpuDeviceId);
+                            const char* values[] = {deviceIdStr, "kSameAsRequested"};  // Don't over-allocate GPU memory
+                            status = ortApi.UpdateCUDAProviderOptions(cudaOptions, keys, values, 2);
+                            if (status == nullptr) {
+                                status = ortApi.SessionOptionsAppendExecutionProvider_CUDA_V2(
+                                    static_cast<OrtSessionOptions*>(*sessionOptions), cudaOptions);
+                                if (status == nullptr) {
+                                    activeProvider = "CUDA";
+                                    gpuEnabled_ = true;
+                                    std::cerr << "[BeatSync] CUDA execution provider enabled successfully (StemSep)" << std::endl;
+                                } else {
+                                    const char* msg = ortApi.GetErrorMessage(status);
+                                    std::cerr << "[BeatSync] CUDA provider append failed (StemSep): " << (msg ? msg : "unknown error") << std::endl;
+                                    ortApi.ReleaseStatus(status);
+                                }
+                            } else {
+                                const char* msg = ortApi.GetErrorMessage(status);
+                                std::cerr << "[BeatSync] CUDA options update failed (StemSep): " << (msg ? msg : "unknown error") << std::endl;
+                                ortApi.ReleaseStatus(status);
+                            }
+                            ortApi.ReleaseCUDAProviderOptions(cudaOptions);
+                        }
+                    } catch (const std::exception& e) {
+                        std::cerr << "[BeatSync] CUDA provider failed with exception (StemSep): " << e.what() << std::endl;
+                    } catch (...) {
+                        std::cerr << "[BeatSync] CUDA provider failed with unknown exception (StemSep)" << std::endl;
+                    }
+                }
+
+                // ============================================================
+                // DirectML Execution Provider (Windows fallback)
+                // ============================================================
+#ifdef _WIN32
+                if (activeProvider == "CPU") {
+                    try {
+                        std::cerr << "[BeatSync] Attempting DirectML fallback (StemSep)" << std::endl;
                         sessionOptions->AppendExecutionProvider("DML", {});
+                        activeProvider = "DirectML";
                         gpuEnabled_ = true;
                         std::cerr << "[BeatSync] DirectML enabled successfully (StemSep)" << std::endl;
                     } catch (const std::exception& e2) {
                         std::cerr << "[BeatSync] DirectML fallback failed with exception (StemSep): " << e2.what() << std::endl;
-                        // Fall back to CPU
                     } catch (...) {
                         std::cerr << "[BeatSync] DirectML fallback failed with unknown exception (StemSep)" << std::endl;
-                        // Fall back to CPU
                     }
-#endif
                 }
+#endif
+                std::cerr << "[BeatSync] StemSeparator final execution provider: " << activeProvider << std::endl;
             }
 
             // Load model
