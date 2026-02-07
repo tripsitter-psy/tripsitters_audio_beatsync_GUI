@@ -292,9 +292,18 @@ BEATSYNC_API int bs_get_waveform_bands(void* analyzer, const char* filepath,
             return -1;
         }
 
+        // Safety: limit STFT buffer size to prevent memory exhaustion (max ~2GB total)
+        size_t requiredBytes = static_cast<size_t>(numFrames) * fftSize * sizeof(float) * 2;
+        constexpr size_t maxBufferBytes = 2ULL * 1024 * 1024 * 1024;  // 2GB limit
+        if (requiredBytes > maxBufferBytes) {
+            stftObj_free(stftObj);
+            s_lastError = "Audio file too long for waveform analysis";
+            return -1;
+        }
+
         // Allocate STFT buffers (AudioFlux outputs fftLength values per frame)
-        std::vector<float> stftReal(numFrames * fftSize, 0.0f);
-        std::vector<float> stftImag(numFrames * fftSize, 0.0f);
+        std::vector<float> stftReal(static_cast<size_t>(numFrames) * fftSize, 0.0f);
+        std::vector<float> stftImag(static_cast<size_t>(numFrames) * fftSize, 0.0f);
 
         // Compute STFT (stftObj_stft returns void; errors manifest as NaN/zero output)
         stftObj_stft(stftObj, audioData.samples.data(), static_cast<int>(audioData.samples.size()),

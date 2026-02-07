@@ -149,7 +149,30 @@ Note: `avutil` is included in FFmpeg core and is not a selectable vcpkg feature.
 
 **vcpkg baseline:** The required vcpkg baseline commit is `25b458671af03578e6a34edd8f0d1ac85e084df4` (see `vcpkg.json`).
 
-## Current Status (January 2026)
+## Current Status (February 2026)
+
+### Active Investigation: Audio File Selection Crash
+
+**RESOLVED** (Feb 7, 2026): Audio file selection crash fixed.
+
+**Root Cause**: TArray self-reference bug in SWaveformViewer::OnPaint(). Code was doing `TriTop.Add(TriTop[0])` which is undefined behavior - when `Add()` reallocates the array, `TriTop[0]` becomes a dangling reference.
+
+**Fix**: Save the first point to a local variable before adding to the array:
+```cpp
+// WRONG - crashes!
+TriTop.Add(TriTop[0]);
+
+// CORRECT
+FVector2D TriTopFirst(StartHandleX - HandleWidth, 0);
+TriTop.Add(TriTopFirst);
+// ... add other points ...
+TriTop.Add(TriTopFirst);  // Close loop safely
+```
+
+**Files Modified**:
+- `unreal-prototype/Source/TripSitter/Private/SWaveformViewer.cpp` - Fixed TriTop and TriBottom array self-reference
+- `unreal-prototype/Source/TripSitter/Private/STripSitterMainWidget.cpp` - Fixed FAnalyzerHandle → void* type mismatch
+- `src/backend/beatsync_capi.cpp` - Added STFT buffer size limit (2GB max)
 
 ### Completed
 - [x] C API with effects config and frame extraction
@@ -177,6 +200,13 @@ Note: `avutil` is included in FFmpeg core and is not a selectable vcpkg feature.
 - [x] CodeRabbit fixes (thread safety, memory leaks, bounds checks)
 - [x] AudioFlux integration for spectral flux beat detection
 - [x] Stems + Flux hybrid analysis mode
+- [x] Fixed models install path for packaged version (CMakeLists.txt line 598)
+- [x] Fixed Start Menu shortcuts not removed by uninstaller (SetShellVarContext)
+- [x] Beat detection parameter tuning for psytrance/EDM
+- [x] Low-frequency focus (30-200Hz) for kick drum isolation in AudioFlux
+- [x] Fixed TripSitter.Build.cs duplicate symbol errors (removed TripSitterUE dependency)
+- [x] Created Demucs kick training setup (training/demucs_kick/)
+- [x] Fixed TArray self-reference crash in SWaveformViewer::OnPaint (TriTop.Add(TriTop[0]) bug)
 
 ### Pending / Future Work
 - [ ] Test effects pipeline end-to-end with real video
@@ -184,6 +214,150 @@ Note: `avutil` is included in FFmpeg core and is not a selectable vcpkg feature.
 - [ ] Verify async task completion and UI updates
 - [ ] Add more comprehensive C API tests
 - [ ] Train/integrate ONNX beat detection models (BeatNet, All-In-One, TCN)
+- [ ] Train custom kick-only Demucs model for psytrance
+
+## Beat Detection Tuning for Psytrance/EDM
+
+The app's primary use case is psytrance/EDM music where beat detection must focus on the kick drum. The default BeatNet model was trained on mixed music and often misses or misaligns beats in electronic music.
+
+### Analysis Modes Explained
+
+| Mode | Algorithm | Kick-Only? | Notes |
+|------|-----------|------------|-------|
+| Energy (Fast) | Basic spectral flux | No | Fast but detects all transients |
+| AI Beat Detection | BeatNet on full mix | No | Detects all rhythmic elements |
+| AI + Stem Separation | Demucs → BeatNet on drums | **No** | Detects ALL drum hits (kicks, snares, hi-hats) |
+| AudioFlux | Spectral flux (30-200Hz) | **YES** | Uses low-freq focus for kicks only |
+| Stems + Flux (Best) | Demucs → AudioFlux on bass | **YES** | Best: isolates bass then filters for kicks |
+
+**For psytrance/EDM, use "AudioFlux" or "Stems + Flux (Best)"** - these use the low-frequency focus (30-200Hz) which filters out snares and hi-hats, detecting only kick drum transients.
+
+**Do NOT use "AI + Stem Separation" for kick-only detection** - BeatNet is trained to detect ALL beats including snares and hi-hats on the drums stem.
+
+### Current Parameter Values (Tuned for Psytrance)
+
+These parameters have been tuned for EDM/psytrance with ~145 BPM and prominent kick drums:
+
+**OnnxBeatDetector.h** (BeatNet inference):
+```cpp
+int hopLength = 256;           // ~12ms precision (was 441 ~20ms)
+float beatThreshold = 0.5f;    // More sensitive (was 0.7f)
+float downbeatThreshold = 0.5f; // More sensitive (was 0.7f)
+float minBeatInterval = 0.2f;  // 300 BPM max (was 0.27f ~220 BPM)
+```
+
+**AudioFluxBeatDetector.h** (Spectral flux mode):
+```cpp
+int hopLength = 256;           // ~12ms precision (was 512)
+float onsetThreshold = 0.2f;   // Lower for prominent EDM kicks (was 0.3f)
+float minBeatInterval = 0.2f;  // 300 BPM max (was 0.25f)
+bool lowFreqFocus = true;      // NEW - only analyze kick frequencies
+float lowFreqMin = 30.0f;      // Sub-bass lower bound
+float lowFreqMax = 200.0f;     // Kick fundamental + harmonics upper bound
+```
+
+**SpectralFlux.h** (Basic fallback):
+```cpp
+int hopSize = 256;             // Was 512
+float smoothSigma = 1.0f;      // Less smoothing (was 2.0f)
+float thresholdFactor = 1.2f;  // Lower threshold (was 1.5f)
+```
+
+**BeatsyncProcessingTask.cpp** (UI → Backend):
+```cpp
+AIConfig.BeatThreshold = 0.5f;     // Was hardcoded 0.66f
+AIConfig.DownbeatThreshold = 0.5f; // Was hardcoded 0.66f
+```
+
+### Low-Frequency Focus (Kick Isolation)
+
+The AudioFlux detector now filters STFT bins to only analyze kick drum frequencies (30-200Hz):
+
+```cpp
+// AudioFluxBeatDetector.cpp - computeOnsetEnvelope()
+if (m_config.lowFreqFocus) {
+    float binWidth = static_cast<float>(m_config.sampleRate) / m_config.fftSize;
+    minBin = static_cast<int>(m_config.lowFreqMin / binWidth);
+    maxBin = static_cast<int>(m_config.lowFreqMax / binWidth) + 1;
+}
+// Only sum spectral flux in kick drum frequency range
+for (int b = minBin; b < maxBin; ++b) { ... }
+```
+
+This dramatically improves beat detection for EDM where kicks are the primary rhythmic element.
+
+### Troubleshooting Beat Detection
+
+**Symptom**: Correct BPM but beats clustered/misaligned
+- **Root cause**: Thresholds too conservative, analyzing full spectrum instead of kicks
+- **Solution**: Lower thresholds (0.5 vs 0.66), enable lowFreqFocus
+
+**Symptom**: Too many beats detected (double/triple actual)
+- **Root cause**: Threshold too low, minBeatInterval too short
+- **Solution**: Raise beatThreshold, increase minBeatInterval
+
+**Symptom**: Beats missing (only every 2nd/4th beat detected)
+- **Root cause**: Threshold too high for quieter kicks
+- **Solution**: Lower beatThreshold, ensure lowFreqFocus is enabled
+
+## Custom Demucs Training for Kick Separation
+
+For best results with psytrance, a custom Demucs model trained specifically for kick drum isolation is planned.
+
+### Training Setup Location
+
+```
+training/demucs_kick/
+├── README.md           # Dataset structure and training instructions
+├── kick_config.yaml    # Demucs config for 2-source (kick/other) separation
+└── prepare_dataset.py  # Helper script to validate and prepare dataset
+```
+
+### Dataset Structure Required
+
+```
+dataset/
+├── train/
+│   ├── track001/
+│   │   ├── kick.wav      # Isolated kick drum
+│   │   ├── other.wav     # Everything except kick
+│   │   └── mixture.wav   # Full mix (kick + other)
+│   └── ...
+└── valid/
+    └── ...
+```
+
+### Training Command (Once Dataset Ready)
+
+```bash
+# Install demucs
+pip install demucs
+
+# Train with custom config
+python -m demucs.train \
+    --config training/demucs_kick/kick_config.yaml \
+    --dset.path /path/to/dataset \
+    --name kick_separation_v1
+```
+
+### Export to ONNX
+
+After training, the PyTorch model needs conversion to ONNX for the C++ backend:
+
+```bash
+python scripts/convert_demucs_to_onnx.py \
+    --checkpoint outputs/kick_separation_v1/best.pth \
+    --output models/demucs_kick.onnx
+```
+
+### Key Differences from Stock Demucs
+
+| Aspect | Stock Demucs | Kick-Only Model |
+|--------|--------------|-----------------|
+| Sources | 4 (drums, bass, other, vocals) | 2 (kick, other) |
+| Training data | Mixed music | EDM/psytrance multitracks |
+| Focus | General separation | Kick drum precision |
+| Use case | Music production | Beat-sync video editing |
 
 ## Required DLLs for TripSitter.exe
 
@@ -296,6 +470,21 @@ Either DLL failed to load (check above) or FFmpeg DLLs are wrong version. The `a
 
 ### App crashes immediately on startup
 **Most likely cause**: Wrong FFmpeg DLLs. The `build/Release/` folder contains vcpkg FFmpeg DLLs (~13MB avcodec) which are incompatible. The ThirdParty FFmpeg DLLs (~106MB avcodec) must be used. This happens when `Copy-Item 'build\Release\*.dll'` overwrites the correct FFmpeg DLLs. **Solution**: Always copy ThirdParty FFmpeg DLLs LAST, or use `scripts/deploy_tripsitter.ps1`.
+
+### App crashes when loading audio file - TArray self-reference assertion
+**Symptom**: Crash with `Attempting to use a container element which already comes from the container being modified` at SWaveformViewer.cpp.
+
+**Root cause**: Code like `TriTop.Add(TriTop[0])` is undefined behavior. When `Add()` reallocates the array, the reference `TriTop[0]` becomes dangling.
+
+**Solution**: Save the element to a local variable first:
+```cpp
+// WRONG - crashes!
+TriTop.Add(TriTop[0]);
+
+// CORRECT
+FVector2D FirstPoint = TriTop[0];  // Or save before any Add() calls
+TriTop.Add(FirstPoint);
+```
 
 ### Backend DLL won't compile - bs_ai_result_t redefinition
 The `bs_beatgrid_t` typedef was incorrectly using `struct bs_ai_result_t` as its tag name. Fixed by using `struct bs_beatgrid_t` instead.
@@ -471,6 +660,47 @@ install(FILES ... DESTINATION Engine/Binaries/Win64/Resources)
 
 **Important**: After changing CMakeLists.txt install destinations, you MUST run `cmake -S . -B build ...` to reconfigure before running `cpack`. Otherwise the old cached install rules will be used.
 
+### AI beat detection not working in packaged version - models at wrong path
+**Symptom**: AI beat detection (BeatNet, AI+Stems modes) silently falls back to spectral flux analysis in the installed/packaged version. The log shows "Beat model not found" warnings.
+
+**Root cause**: The CMakeLists.txt was installing the `models/` directory to the package root, but the code looks for models relative to the executable at `Engine/Binaries/Win64/models/`.
+
+**Wrong install structure** (before fix):
+
+```
+MTV TripSitter/
+├── models/                          <- Models installed here (package root)
+│   ├── beatnet.onnx
+│   └── demucs.onnx
+└── Engine/Binaries/Win64/
+    └── TripSitter.exe               <- Executable looks for models/beatnet.onnx HERE
+```
+
+**Correct install structure** (after fix):
+
+```
+MTV TripSitter/
+└── Engine/Binaries/Win64/
+    ├── TripSitter.exe
+    └── models/                      <- Models must be here
+        ├── beatnet.onnx
+        └── demucs.onnx
+```
+
+**Solution**: The CMakeLists.txt must install models to `${UE_BIN_DIR}` (which is `Engine/Binaries/Win64`):
+
+```cmake
+# WRONG - installs to package root
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/models" DESTINATION .)
+
+# CORRECT - installs next to executable
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/models" DESTINATION "${UE_BIN_DIR}")
+```
+
+**Files affected**: `CMakeLists.txt` (line 598).
+
+**Verification**: After installing, check that `C:\Program Files\MTV TripSitter\Engine\Binaries\Win64\models\beatnet.onnx` exists.
+
 ### TripSitter is a PROGRAM TARGET, not a Game
 
 **CRITICAL**: TripSitter is a standalone Slate Program target built via `Build.bat`, NOT a Game packaged via the Editor.
@@ -495,9 +725,9 @@ MTV TripSitter/
 │   │   ├── av*.dll, sw*.dll        <- FFmpeg
 │   │   ├── audioflux.dll           <- AudioFlux (optional)
 │   │   ├── Resources/              <- UI assets
+│   │   ├── models/                 <- ONNX models (beatnet.onnx, demucs.onnx)
 │   │   └── *.dll                   <- UE runtime DLLs
 │   └── Content/Slate/              <- Slate UI textures
-├── models/                         <- ONNX models
 └── licenses/
 ```
 

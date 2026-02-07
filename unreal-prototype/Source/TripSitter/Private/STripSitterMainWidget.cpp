@@ -870,8 +870,8 @@ void STripSitterMainWidget::LoadWaveformFromAudio(const FString& FilePath)
 		return;
 	}
 
-	FAnalyzerHandle Analyzer = FBeatsyncLoader::CreateAnalyzer();
-	if (!Analyzer.IsValid())
+	void* Analyzer = FBeatsyncLoader::CreateAnalyzer();
+	if (!Analyzer)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("TripSitter: Failed to create analyzer for waveform"));
 		return;
@@ -2044,8 +2044,8 @@ void STripSitterMainWidget::AnalyzeStemFile(int32 StemIndex)
 		return;
 	}
 
-	FAnalyzerHandle Analyzer = FBeatsyncLoader::CreateAnalyzer();
-	if (!Analyzer.IsValid())
+	void* Analyzer = FBeatsyncLoader::CreateAnalyzer();
+	if (!Analyzer)
 	{
 		StatusText = TEXT("ERROR: Failed to create analyzer");
 		if (StatusTextBlock.IsValid()) StatusTextBlock->SetText(FText::FromString(StatusText));
@@ -2323,8 +2323,8 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 		}
 
 		// Create AI analyzer
-		FAIAnalyzerHandle AIAnalyzer = FBeatsyncLoader::CreateAIAnalyzer(AIConfig);
-		if (!AIAnalyzer.IsValid())
+		void* AIAnalyzer = FBeatsyncLoader::CreateAIAnalyzer(AIConfig);
+		if (!AIAnalyzer)
 		{
 			FString Error = FBeatsyncLoader::GetAILastError(AIAnalyzer);
 			StatusText = FString::Printf(TEXT("ERROR: Failed to create AI analyzer - %s"), *Error);
@@ -2371,8 +2371,8 @@ FReply STripSitterMainWidget::OnAnalyzeAudioClicked()
 	else
 	{
 		// Energy-based analysis
-		FAnalyzerHandle Analyzer = FBeatsyncLoader::CreateAnalyzer();
-		if (!Analyzer.IsValid())
+		void* Analyzer = FBeatsyncLoader::CreateAnalyzer();
+		if (!Analyzer)
 		{
 			StatusText = TEXT("ERROR: Failed to create analyzer");
 			if (StatusTextBlock.IsValid())
