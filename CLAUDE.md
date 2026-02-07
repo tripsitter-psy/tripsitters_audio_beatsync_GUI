@@ -106,6 +106,8 @@ BeatSyncEditor/
 - `const char* bs_video_get_last_error(void* writer)` - Get last error message
 - `const char* bs_resolve_ffmpeg_path()` - Get resolved FFmpeg path
 - `void bs_video_set_progress_callback(void* writer, bs_progress_cb cb, void* user_data)` - Set progress callback
+- `void bs_video_set_cancel_flag(void* writer, const int* cancel_flag)` - Set atomic cancel flag pointer for async cancellation
+- `int bs_video_is_cancelled(void* writer)` - Check if cancellation was requested
 - `int bs_video_cut_at_beats(void* writer, const char* inputVideo, const double* beatTimes, size_t count, const char* outputVideo, double clipDuration)` - Cut single video at beat times
 - `int bs_video_cut_at_beats_multi(void* writer, const char** inputVideos, size_t videoCount, const double* beatTimes, size_t beatCount, const char* outputVideo, double clipDuration)` - Cut multiple videos, cycling through
 - `int bs_video_concatenate(const char** inputs, size_t count, const char* outputVideo)` - Join video files
@@ -137,13 +139,14 @@ Defined in `vcpkg.json`:
 
 **GPU Execution Provider Fallback Chain**:
 
-The `OnnxBeatDetector` automatically selects the best available execution provider:
+Both `OnnxBeatDetector` and `OnnxStemSeparator` automatically select the best available execution provider:
 
-1. **TensorRT** (RTX GPUs) - Best performance on RTX cards with Tensor Cores, FP16 enabled
+1. **TensorRT** (RTX GPUs) - Best performance on RTX cards with Tensor Cores, FP16 enabled, 8GB workspace
 2. **CUDA** (GTX/RTX GPUs) - Falls back if TensorRT unavailable or fails
-3. **CPU** - Final fallback if no GPU acceleration available
+3. **DirectML** (AMD/Intel GPUs) - Falls back if CUDA unavailable (Windows only)
+4. **CPU** - Final fallback if no GPU acceleration available
 
-This ensures the app works on any system while maximizing performance on NVIDIA GPUs.
+This ensures the app works on any system while maximizing performance on NVIDIA GPUs. The stem separation model (Demucs) particularly benefits from GPU acceleration due to its computational intensity.
 
 Note: `avutil` is included in FFmpeg core and is not a selectable vcpkg feature.
 
@@ -225,14 +228,14 @@ The app's primary use case is psytrance/EDM music where beat detection must focu
 | Mode | Algorithm | Kick-Only? | Notes |
 |------|-----------|------------|-------|
 | Energy (Fast) | Basic spectral flux | No | Fast but detects all transients |
-| AI Beat Detection | BeatNet on full mix | No | Detects all rhythmic elements |
-| AI + Stem Separation | Demucs → BeatNet on drums | **No** | Detects ALL drum hits (kicks, snares, hi-hats) |
+| AI Beat Detection | BeatNet on full mix | Configurable | Set `kickOnlyMode=true` for 200Hz low-pass filter |
+| AI + Stem Separation | Demucs → BeatNet on drums | **Configurable** | Set `kickOnlyMode=true` to filter drums stem before BeatNet |
 | AudioFlux | Spectral flux (30-200Hz) | **YES** | Uses low-freq focus for kicks only |
 | Stems + Flux (Best) | Demucs → AudioFlux on bass | **YES** | Best: isolates bass then filters for kicks |
 
 **For psytrance/EDM, use "AudioFlux" or "Stems + Flux (Best)"** - these use the low-frequency focus (30-200Hz) which filters out snares and hi-hats, detecting only kick drum transients.
 
-**Do NOT use "AI + Stem Separation" for kick-only detection** - BeatNet is trained to detect ALL beats including snares and hi-hats on the drums stem.
+**AI Kick-Only Mode**: The "AI Beat Detection" and "AI + Stem Separation" modes now support a `kickOnlyMode` flag that applies a 200Hz 2nd-order Butterworth low-pass filter before BeatNet inference. This isolates kick drum frequencies (30-200Hz) and improves accuracy for psytrance/EDM.
 
 ### Current Parameter Values (Tuned for Psytrance)
 
@@ -267,6 +270,24 @@ float thresholdFactor = 1.2f;  // Lower threshold (was 1.5f)
 ```cpp
 AIConfig.BeatThreshold = 0.5f;     // Was hardcoded 0.66f
 AIConfig.DownbeatThreshold = 0.5f; // Was hardcoded 0.66f
+```
+
+**OnnxMusicAnalyzer.h** (AI kick-only mode):
+```cpp
+struct MusicAnalyzerConfig {
+    // ... existing fields ...
+    bool kickOnlyMode = false;       // Apply low-pass filter before beat detection
+    float kickFreqCutoff = 200.0f;   // Butterworth cutoff frequency (Hz)
+};
+```
+
+**bs_ai_config_t** (C API):
+```cpp
+typedef struct {
+    // ... existing fields ...
+    int kick_only_mode;              // 1 = enable 200Hz low-pass filter
+    float kick_freq_cutoff;          // Cutoff frequency (default 200.0)
+} bs_ai_config_t;
 ```
 
 ### Low-Frequency Focus (Kick Isolation)
