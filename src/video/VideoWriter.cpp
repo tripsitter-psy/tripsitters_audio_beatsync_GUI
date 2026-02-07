@@ -32,7 +32,8 @@ extern "C" {
 
 // Run a command hidden (no console window) and capture output.
 // Returns exit code; output is appended to 'output'.
-static int runHiddenCommand(const std::string& cmdLine, std::string& output) {
+// If cancelFlag is provided and becomes non-zero, the process is terminated.
+static int runHiddenCommand(const std::string& cmdLine, std::string& output, const int* cancelFlag = nullptr) {
     if (cmdLine.empty()) {
         output = "Error: empty command line";
         return -1;
@@ -95,25 +96,62 @@ static int runHiddenCommand(const std::string& cmdLine, std::string& output) {
         return -1;
     }
 
-    // Read output in chunks
+    // Read output in chunks with non-blocking check for cancellation
     char buf[4096];
     DWORD bytesRead;
     while (ReadFile(hReadPipe, buf, sizeof(buf) - 1, &bytesRead, NULL) && bytesRead > 0) {
         buf[bytesRead] = '\0';
         output += buf;
+
+        // Check for cancellation during output reading
+        if (cancelFlag && *cancelFlag != 0) {
+            TerminateProcess(pi.hProcess, 2);
+            CloseHandle(hReadPipe);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            output += "\nCancelled by user";
+            return -2;  // Special code for cancellation
+        }
     }
     CloseHandle(hReadPipe);
 
-    // Wait for process to complete (with timeout to prevent hangs)
-    DWORD waitResult = WaitForSingleObject(pi.hProcess, 300000);  // 5 minute timeout
-
+    // Wait for process to complete with periodic cancellation checks
+    // Instead of a single 5-minute wait, poll every 100ms
     DWORD exitCode = 0;
-    if (waitResult == WAIT_TIMEOUT) {
+    constexpr DWORD pollIntervalMs = 100;
+    constexpr DWORD maxWaitMs = 300000;  // 5 minutes
+    DWORD totalWaitMs = 0;
+
+    while (totalWaitMs < maxWaitMs) {
+        // Check for cancellation
+        if (cancelFlag && *cancelFlag != 0) {
+            TerminateProcess(pi.hProcess, 2);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            output += "\nCancelled by user";
+            return -2;
+        }
+
+        DWORD waitResult = WaitForSingleObject(pi.hProcess, pollIntervalMs);
+        if (waitResult == WAIT_OBJECT_0) {
+            // Process finished
+            GetExitCodeProcess(pi.hProcess, &exitCode);
+            break;
+        } else if (waitResult == WAIT_TIMEOUT) {
+            totalWaitMs += pollIntervalMs;
+            continue;
+        } else {
+            // Unexpected error
+            exitCode = 1;
+            output += "\nError: WaitForSingleObject failed";
+            break;
+        }
+    }
+
+    if (totalWaitMs >= maxWaitMs) {
         TerminateProcess(pi.hProcess, 1);
         exitCode = 1;
         output += "\nError: Process timed out after 5 minutes";
-    } else {
-        GetExitCodeProcess(pi.hProcess, &exitCode);
     }
 
     CloseHandle(pi.hProcess);
@@ -389,42 +427,106 @@ bool VideoWriter::extractSegments(const std::string& inputVideo,
         return false;
     }
 
-    // Create temporary files for each segment
-    std::vector<std::string> tempFiles;
-    char tempPattern[] = "beatsync_temp_XXXXXX.mp4";
+    // Pre-allocate temp file names (must be in order for concatenation)
+    std::vector<std::string> tempFiles(segments.size());
+    for (size_t i = 0; i < segments.size(); ++i) {
+        std::ostringstream tempFile;
+        tempFile << "beatsync_segment_" << std::setw(5) << std::setfill('0') << i << ".mp4";
+        tempFiles[i] = tempFile.str();
+    }
 
     std::cout << "Extracting " << segments.size() << " segments...\n";
 
-    for (size_t i = 0; i < segments.size(); ++i) {
-        const auto& seg = segments[i];
-        double duration = seg.endTime - seg.startTime;
+    // Parallel segment extraction with thread pool
+    // Use up to 4 concurrent FFmpeg processes (balances I/O and GPU encoder utilization)
+    const size_t maxConcurrent = std::min(static_cast<size_t>(4),
+                                          static_cast<size_t>(std::thread::hardware_concurrency()));
 
-        // Create temp filename
-        std::ostringstream tempFile;
-        tempFile << "beatsync_segment_" << std::setw(5) << std::setfill('0') << i << ".mp4";
+    std::atomic<size_t> nextSegment{0};
+    std::atomic<size_t> completedSegments{0};
+    std::atomic<bool> hasError{false};
+    std::mutex errorMutex;
+    std::string firstError;
 
-        std::cout << "  Segment " << (i + 1) << "/" << segments.size()
-                  << ": " << seg.startTime << "s - " << seg.endTime << "s\n";
+    std::atomic<bool> cancelled{false};
 
-        if (!copySegmentFast(inputVideo, seg.startTime, duration, tempFile.str())) {
-            // Fallback to precise method if fast fails
-            if (!copySegmentPrecise(inputVideo, seg.startTime, duration, tempFile.str())) {
-                // Cleanup temp files
-                for (const auto& f : tempFiles) {
-                    std::remove(f.c_str());
+    // Worker function - each thread processes segments until done
+    auto processSegments = [&]() {
+        while (!hasError && !cancelled) {
+            // Check for cancellation
+            if (isCancelled()) {
+                cancelled = true;
+                break;
+            }
+
+            // Atomically claim the next segment
+            size_t i = nextSegment.fetch_add(1);
+            if (i >= segments.size()) break;
+
+            const auto& seg = segments[i];
+            double duration = seg.endTime - seg.startTime;
+            const std::string& outFile = tempFiles[i];
+
+            // Try fast copy, then precise copy as fallback
+            bool success = copySegmentFast(inputVideo, seg.startTime, duration, outFile);
+            if (!success) {
+                success = copySegmentPrecise(inputVideo, seg.startTime, duration, outFile);
+            }
+
+            if (!success) {
+                std::lock_guard<std::mutex> lock(errorMutex);
+                if (!hasError) {
+                    hasError = true;
+                    firstError = "Failed to extract segment " + std::to_string(i) +
+                                 " (" + std::to_string(seg.startTime) + "s - " +
+                                 std::to_string(seg.endTime) + "s)";
                 }
-                return false;
+                break;
+            }
+
+            // Update progress
+            size_t completed = completedSegments.fetch_add(1) + 1;
+            std::cout << "  Segment " << completed << "/" << segments.size()
+                      << ": " << seg.startTime << "s - " << seg.endTime << "s [done]\n";
+
+            if (m_progressCallback) {
+                reportProgress(completed / (double)segments.size() * 0.9);
             }
         }
+    };
 
-        tempFiles.push_back(tempFile.str());
-
-        if (m_progressCallback) {
-            reportProgress((i + 1) / (double)segments.size() * 0.9);
-        }
+    // Launch worker threads
+    std::vector<std::thread> workers;
+    workers.reserve(maxConcurrent);
+    for (size_t t = 0; t < maxConcurrent; ++t) {
+        workers.emplace_back(processSegments);
     }
 
-    // Concatenate all segments
+    // Wait for all workers to complete
+    for (auto& worker : workers) {
+        worker.join();
+    }
+
+    // Check for cancellation or errors
+    if (cancelled) {
+        // Cleanup any temp files that were created
+        for (const auto& f : tempFiles) {
+            std::remove(f.c_str());
+        }
+        m_lastError = "Operation cancelled by user";
+        return false;
+    }
+
+    if (hasError) {
+        // Cleanup any temp files that were created
+        for (const auto& f : tempFiles) {
+            std::remove(f.c_str());
+        }
+        m_lastError = firstError;
+        return false;
+    }
+
+    // Concatenate all segments (must be sequential - order matters)
     std::cout << "Concatenating segments...\n";
     bool result = concatenateVideos(tempFiles, outputVideo);
 
@@ -497,6 +599,14 @@ std::string VideoWriter::getLastError() const {
 
 void VideoWriter::setProgressCallback(std::function<void(double)> callback) {
     m_progressCallback = callback;
+}
+
+void VideoWriter::setCancelFlag(const int* flag) {
+    m_cancelFlag = flag;
+}
+
+bool VideoWriter::isCancelled() const {
+    return m_cancelFlag != nullptr && *m_cancelFlag != 0;
 }
 
 void VideoWriter::setOutputSettings(int width, int height, int fps) {
@@ -599,7 +709,11 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
     std::string ffmpegOutput;
     int exitCode;
 #ifdef _WIN32
-    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
+    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput, m_cancelFlag);
+    if (exitCode == -2) {
+        m_lastError = "Cancelled by user";
+        return false;  // Cancelled
+    }
 #else
     std::string fullCmd = cmd.str() + " 2>&1";
     FILE* pipe = popen_compat(fullCmd.c_str(), "r");
@@ -734,7 +848,11 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
     std::string ffmpegOutput;
     int exitCode;
 #ifdef _WIN32
-    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
+    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput, m_cancelFlag);
+    if (exitCode == -2) {
+        m_lastError = "Cancelled by user";
+        return false;  // Cancelled
+    }
     if (exitCode == -1) {
         m_lastError = "Failed to execute FFmpeg for precise copy";
         appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentPrecise::runHiddenCommand_failed", cmd.str(), -1, "", "start=" + std::to_string(startTime) + ", dur=" + std::to_string(duration));
@@ -868,7 +986,12 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
     }
 
 #ifdef _WIN32
-    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
+    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput, m_cancelFlag);
+    if (exitCode == -2) {
+        m_lastError = "Cancelled by user";
+        if (diagLog) { fprintf(diagLog, "  CANCELLED by user\n"); fclose(diagLog); }
+        return false;
+    }
 #else
     std::string fullCmd = cmd.str() + " 2>&1";
 
@@ -1267,7 +1390,12 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
     std::string ffmpegOutput;
     int exitCode;
 #ifdef _WIN32
-    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
+    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput, m_cancelFlag);
+    if (exitCode == -2) {
+        m_lastError = "Cancelled by user";
+        std::remove(listFile.c_str());
+        return false;
+    }
     if (exitCode == -1) {
         m_lastError = "Failed to execute FFmpeg";
         std::remove(listFile.c_str());
@@ -2201,7 +2329,11 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
     std::string ffmpegOutput;
     int exitCode;
 #ifdef _WIN32
-    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
+    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput, m_cancelFlag);
+    if (exitCode == -2) {
+        m_lastError = "Cancelled by user";
+        return false;
+    }
 #else
     std::string fullCmd = cmd.str() + " 2>&1";
     FILE* pipe = popen_compat(fullCmd.c_str(), "r");
