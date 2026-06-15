@@ -353,24 +353,55 @@ void FBeatsyncProcessingTask::DoWork()
     }
     else
     {
-        // Standard analysis - apply range filtering
+        // Standard analysis - apply range filtering + new Respect Breaks logic
         int32 BeatIndex = 0;
+        TArray<float> BassPeaks;
+        double WaveformDuration = 0.0;
+        bool bHasWaveform = false;
+
+        if (Params.bRespectBreaks)
+        {
+            // Get bass energy profile to detect breaks (low bass = likely atmospheric/break section)
+            void* Analyzer = FBeatsyncLoader::CreateAnalyzer();
+            if (Analyzer)
+            {
+                TArray<float> MidPeaks, HighPeaks; // dummy
+                bHasWaveform = FBeatsyncLoader::GetWaveformBands(Analyzer, Params.AudioPath, BassPeaks, MidPeaks, HighPeaks, WaveformDuration);
+                FBeatsyncLoader::DestroyAnalyzer(Analyzer);
+                UE_LOG(LogTemp, Log, TEXT("TripSitter: Loaded bass waveform for break detection (%d peaks)"), BassPeaks.Num());
+            }
+        }
+
         for (int32 i = 0; i < BeatGrid.Beats.Num(); ++i)
         {
             double BeatTime = BeatGrid.Beats[i];
 
             // Skip beats outside selection range
-            if (BeatTime < SelectionStart)
+            if (BeatTime < SelectionStart) continue;
+            if (BeatTime > SelectionEnd) break;
+
+            bool bKeepBeat = true;
+
+            // New Psy-aware break filtering
+            if (Params.bRespectBreaks && bHasWaveform && BassPeaks.Num() > 0 && WaveformDuration > 0.0)
             {
-                continue;
-            }
-            if (BeatTime > SelectionEnd)
-            {
-                break; // All remaining beats are past the selection
+                // Map beat time to waveform index (bass peaks are downsampled)
+                int32 PeakIndex = FMath::Clamp(static_cast<int32>((BeatTime / WaveformDuration) * BassPeaks.Num()), 0, BassPeaks.Num() - 1);
+                float LocalBassEnergy = BassPeaks[PeakIndex];
+
+                if (LocalBassEnergy < Params.BreakEnergyThreshold)
+                {
+                    // Low bass energy = likely a break or filtered section. Thin the beats (keep every 4th in breaks)
+                    if ((BeatIndex % 4) != 0)
+                    {
+                        bKeepBeat = false;
+                        UE_LOG(LogTemp, Verbose, TEXT("TripSitter: Removed beat at %.2fs (bass energy %.3f < threshold %.3f)"), BeatTime, LocalBassEnergy, Params.BreakEnergyThreshold);
+                    }
+                }
             }
 
             // Apply beat divisor (every beat, every 2nd, etc.)
-            if ((BeatIndex % BeatDivisor) == 0)
+            if (bKeepBeat && (BeatIndex % BeatDivisor) == 0)
             {
                 // Offset beat time relative to selection start for the output video
                 FilteredBeats.Add(BeatTime - SelectionStart);
@@ -467,11 +498,24 @@ void FBeatsyncProcessingTask::DoWork()
         if (FBeatsyncLoader::NormalizeVideos(Writer, Params.VideoPaths, NormalizedVideos))
         {
             UE_LOG(LogTemp, Warning, TEXT("TripSitter: DIAG - NormalizeVideos returned TRUE, NormalizedVideos.Num()=%d"), NormalizedVideos.Num());
-            if (NormalizedVideos.Num() == Params.VideoPaths.Num())
+            if (NormalizedVideos.Num() > 0)
             {
+                // The backend skips any unreadable/corrupt sources, so the
+                // normalized count may be smaller than the input count. That is
+                // fine - use whatever normalized OK. Falling back to the original
+                // (un-normalized) list here would re-introduce the bad files and
+                // break the whole export, so only do that if NOTHING normalized.
                 VideosToProcess = NormalizedVideos;
                 bUsingNormalized = true;
-                UE_LOG(LogTemp, Warning, TEXT("TripSitter: Using %d normalized videos"), NormalizedVideos.Num());
+                if (NormalizedVideos.Num() < Params.VideoPaths.Num())
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("TripSitter: Normalization skipped %d unreadable source(s); proceeding with %d normalized videos"),
+                        Params.VideoPaths.Num() - NormalizedVideos.Num(), NormalizedVideos.Num());
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("TripSitter: Using %d normalized videos"), NormalizedVideos.Num());
+                }
                 // Log first few paths for debugging
                 for (int32 i = 0; i < FMath::Min(3, NormalizedVideos.Num()); ++i)
                 {
@@ -480,8 +524,7 @@ void FBeatsyncProcessingTask::DoWork()
             }
             else
             {
-                UE_LOG(LogTemp, Warning, TEXT("TripSitter: Normalization returned %d paths but expected %d, using original videos"),
-                    NormalizedVideos.Num(), Params.VideoPaths.Num());
+                UE_LOG(LogTemp, Warning, TEXT("TripSitter: Normalization returned 0 paths, using original videos"));
                 VideosToProcess = Params.VideoPaths;
             }
         }

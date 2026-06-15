@@ -427,20 +427,30 @@ bool VideoWriter::extractSegments(const std::string& inputVideo,
         return false;
     }
 
+    // Use OS temp directory for intermediate segment files to avoid write-permission
+    // issues when the executable runs from a protected folder or read-only install.
+    std::string tempDir = getTempDir();
+    if (tempDir.empty()) {
+        m_lastError = "Could not resolve temporary directory";
+        return false;
+    }
+    std::filesystem::create_directories(tempDir);
+
     // Pre-allocate temp file names (must be in order for concatenation)
     std::vector<std::string> tempFiles(segments.size());
     for (size_t i = 0; i < segments.size(); ++i) {
         std::ostringstream tempFile;
-        tempFile << "beatsync_segment_" << std::setw(5) << std::setfill('0') << i << ".mp4";
+        tempFile << tempDir << "beatsync_segment_" << std::setw(5) << std::setfill('0') << i << ".mp4";
         tempFiles[i] = tempFile.str();
     }
 
-    std::cout << "Extracting " << segments.size() << " segments...\n";
+    std::cout << "Extracting " << segments.size() << " segments to " << tempDir << "...\n";
 
     // Parallel segment extraction with thread pool
     // Use up to 4 concurrent FFmpeg processes (balances I/O and GPU encoder utilization)
     const size_t maxConcurrent = std::min(static_cast<size_t>(4),
                                           static_cast<size_t>(std::thread::hardware_concurrency()));
+    const size_t workerCount = maxConcurrent == 0 ? 1 : maxConcurrent;
 
     std::atomic<size_t> nextSegment{0};
     std::atomic<size_t> completedSegments{0};
@@ -466,6 +476,10 @@ bool VideoWriter::extractSegments(const std::string& inputVideo,
             const auto& seg = segments[i];
             double duration = seg.endTime - seg.startTime;
             const std::string& outFile = tempFiles[i];
+
+            if (m_progressCallback) {
+                reportProgress(i / (double)segments.size() * 0.9);
+            }
 
             // Try fast copy, then precise copy as fallback
             bool success = copySegmentFast(inputVideo, seg.startTime, duration, outFile);
@@ -497,8 +511,8 @@ bool VideoWriter::extractSegments(const std::string& inputVideo,
 
     // Launch worker threads
     std::vector<std::thread> workers;
-    workers.reserve(maxConcurrent);
-    for (size_t t = 0; t < maxConcurrent; ++t) {
+    workers.reserve(workerCount);
+    for (size_t t = 0; t < workerCount; ++t) {
         workers.emplace_back(processSegments);
     }
 
@@ -642,7 +656,7 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
     // and pixel format to prevent freezing from mixed source formats
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\"";
+    cmd << "\"" << ffmpegPath << "\" -nostdin";
 
     // GPU acceleration: Use CUDA hardware decoding if available
     // IMPORTANT: Periodically force CPU mode to release GPU memory and prevent CUDA crashes
@@ -797,7 +811,7 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
     // FIX: Normalize ALL clips to same resolution, frame rate, and pixel format
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\"";
+    cmd << "\"" << ffmpegPath << "\" -nostdin";
 
     // GPU acceleration: Use CUDA hardware decoding if available
     // IMPORTANT: Periodically force CPU mode to release GPU memory and prevent CUDA crashes
@@ -928,9 +942,7 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
     }
 
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\"";
-
-    // Check GPU availability for hardware-accelerated normalization
+    cmd << "\"" << ffmpegPath << "\" -nostdin";
     bool cudaAvail = hasCudaHwaccel();
     bool scaleCudaAvail = hasScaleCudaFilter();
     bool nvencAvail = probeEncoder("h264_nvenc");
@@ -1071,6 +1083,7 @@ bool VideoWriter::normalizeVideos(const std::vector<std::string>& inputVideos,
     }
 
     int index = 0;
+    int skippedCount = 0;
 
     for (const auto& video : inputVideos) {
         std::cout << "[BeatSync] Processing video " << index << ": " << video << "\n";
@@ -1104,12 +1117,20 @@ bool VideoWriter::normalizeVideos(const std::vector<std::string>& inputVideos,
         std::cout << "[BeatSync] Output path: " << normalizedPath << "\n";
 
         if (!normalizeVideo(video, normalizedPath)) {
-            // Clean up any already-created normalized files
-            for (const auto& path : normalizedPaths) {
-                std::remove(path.c_str());
+            // A single unreadable/corrupt source (e.g. truncated MP4 with a
+            // missing moov atom, or a malformed VLC partial recording) must not
+            // abort the entire export. Skip it and keep going with the rest.
+            ++skippedCount;
+            std::cerr << "[BeatSync] WARNING: skipping video that failed to normalize: "
+                      << video << " (" << m_lastError << ")\n";
+            // Best-effort: remove any partial output left behind for this clip.
+            std::remove(normalizedPath.c_str());
+
+            // Report progress for the skipped slot so the bar keeps advancing.
+            if (m_progressCallback) {
+                reportProgress(static_cast<double>(index) / inputVideos.size() * 0.1);
             }
-            normalizedPaths.clear();
-            return false;
+            continue;
         }
 
         normalizedPaths.push_back(normalizedPath);
@@ -1118,6 +1139,18 @@ bool VideoWriter::normalizeVideos(const std::vector<std::string>& inputVideos,
         if (m_progressCallback) {
             reportProgress(static_cast<double>(index) / inputVideos.size() * 0.1);  // 10% for normalization
         }
+    }
+
+    if (skippedCount > 0) {
+        std::cout << "[BeatSync] normalizeVideos skipped " << skippedCount
+                  << " unreadable source(s); " << normalizedPaths.size() << " normalized OK\n";
+    }
+
+    // Only a hard failure if EVERY input was unusable.
+    if (normalizedPaths.empty()) {
+        m_lastError = "All " + std::to_string(inputVideos.size()) +
+                      " source videos failed to normalize (corrupt or unreadable inputs)";
+        return false;
     }
 
     return true;
@@ -1253,7 +1286,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 
                     // Build ffmpeg command with all inputs
                     std::ostringstream cmd;
-                    cmd << "\"" << ffmpegPath << "\"";
+                    cmd << "\"" << ffmpegPath << "\" -nostdin";
                     for (const auto &v : inputVideos) {
                         cmd << " -i \"" << v << "\"";
                     }
@@ -1383,7 +1416,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
     }
 
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\" -fflags +genpts+igndts -f concat -safe 0 -i \"" << listFile
+    cmd << "\"" << ffmpegPath << "\" -nostdin -fflags +genpts+igndts -f concat -safe 0 -i \"" << listFile
         << "\" -c copy -video_track_timescale 90000 -y \"" << outputVideo << "\"";
 
     // Execute FFmpeg hidden (no console flash on Windows)
@@ -1451,7 +1484,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
         // Attempt a safe re-encode fallback (slower but normalizes timestamps)
         // Use GPU acceleration if available for faster re-encoding
         std::ostringstream reencodeCmd;
-        reencodeCmd << "\"" << ffmpegPath << "\"";
+        reencodeCmd << "\"" << ffmpegPath << "\" -nostdin";
 
         // Add CUDA hardware acceleration for decoding if available
         if (hasCudaHwaccel()) {
@@ -1519,6 +1552,7 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
 
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
+    cmd << "\"" << ffmpegPath << "\" -nostdin";
 
     // Combine video from first input with audio from second input
     // -c:v copy = stream copy video (fast, no re-encode)
@@ -1528,7 +1562,7 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
     bool clipAudio = (audioEnd > 0.0 && audioEnd > audioStart + 1e-3);
     double clipDur = clipAudio ? (audioEnd - audioStart) : 0.0;
 
-    cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideo << "\"";
+    cmd << " -i \"" << inputVideo << "\"";
     if (clipAudio) {
         // Use fixed-point notation - FFmpeg doesn't accept scientific notation
         cmd << std::fixed << std::setprecision(6) << " -ss " << clipStart << " -t " << clipDur << std::defaultfloat;
@@ -2058,7 +2092,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         // Simple copy
         std::string ffmpegPath = getFFmpegPath();
         std::ostringstream cmd;
-        cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideo << "\""
+        cmd << "\"" << ffmpegPath << "\" -nostdin -i \"" << inputVideo << "\""
             << " -c copy -y \"" << outputVideo << "\"";
 
         std::string ffmpegOutput;
@@ -2084,9 +2118,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
     // Apply effects with re-encoding
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\"";
-
-    // Check GPU capabilities for optimal pipeline selection
+    cmd << "\"" << ffmpegPath << "\" -nostdin";
     bool cudaAvailable = hasCudaHwaccel();
     bool scaleCudaAvailable = hasScaleCudaFilter();
     bool nvencAvailable = probeEncoder("h264_nvenc");
