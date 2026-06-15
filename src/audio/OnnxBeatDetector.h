@@ -30,7 +30,7 @@ struct OnnxConfig {
     // Audio preprocessing parameters
     int sampleRate = 22050;           ///< Target sample rate for model input
     int nMels = 81;                   ///< Number of mel bands (81 for BeatNet, 128 for AllInOne)
-    int hopLength = 441;              ///< Hop length in samples (~20ms at 22050 Hz)
+    int hopLength = 256;              ///< Hop length in samples (~12ms at 22050 Hz) - tuned for EDM precision
     int windowLength = 2048;          ///< FFT window length
     float fmin = 30.0f;               ///< Minimum frequency for mel filterbank
     float fmax = 11000.0f;            ///< Maximum frequency for mel filterbank
@@ -41,10 +41,10 @@ struct OnnxConfig {
     int gpuDeviceId = 0;              ///< GPU device ID
     int numThreads = 0;               ///< Number of threads (0 = auto)
 
-    // Post-processing parameters
-    float beatThreshold = 0.7f;       ///< Threshold for beat activation (higher = fewer beats detected)
-    float downbeatThreshold = 0.7f;   ///< Threshold for downbeat activation
-    float minBeatInterval = 0.27f;    ///< Minimum time between beats (seconds) - 0.27s = ~220 BPM max
+    // Post-processing parameters - tuned for EDM/psytrance with prominent kicks
+    float beatThreshold = 0.5f;       ///< Threshold for beat activation (lower = more sensitive to kicks)
+    float downbeatThreshold = 0.5f;   ///< Threshold for downbeat activation
+    float minBeatInterval = 0.2f;     ///< Minimum time between beats (seconds) - 0.2s = ~300 BPM max
 
     // For AllInOne model
     bool enableSegments = true;       ///< Enable segment boundary detection

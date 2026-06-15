@@ -162,7 +162,11 @@ std::vector<double> detectBeatsFromWaveform(const std::vector<float>& samples, i
         std::swap(prevMag, mag);
     }
 
-    // Normalize flux
+    // Normalize flux using z-score normalization
+    // Guard against empty flux or division by near-zero stdev
+    if (flux.empty()) {
+        return {};
+    }
     double mean = std::accumulate(flux.begin(), flux.end(), 0.0) / flux.size();
     double sq = 0.0;
     for (double v : flux)
@@ -170,11 +174,17 @@ std::vector<double> detectBeatsFromWaveform(const std::vector<float>& samples, i
     double stdev = 0.0;
     if (flux.size() > 1) {
         stdev = sqrt(sq / (flux.size() - 1)); // sample stdev for small datasets
-    } else {
-        stdev = 0.0;
     }
-    for (double &v : flux)
-        v = (v - mean) / (stdev + 1e-9);
+    // Only normalize if stdev is meaningful (> epsilon)
+    // If stdev is near zero, all values are identical - just center at 0
+    if (stdev > 1e-9) {
+        for (double &v : flux)
+            v = (v - mean) / stdev;
+    } else {
+        // All flux values are (nearly) identical - set to zero
+        for (double &v : flux)
+            v = 0.0;
+    }
 
     // Smooth
     auto smooth = gaussianSmooth(flux, smoothSigma);

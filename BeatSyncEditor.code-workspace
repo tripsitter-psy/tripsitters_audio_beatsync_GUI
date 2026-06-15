@@ -1,0 +1,15 @@
+{
+  "folders": [
+    {
+      "path": "."
+    },
+    {
+      "path": "build"
+    }
+  ],
+  "settings": {
+    "cmake.configureOnOpen": false,
+    "cmake.buildDirectory": "${workspaceFolder:build}",
+    "cmake.sourceDirectory": "${workspaceFolder}"
+  }
+}

@@ -57,6 +57,11 @@ struct FBeatsyncProcessingParams
     TArray<double> PreAnalyzedBeatTimes;
     double PreAnalyzedBPM = 0.0;
 
+    // New Pro feature: Respect arrangement breaks using energy/segment analysis
+    // When true, automatically thins or removes beats in low-energy drops and atmospheric sections
+    bool bRespectBreaks = true;
+    float BreakEnergyThreshold = 0.15f;  // Tune this for psytrance (lower = more aggressive at removing beats in breaks)
+
     // Stem effect configurations (Kick, Snare, Hi-Hat, Synth)
     // Each stem can have its own beat times and mapped effect
     FStemEffectConfig StemConfigs[4];

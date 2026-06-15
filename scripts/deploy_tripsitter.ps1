@@ -5,18 +5,35 @@
 # Run from BeatSyncEditor root directory
 
 param(
-    [string]$UEPath = "C:\UE5_Source\UnrealEngine",
+    [string]$UEPath,
     [switch]$Verify,
     [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
 
+# Use environment variable for UE path with fallback to default
+if (-not $UEPath) {
+    if ($env:UE5_ROOT) {
+        $UEPath = $env:UE5_ROOT
+    } else {
+        $UEPath = "D:\UnrealEngine"
+    }
+}
+
+# Use environment variable for AudioFlux with fallback
+if ($env:AUDIOFLUX_ROOT) {
+    $AudioFluxRoot = $env:AUDIOFLUX_ROOT
+} else {
+    $AudioFluxRoot = "C:\audioFlux"
+}
+
 $UE_BIN = "$UEPath\Engine\Binaries\Win64"
 $BUILD_RELEASE = "build\Release"
 $VCPKG_BIN = "build\vcpkg_installed\x64-windows\bin"
 $THIRDPARTY = "unreal-prototype\ThirdParty\beatsync\lib\x64"
-$AUDIOFLUX = "C:\audioFlux\build\windowBuild\Release"
+$AUDIOFLUX = "$AudioFluxRoot\build\windowBuild\Release"
+$ONNX_GPU_ROOT = "C:\onnxruntime-win-x64-gpu_cuda13-1.25.1\onnxruntime-win-x64-gpu-1.25.1"
 
 # Define expected DLLs with minimum sizes (to catch wrong versions)
 $RequiredDLLs = @{
@@ -24,14 +41,16 @@ $RequiredDLLs = @{
     "beatsync_backend_shared.dll" = @{ Source = $BUILD_RELEASE; MinSize = 300KB }
 
     # From vcpkg bin (ONNX and dependencies - explicit path to avoid build/Release mixing)
-    "onnxruntime.dll"             = @{ Source = $VCPKG_BIN; MinSize = 13MB }
     "abseil_dll.dll"              = @{ Source = $VCPKG_BIN; MinSize = 1MB }
     "libprotobuf.dll"             = @{ Source = $VCPKG_BIN; MinSize = 10MB }
     "libprotobuf-lite.dll"        = @{ Source = $VCPKG_BIN; MinSize = 1MB }
     "re2.dll"                     = @{ Source = $VCPKG_BIN; MinSize = 1MB }
 
-    # From vcpkg bin (GPU providers)
-    "onnxruntime_providers_shared.dll" = @{ Source = $VCPKG_BIN; MinSize = 10KB }
+    # Official ONNX GPU build (preferred - from your downloaded package)
+    "onnxruntime.dll"                    = @{ Source = "$ONNX_GPU_ROOT\lib"; MinSize = 14MB }
+    "onnxruntime_providers_shared.dll"   = @{ Source = "$ONNX_GPU_ROOT\lib"; MinSize = 10KB }
+    "onnxruntime_providers_cuda.dll"     = @{ Source = "$ONNX_GPU_ROOT\lib"; MinSize = 5MB }
+    "onnxruntime_providers_tensorrt.dll" = @{ Source = "$ONNX_GPU_ROOT\lib"; MinSize = 5MB }
 
     # From ThirdParty (FFmpeg - MUST use these, not build/Release versions!)
     "avcodec-62.dll"   = @{ Source = $THIRDPARTY; MinSize = 100MB }
@@ -44,13 +63,15 @@ $RequiredDLLs = @{
 }
 
 # Optional DLLs (app works without these but with reduced functionality)
+$AUDIOFLUX_FFTW = "$AudioFluxRoot\python\audioflux\lib"  # FFTW is in a different subdir
+
 $OptionalDLLs = @{
     # ONNX CUDA (Optional)
     "onnxruntime_providers_cuda.dll"   = @{ Source = $VCPKG_BIN; MinSize = 100MB }
 
     # AudioFlux (for spectral flux beat detection - falls back to energy without these)
     "audioflux.dll"    = @{ Source = $AUDIOFLUX; MinSize = 1MB }
-    "libfftw3f-3.dll"  = @{ Source = $AUDIOFLUX; MinSize = 1MB }
+    "libfftw3f-3.dll"  = @{ Source = $AUDIOFLUX_FFTW; MinSize = 1MB }
 }
 
 function Write-Header($text) {
@@ -181,7 +202,8 @@ foreach ($group in $copyOrder) {
             $actualSizeMB = [math]::Round($actualSize/1MB, 2)
             $minSizeMB = [math]::Round($minSize/1MB, 2)
             if ($isOptional) {
-                Write-Host "  [WARN] $dll - Source file smaller than expected (${actualSizeMB} MB < ${minSizeMB} MB)" -ForegroundColor Yellow
+                Write-Host "  [WARN] $dll - Source file smaller than expected (${actualSizeMB} MB < ${minSizeMB} MB), skipping" -ForegroundColor Yellow
+                continue
             } else {
                  Write-Host "  [ERROR] $dll - Source file smaller than expected (${actualSizeMB} MB < ${minSizeMB} MB). Check if the correct library is installed." -ForegroundColor Red
                  $allOk = $false

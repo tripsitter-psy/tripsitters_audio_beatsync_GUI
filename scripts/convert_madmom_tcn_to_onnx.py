@@ -201,11 +201,15 @@ def inspect_pkl(pkl_path):
                         print(f"      {key}: ndarray shape={value.shape}, dtype={value.dtype}")
                     elif isinstance(value, (list, tuple)) and len(value) > 0:
                         print(f"      {key}: {type(value).__name__} len={len(value)}")
-                        # Inspect first element
-                        if hasattr(value[0], '__dict__'):
-                            for k, v in value[0].__dict__.items():
-                                if isinstance(v, np.ndarray):
-                                    print(f"        [0].{k}: ndarray shape={v.shape}")
+                        # Inspect first element - use try/except for safe dict access
+                        try:
+                            first_dict = getattr(value[0], '__dict__', None)
+                            if first_dict is not None:
+                                for k, v in first_dict.items():
+                                    if isinstance(v, np.ndarray):
+                                        print(f"        [0].{k}: ndarray shape={v.shape}")
+                        except (AttributeError, TypeError):
+                            pass  # Skip if __dict__ access fails
                     elif callable(value):
                         print(f"      {key}: {getattr(value, '__name__', str(value))}")
                     else:
@@ -564,8 +568,9 @@ def main():
                     try:
                         state_dict[f'{name}.weight'] = torch.from_numpy(weight.astype(np.float32))
                         print(f"  Loaded {name}.weight")
-                    except Exception as e:
-                        print(f"  Failed to load {name}.weight: {e}")
+                    except (AttributeError, ValueError, TypeError, RuntimeError) as e:
+                        print(f"[ERROR] Failed to convert weights for '{name}': {e}\n  Weight shape: {getattr(weight, 'shape', None)} Value: {repr(weight)[:200]}")
+                        raise
 
             try:
                 model.load_state_dict(state_dict, strict=False)

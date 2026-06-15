@@ -16,22 +16,22 @@
 // ApplyEffects, SetEffectsConfig, AddAudioTrack, ExtractFrame, StartSpan/EndSpan/SpanSetError/SpanAddEvent, IsInitialized.
 
 // Handle types for type safety
-struct FAnalyzerHandle {
+struct TRIPSITTERUE_API FAnalyzerHandle {
     void* Ptr = nullptr;
     bool IsValid() const { return Ptr != nullptr; }
 };
 
-struct FVideoWriterHandle {
+struct TRIPSITTERUE_API FVideoWriterHandle {
     void* Ptr = nullptr;
     bool IsValid() const { return Ptr != nullptr; }
 };
 
-struct FSpanHandle {
+struct TRIPSITTERUE_API FSpanHandle {
     void* Ptr = nullptr;
     bool IsValid() const { return Ptr != nullptr; }
 };
 
-struct FAIAnalyzerHandle {
+struct TRIPSITTERUE_API FAIAnalyzerHandle {
     void* Ptr = nullptr;
     bool IsValid() const { return Ptr != nullptr; }
 };

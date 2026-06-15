@@ -16,7 +16,7 @@ Copy the `TripSitter` folder from `unreal-prototype/Source/` to your Engine's `S
 
 ```powershell
 # Example PowerShell command
-$UE_ROOT = "C:\UE5_Source\UnrealEngine"
+$UE_ROOT = "D:\UnrealEngine"
 Copy-Item -Path "Source\TripSitter" -Destination "$UE_ROOT\Engine\Source\Programs\" -Recurse -Force
 ```
 

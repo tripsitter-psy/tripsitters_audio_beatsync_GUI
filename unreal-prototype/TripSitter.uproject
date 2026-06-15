@@ -10,7 +10,12 @@
 			"LoadingPhase": "PreDefault"
 		}
 	],
-	"Plugins": [],
+	"Plugins": [
+		{
+			"Name": "TripSitterUE",
+			"Enabled": false
+		}
+	],
 	"TargetPlatforms": [
 		"Win64"
 	]

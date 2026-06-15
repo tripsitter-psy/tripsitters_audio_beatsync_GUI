@@ -13,8 +13,8 @@ A beat-synced video editor with:
 | ---- | ---- |
 | Project Root | Current working directory |
 | Backend DLL | `build\Release\beatsync_backend_shared.dll` |
-| UE Source | `C:\UE5_Source\UnrealEngine` |
-| TripSitter EXE | `C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe` |
+| UE Source | `D:\UnrealEngine` |
+| TripSitter EXE | `D:\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe` |
 | TensorRT | `C:\TensorRT-10.9.0.34` (set via `$env:TENSORRT_HOME`) |
 | AudioFlux | `C:\audioFlux` (set via `-DAUDIOFLUX_ROOT` CMake flag) |
 
@@ -28,8 +28,8 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmak
 cmake --build build --config Release --target beatsync_backend_shared
 
 # TripSitter (UE_SOURCE path from Key Locations table above)
-Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
-& "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'D:\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
+& "D:\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
 
 ## Recent Fixes (January 13, 2026)
@@ -59,7 +59,11 @@ Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\
 
 - Train/integrate ONNX beat detection models
 - End-to-end testing with real media
-- ~~NSIS installer packaging~~ — Template added (`installer/nsis_template.nsi.in`); finalize and test installer generation
+- NSIS installer: finalize and test installer generation (template added: `installer/nsis_template.nsi.in`)
+
+### Completed
+
+- [x] NSIS installer template created (`installer/nsis_template.nsi.in`)
 
 ## vcpkg Configuration
 

@@ -94,7 +94,7 @@ TripSitter is an **Unreal Engine Program** (standalone desktop application). The
 
 ```powershell
 # Set your Unreal Engine path (Windows example)
-$Env:UE_ENGINE_PATH = 'C:\UE5_Source\UnrealEngine'
+$Env:UE_ENGINE_PATH = 'D:\UnrealEngine'
 
 # Copy source to UE engine (Integration)
 Copy-Item -Path 'unreal-prototype\Source\TripSitter' -Destination "$Env:UE_ENGINE_PATH\Engine\Source\Programs\" -Recurse -Force

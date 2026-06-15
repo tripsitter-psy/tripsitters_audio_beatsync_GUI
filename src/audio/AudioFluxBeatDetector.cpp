@@ -3,13 +3,19 @@
 #include <algorithm>
 #include <numeric>
 #include <map>
-#include <iostream>
+#include <sstream>
+#include "../utils/DebugLogger.h"
 
 // AudioFlux C API headers
 extern "C" {
 #include "flux_base.h"
 #include "stft_algorithm.h"
 #include "mir/onset_algorithm.h"
+}
+
+// Debug logging helper - writes to file since Windows GUI apps don't show stderr
+static void debugLog(const std::string& msg) {
+    BeatSync::DebugLogger::getInstance().log(msg);
 }
 
 // Helper: resample audio to target sample rate (band-limited, anti-aliased)
@@ -29,8 +35,23 @@ static std::vector<float> resampleAudio(const std::vector<float>& input, int inp
     SRC_DATA srcData;
     srcData.data_in = input.data();
     srcData.input_frames = static_cast<long>(input.size());
+
+    // Safe ratio calculation with validation
+    if (inputRate == 0) {
+        throw std::runtime_error("resampleAudio: inputRate cannot be zero");
+    }
     double ratio = static_cast<double>(outputRate) / inputRate;
-    size_t outputSize = static_cast<size_t>(input.size() * ratio);
+    if (!std::isfinite(ratio) || ratio <= 0.0) {
+        throw std::runtime_error("resampleAudio: invalid ratio");
+    }
+
+    // Safe output size calculation to prevent overflow
+    double outputSizeD = static_cast<double>(input.size()) * ratio;
+    constexpr size_t maxOutputSize = 500 * 1024 * 1024;  // 500MB limit
+    if (outputSizeD > static_cast<double>(maxOutputSize)) {
+        throw std::runtime_error("resampleAudio: output size would exceed memory limit");
+    }
+    size_t outputSize = static_cast<size_t>(std::ceil(outputSizeD));
     output.resize(outputSize);
     srcData.data_out = output.data();
     srcData.output_frames = static_cast<long>(outputSize);
@@ -42,8 +63,22 @@ static std::vector<float> resampleAudio(const std::vector<float>& input, int inp
     return output;
 #else
     // Fallback resampler with anti-aliasing filter for downsampling
+    // Safe ratio calculation with validation
+    if (inputRate == 0) {
+        throw std::runtime_error("resampleAudio: inputRate cannot be zero");
+    }
     double ratio = static_cast<double>(outputRate) / inputRate;
-    size_t outputSize = static_cast<size_t>(input.size() * ratio);
+    if (!std::isfinite(ratio) || ratio <= 0.0) {
+        throw std::runtime_error("resampleAudio: invalid ratio");
+    }
+
+    // Safe output size calculation to prevent overflow
+    double outputSizeD = static_cast<double>(input.size()) * ratio;
+    constexpr size_t maxOutputSize = 500 * 1024 * 1024;  // 500MB limit
+    if (outputSizeD > static_cast<double>(maxOutputSize)) {
+        throw std::runtime_error("resampleAudio: output size would exceed memory limit");
+    }
+    size_t outputSize = static_cast<size_t>(std::ceil(outputSizeD));
 
     // If we're downsampling, apply a FIR low-pass filter (Blackman-windowed sinc) to prevent aliasing
     if (outputRate < inputRate) {
@@ -158,7 +193,11 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
     result.bpm = 0.0;
     result.confidence = 0.0;
 
-    std::cerr << "[AudioFlux] detect() called with " << samples.size() << " samples at " << sampleRate << " Hz" << std::endl;
+    {
+        std::ostringstream oss;
+        oss << "[AudioFlux] detect() called with " << samples.size() << " samples at " << sampleRate << " Hz";
+        debugLog(oss.str());
+    }
 
     if (samples.empty()) {
         result.error = "Empty audio data";
@@ -171,10 +210,36 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
         return result;
     }
 
-    std::cerr << "[AudioFlux] Resampling from " << sampleRate << " to " << m_config.sampleRate << std::endl;
+    // Check original samples before resampling
+    {
+        float origMin = 1e30f, origMax = -1e30f, origSum = 0.0f;
+        int nonZero = 0;
+        size_t checkCount = std::min(samples.size(), static_cast<size_t>(10000));
+        for (size_t i = 0; i < checkCount; ++i) {
+            float v = samples[i];
+            if (v != 0.0f) nonZero++;
+            origMin = std::min(origMin, v);
+            origMax = std::max(origMax, v);
+            origSum += std::abs(v);
+        }
+        std::ostringstream oss;
+        oss << "[AudioFlux] ORIGINAL audio check (first " << checkCount << " samples): min=" << origMin
+            << " max=" << origMax << " meanAbs=" << (origSum/checkCount) << " nonZero=" << nonZero;
+        debugLog(oss.str());
+    }
+
+    {
+        std::ostringstream oss;
+        oss << "[AudioFlux] Resampling from " << sampleRate << " to " << m_config.sampleRate;
+        debugLog(oss.str());
+    }
     std::vector<float> resampled = resampleAudio(samples, sampleRate, m_config.sampleRate);
     double duration = static_cast<double>(resampled.size()) / m_config.sampleRate;
-    std::cerr << "[AudioFlux] Resampled to " << resampled.size() << " samples, duration=" << duration << "s" << std::endl;
+    {
+        std::ostringstream oss;
+        oss << "[AudioFlux] Resampled to " << resampled.size() << " samples, duration=" << duration << "s";
+        debugLog(oss.str());
+    }
 
     // Compute STFT
     if (progress && !progress(0.1f, "Computing spectrogram...")) {
@@ -195,7 +260,11 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
     // We only use the first half (positive frequencies) for onset detection
     int numBins = fftLength / 2 + 1;
 
-    std::cerr << "[AudioFlux] STFT params: radix2Exp=" << radix2Exp << ", fftLength=" << fftLength << ", numBins=" << numBins << std::endl;
+    {
+        std::ostringstream oss;
+        oss << "[AudioFlux] STFT params: radix2Exp=" << radix2Exp << ", fftLength=" << fftLength << ", numBins=" << numBins;
+        debugLog(oss.str());
+    }
 
     // Create STFT object
     STFTObj stftObj = nullptr;
@@ -203,9 +272,13 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
     int slideLength = m_config.hopLength;
     int isContinue = 0;
 
-    std::cerr << "[AudioFlux] Creating STFT object..." << std::endl;
+    debugLog("[AudioFlux] Creating STFT object...");
     int stftResult = stftObj_new(&stftObj, radix2Exp, &windowType, &slideLength, &isContinue);
-    std::cerr << "[AudioFlux] stftObj_new returned " << stftResult << ", stftObj=" << stftObj << std::endl;
+    {
+        std::ostringstream oss;
+        oss << "[AudioFlux] stftObj_new returned " << stftResult << ", stftObj=" << stftObj;
+        debugLog(oss.str());
+    }
 
     if (stftResult != 0 || !stftObj) {
         result.error = "Failed to create STFT object";
@@ -213,9 +286,13 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
     }
 
     // Calculate number of frames
-    std::cerr << "[AudioFlux] Calculating time length..." << std::endl;
+    debugLog("[AudioFlux] Calculating time length...");
     int numFrames = stftObj_calTimeLength(stftObj, static_cast<int>(resampled.size()));
-    std::cerr << "[AudioFlux] numFrames=" << numFrames << std::endl;
+    {
+        std::ostringstream oss;
+        oss << "[AudioFlux] numFrames=" << numFrames;
+        debugLog(oss.str());
+    }
 
     if (numFrames <= 0) {
         stftObj_free(stftObj);
@@ -226,12 +303,16 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
     // Safety check: limit buffer size to prevent crashes on very long files
     // NOTE: AudioFlux outputs fftLength values per frame, not numBins!
     // For a 6-minute track at 22050Hz with hop=512, we need ~128MB
-    // Allow up to 500MB for tracks up to ~25 minutes
-    const size_t maxBufferSize = 500 * 1024 * 1024; // 500MB max
+    // Allow up to 1GB for tracks up to ~50 minutes
+    const size_t maxBufferSize = 1024 * 1024 * 1024; // 1GB max
     
     // Each of stftReal and stftImag needs numFrames * fftLength floats
     size_t bufferSize = 2 * static_cast<size_t>(numFrames) * static_cast<size_t>(fftLength) * sizeof(float);
-    std::cerr << "[AudioFlux] Buffer size needed: " << bufferSize << " bytes (" << numFrames << " frames x " << fftLength << " bins x 2 buffers)" << std::endl;
+    {
+        std::ostringstream oss;
+        oss << "[AudioFlux] Buffer size needed: " << bufferSize << " bytes (" << numFrames << " frames x " << fftLength << " bins x 2 buffers)";
+        debugLog(oss.str());
+    }
 
     if (bufferSize > maxBufferSize) {
         stftObj_free(stftObj);
@@ -241,7 +322,7 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
 
     // Allocate STFT output buffers
     // CRITICAL: AudioFlux STFT writes fftLength values per frame (full complex FFT output)
-    std::cerr << "[AudioFlux] Allocating STFT buffers..." << std::endl;
+    debugLog("[AudioFlux] Allocating STFT buffers...");
     std::vector<float> stftReal;
     std::vector<float> stftImag;
     try {
@@ -252,14 +333,42 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
         result.error = "Failed to allocate memory for STFT";
         return result;
     }
-    std::cerr << "[AudioFlux] Buffers allocated: " << stftReal.size() << " floats each (for " << numFrames << " frames)" << std::endl;
+    {
+        std::ostringstream oss;
+        oss << "[AudioFlux] Buffers allocated: " << stftReal.size() << " floats each (for " << numFrames << " frames)";
+        debugLog(oss.str());
+    }
 
     // Compute STFT
     // NOTE: AudioFlux stft outputs mRealArr and mImageArr as flat arrays of size numFrames * numBins
     // where each frame has numBins complex values
-    std::cerr << "[AudioFlux] Computing STFT (input size=" << resampled.size() << ")..." << std::endl;
-    std::cerr << "[AudioFlux] Output buffer sizes: real=" << stftReal.size() << ", imag=" << stftImag.size() << std::endl;
-    std::cerr.flush();
+    {
+        std::ostringstream oss;
+        oss << "[AudioFlux] Computing STFT (input size=" << resampled.size() << ")...";
+        debugLog(oss.str());
+    }
+    {
+        std::ostringstream oss;
+        oss << "[AudioFlux] Output buffer sizes: real=" << stftReal.size() << ", imag=" << stftImag.size();
+        debugLog(oss.str());
+    }
+
+    // Check input audio data
+    {
+        float inputMin = 1e30f, inputMax = -1e30f, inputSum = 0.0f;
+        int nonZero = 0;
+        for (size_t i = 0; i < std::min(resampled.size(), static_cast<size_t>(10000)); ++i) {
+            float v = resampled[i];
+            if (v != 0.0f) nonZero++;
+            inputMin = std::min(inputMin, v);
+            inputMax = std::max(inputMax, v);
+            inputSum += std::abs(v);
+        }
+        std::ostringstream oss;
+        oss << "[AudioFlux] Input audio check (first 10000 samples): min=" << inputMin << " max=" << inputMax
+            << " meanAbs=" << (inputSum/10000) << " nonZero=" << nonZero;
+        debugLog(oss.str());
+    }
 
     // Zero-initialize buffers to be safe
     std::fill(stftReal.begin(), stftReal.end(), 0.0f);
@@ -267,10 +376,35 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
 
     stftObj_stft(stftObj, resampled.data(), static_cast<int>(resampled.size()),
                  stftReal.data(), stftImag.data());
-    std::cerr << "[AudioFlux] STFT complete" << std::endl;
+    debugLog("[AudioFlux] STFT complete");
+
+    // Debug: Check STFT buffer contents
+    {
+        float realMin = 1e30f, realMax = -1e30f, realSum = 0.0f;
+        float imagMin = 1e30f, imagMax = -1e30f, imagSum = 0.0f;
+        int nonZeroReal = 0, nonZeroImag = 0;
+        size_t checkCount = std::min(stftReal.size(), static_cast<size_t>(100000));
+        for (size_t i = 0; i < checkCount; ++i) {
+            float r = stftReal[i];
+            float im = stftImag[i];
+            if (r != 0.0f) nonZeroReal++;
+            if (im != 0.0f) nonZeroImag++;
+            realMin = std::min(realMin, r);
+            realMax = std::max(realMax, r);
+            realSum += std::abs(r);
+            imagMin = std::min(imagMin, im);
+            imagMax = std::max(imagMax, im);
+            imagSum += std::abs(im);
+        }
+        std::ostringstream oss;
+        oss << "[AudioFlux] STFT buffer check (first " << checkCount << " values):"
+            << " real: min=" << realMin << " max=" << realMax << " meanAbs=" << (realSum/checkCount) << " nonZero=" << nonZeroReal
+            << " | imag: min=" << imagMin << " max=" << imagMax << " meanAbs=" << (imagSum/checkCount) << " nonZero=" << nonZeroImag;
+        debugLog(oss.str());
+    }
 
     stftObj_free(stftObj);
-    std::cerr << "[AudioFlux] STFT object freed" << std::endl;
+    debugLog("[AudioFlux] STFT object freed");
 
     if (progress && !progress(0.3f, "Computing onset envelope...")) {
         result.error = "Analysis cancelled by user";
@@ -285,6 +419,18 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
     if (result.onsetEnvelope.empty()) {
         result.error = "Failed to compute onset envelope";
         return result;
+    }
+
+    // Log envelope statistics for debugging
+    {
+        float envMin = *std::min_element(result.onsetEnvelope.begin(), result.onsetEnvelope.end());
+        float envMax = *std::max_element(result.onsetEnvelope.begin(), result.onsetEnvelope.end());
+        float envSum = std::accumulate(result.onsetEnvelope.begin(), result.onsetEnvelope.end(), 0.0f);
+        float envMean = envSum / result.onsetEnvelope.size();
+        std::ostringstream oss;
+        oss << "[AudioFlux] Onset envelope: size=" << result.onsetEnvelope.size()
+            << ", min=" << envMin << ", max=" << envMax << ", mean=" << envMean;
+        debugLog(oss.str());
     }
 
     if (progress && !progress(0.5f, "Detecting beats...")) {
@@ -312,11 +458,26 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
         adaptiveThreshold = p25 + 0.5f * iqr;
     }
     // Ensure threshold isn't too low (avoid noise) or too high (miss beats)
-    adaptiveThreshold = std::max(adaptiveThreshold, maxEnv * 0.08f);  // At least 8% of max
-    adaptiveThreshold = std::min(adaptiveThreshold, maxEnv * 0.25f);  // At most 25% of max
+    adaptiveThreshold = std::max(adaptiveThreshold, maxEnv * 0.12f);  // At least 12% of max (raised from 8%)
+    adaptiveThreshold = std::min(adaptiveThreshold, maxEnv * 0.30f);  // At most 30% of max (raised from 25%)
+
+    // Use configured onsetThreshold as a minimum floor
+    adaptiveThreshold = std::max(adaptiveThreshold, m_config.onsetThreshold);
+
+    {
+        std::ostringstream oss;
+        oss << "[AudioFlux] Adaptive threshold: " << adaptiveThreshold << " (maxEnv=" << maxEnv << ", configThreshold=" << m_config.onsetThreshold << ")";
+        debugLog(oss.str());
+    }
 
     // Pick peaks from onset envelope
     result.beats = pickPeaks(result.onsetEnvelope, adaptiveThreshold);
+
+    {
+        std::ostringstream oss;
+        oss << "[AudioFlux] Peaks found before gap fill: " << result.beats.size();
+        debugLog(oss.str());
+    }
 
     // Convert frame indices to time (must be done BEFORE fillBeatGaps which expects seconds)
     float frameRate = static_cast<float>(m_config.sampleRate) / m_config.hopLength;
@@ -325,7 +486,14 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
     }
 
     // Post-process: fill gaps using beat grid interpolation (expects beats in seconds)
+    size_t beatsBeforeFill = result.beats.size();
     result.beats = fillBeatGaps(result.beats, duration);
+
+    {
+        std::ostringstream oss;
+        oss << "[AudioFlux] Beats after gap fill: " << result.beats.size() << " (added " << (result.beats.size() - beatsBeforeFill) << ")";
+        debugLog(oss.str());
+    }
 
     if (progress && !progress(0.8f, "Estimating tempo...")) {
         result.error = "Analysis cancelled by user";
@@ -334,6 +502,12 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
 
     // Estimate BPM
     result.bpm = estimateBPM(result.beats, duration);
+
+    {
+        std::ostringstream oss;
+        oss << "[AudioFlux] FINAL RESULT: " << result.beats.size() << " beats, BPM=" << result.bpm << ", duration=" << duration << "s";
+        debugLog(oss.str());
+    }
 
     // Calculate confidence based on beat regularity
     if (result.beats.size() > 10) {
@@ -373,22 +547,63 @@ AudioFluxBeatDetector::Result AudioFluxBeatDetector::detect(
 std::vector<float> AudioFluxBeatDetector::computeOnsetEnvelope(
     const float* stftReal, const float* stftImag, int numFrames, int numBins, int fftStride) {
 
+    // Validate input parameters to prevent buffer overruns
+    if (!stftReal || !stftImag || numFrames <= 0 || numBins <= 0 || fftStride <= 0) {
+        debugLog("[AudioFlux] ERROR: Invalid STFT parameters in computeOnsetEnvelope");
+        return {};
+    }
+
+    // Validate stride is sufficient for numBins (stride must be >= numBins to access all frequency bins)
+    if (fftStride < numBins) {
+        std::ostringstream oss;
+        oss << "[AudioFlux] ERROR: fftStride (" << fftStride << ") < numBins (" << numBins << ") - would cause buffer underread";
+        debugLog(oss.str());
+        return {};
+    }
+
     std::vector<float> envelope(numFrames, 0.0f);
+
+    // Calculate frequency bin range for kick drum detection
+    // binWidth = sampleRate / fftSize
+    float binWidth = static_cast<float>(m_config.sampleRate) / m_config.fftSize;
+
+    int minBin = 0;
+    int maxBin = numBins;
+
+    if (m_config.lowFreqFocus) {
+        // Focus only on kick drum frequencies (typically 30-200Hz for EDM/psytrance)
+        minBin = static_cast<int>(m_config.lowFreqMin / binWidth);
+        maxBin = static_cast<int>(m_config.lowFreqMax / binWidth) + 1;
+        minBin = std::max(0, minBin);
+        maxBin = std::min(numBins, maxBin);
+
+        {
+            std::ostringstream oss;
+            oss << "[AudioFlux] Low-freq focus enabled: bins " << minBin << "-" << maxBin
+                << " (" << (minBin * binWidth) << "-" << (maxBin * binWidth) << " Hz)";
+            debugLog(oss.str());
+        }
+    }
 
     // Compute magnitude spectrogram
     // Note: AudioFlux STFT buffer has fftStride (fftLength) values per frame,
-    // but we only use the first numBins (positive frequencies)
+    // but we only use the specified frequency range
     std::vector<float> prevMag(numBins, 0.0f);
 
     for (int t = 0; t < numFrames; ++t) {
         float flux = 0.0f;
+        float energy = 0.0f;
 
-        for (int b = 0; b < numBins; ++b) {
+        // Only sum spectral flux in the kick drum frequency range
+        for (int b = minBin; b < maxBin; ++b) {
             // Use fftStride for frame indexing, not numBins
             int idx = t * fftStride + b;
             float real = stftReal[idx];
             float imag = stftImag[idx];
             float mag = std::sqrt(real * real + imag * imag);
+
+            // Accumulate energy for RMS calculation
+            energy += mag * mag;
 
             // Spectral flux: half-wave rectified difference
             float diff = mag - prevMag[b];
@@ -397,6 +612,15 @@ std::vector<float> AudioFluxBeatDetector::computeOnsetEnvelope(
             }
 
             prevMag[b] = mag;
+        }
+
+        // Calculate RMS energy for this frame and gate quiet frames
+        int numBinsInRange = maxBin - minBin;
+        if (numBinsInRange > 0) {
+            float rms = std::sqrt(energy / numBinsInRange);
+            if (rms < m_config.energyGate) {
+                flux = 0.0f;  // Gate out quiet frames
+            }
         }
 
         envelope[t] = flux;
@@ -454,7 +678,7 @@ std::vector<double> AudioFluxBeatDetector::pickPeaks(const std::vector<float>& e
                 int startFrame = static_cast<int>(peaks[i - 1]) + minIntervalFrames;
                 int endFrame = static_cast<int>(peaks[i]) - minIntervalFrames;
 
-                float localThreshold = threshold * 0.5f;  // 50% of normal threshold
+                float localThreshold = threshold * 0.75f;  // 75% of normal threshold (stricter)
                 float maxVal = 0;
                 int maxIdx = -1;
 
@@ -539,7 +763,7 @@ std::vector<double> AudioFluxBeatDetector::fillBeatGaps(const std::vector<double
             // Calculate how many beats should fit in this gap
             int missingBeats = static_cast<int>(std::round(gap / beatInterval)) - 1;
 
-            if (missingBeats > 0 && missingBeats < 8) {  // Don't fill huge gaps (likely silence)
+            if (missingBeats > 0 && missingBeats <= 2) {  // Only fill small gaps (1-2 beats), larger gaps are intentional
                 double stepSize = gap / (missingBeats + 1);
                 for (int j = 1; j <= missingBeats; ++j) {
                     double interpolatedBeat = beats[i - 1] + j * stepSize;
@@ -551,27 +775,31 @@ std::vector<double> AudioFluxBeatDetector::fillBeatGaps(const std::vector<double
         filledBeats.push_back(beats[i]);
     }
 
-    // Also extend to beginning if first beat is late
-    if (filledBeats[0] > beatInterval * 1.5) {
-        std::vector<double> prependBeats;
-        double t = filledBeats[0] - beatInterval;
-        while (t > 0.1) {  // Don't go too close to start
-            prependBeats.push_back(t);
-            t -= beatInterval;
+    // DISABLED BY DEFAULT: Extending to track edges creates false positives in intros/outros
+    // Only enable if explicitly configured (extendToEdges = true)
+    if (m_config.extendToEdges) {
+        // Extend to beginning if first beat is late
+        if (filledBeats[0] > beatInterval * 1.5) {
+            std::vector<double> prependBeats;
+            double t = filledBeats[0] - beatInterval;
+            while (t > 0.1) {  // Don't go too close to start
+                prependBeats.push_back(t);
+                t -= beatInterval;
+            }
+            // Reverse and prepend
+            std::reverse(prependBeats.begin(), prependBeats.end());
+            prependBeats.insert(prependBeats.end(), filledBeats.begin(), filledBeats.end());
+            filledBeats = std::move(prependBeats);
         }
-        // Reverse and prepend
-        std::reverse(prependBeats.begin(), prependBeats.end());
-        prependBeats.insert(prependBeats.end(), filledBeats.begin(), filledBeats.end());
-        filledBeats = std::move(prependBeats);
-    }
 
-    // Extend to end if last beat is early
-    // Guard against zero or very small beatInterval to prevent infinite loop
-    if (beatInterval >= 0.1) {
-        double lastBeat = filledBeats.back();
-        while (lastBeat + beatInterval < duration - 0.1) {
-            lastBeat += beatInterval;
-            filledBeats.push_back(lastBeat);
+        // Extend to end if last beat is early
+        // Guard against zero or very small beatInterval to prevent infinite loop
+        if (beatInterval >= 0.1) {
+            double lastBeat = filledBeats.back();
+            while (lastBeat + beatInterval < duration - 0.1) {
+                lastBeat += beatInterval;
+                filledBeats.push_back(lastBeat);
+            }
         }
     }
 

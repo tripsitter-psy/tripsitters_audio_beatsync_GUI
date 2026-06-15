@@ -145,6 +145,18 @@ public:
     void setProgressCallback(std::function<void(double)> callback);
 
     /**
+     * @brief Set cancel flag pointer for cooperative cancellation
+     * @param flag Pointer to flag (owned by caller). If *flag becomes non-zero, processing aborts.
+     */
+    void setCancelFlag(const int* flag);
+
+    /**
+     * @brief Check if cancellation was requested
+     * @return true if cancel flag is set and non-zero
+     */
+    bool isCancelled() const;
+
+    /**
      * @brief Copy video segment using stream copy (fast, no re-encoding)
      */
     bool copySegmentFast(const std::string& inputVideo,
@@ -224,6 +236,7 @@ private:
 
     std::string m_lastError;
     std::function<void(double)> m_progressCallback;
+    const int* m_cancelFlag = nullptr;  // External cancel flag (owned by caller)
 
     // Output settings (defaults)
     int m_outputWidth = 1920;

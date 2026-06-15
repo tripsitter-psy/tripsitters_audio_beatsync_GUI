@@ -29,7 +29,7 @@ static FString GetBeatsyncDllPath()
     Filename = TEXT("libbeatsync_backend_shared.dylib");
     Subdir = TEXT("Mac");
 #else
-    Filename = TEXT("beatsync_backend_shared.so");
+    Filename = TEXT("libbeatsync_backend_shared.so");
     Subdir = TEXT("Linux");
 #endif
     FString DllPath = FPaths::Combine(FPaths::ProjectDir(), TEXT(".."), TEXT("unreal-prototype"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("lib"), Subdir, Filename);

@@ -5,14 +5,17 @@
 
 param(
     [Parameter(Mandatory=$false)]
-    [string]$UERoot = "C:\UE5_Source\UnrealEngine",
+    [string]$UERoot = "D:\UnrealEngine",
     [Parameter(Mandatory=$true, HelpMessage="Path to the .uproject file (avoid OneDrive paths)")]
     [string]$ProjectPath,
     [Parameter(Mandatory=$false)]
-    [string]$ArchiveDir = (Join-Path $PSScriptRoot "packaged"),
+    [string]$ArchiveDir,
     [switch]$NonInteractive
 )
 
+if (-not $ArchiveDir) {
+    $ArchiveDir = Join-Path $PSScriptRoot "packaged"
+}
 
 Write-Host "Building and packaging TripSitter..." -ForegroundColor Cyan
 

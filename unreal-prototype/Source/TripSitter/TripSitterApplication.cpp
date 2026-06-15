@@ -17,15 +17,27 @@ FTripSitterApplication::FTripSitterApplication()
 
 bool FTripSitterApplication::Initialize()
 {
-    // Create platform application and renderer using StandaloneRenderer
-    FSlateApplication::Create();
+    // Only create Slate if not already initialized (prevents double-creation)
+    if (!FSlateApplication::IsInitialized())
+    {
+        FSlateApplication::Create();
+        bOwnsSlateApplication = true;
+    }
+    else
+    {
+        UE_LOG(LogTemp, Log, TEXT("TripSitterApplication: Slate already initialized, reusing existing instance"));
+        bOwnsSlateApplication = false;
+    }
 
     // Initialize standalone renderer
     TSharedPtr<FSlateRenderer> Renderer = GetStandardStandaloneRenderer();
     if (!Renderer.IsValid())
     {
         UE_LOG(LogTemp, Error, TEXT("TripSitterApplication: Failed to create standalone renderer."));
-        FSlateApplication::Shutdown();
+        if (bOwnsSlateApplication)
+        {
+            FSlateApplication::Shutdown();
+        }
         return false;
     }
     FSlateApplication::Get().InitializeRenderer(Renderer.ToSharedRef());
@@ -85,10 +97,11 @@ void FTripSitterApplication::Shutdown()
         MainWindow.Reset();
     }
 
-    // Now shutdown Slate application
-    if (FSlateApplication::IsInitialized())
+    // Only shutdown Slate if this instance created it (prevents double-shutdown)
+    if (bOwnsSlateApplication && FSlateApplication::IsInitialized())
     {
         FSlateApplication::Shutdown();
+        bOwnsSlateApplication = false;
     }
 }
 

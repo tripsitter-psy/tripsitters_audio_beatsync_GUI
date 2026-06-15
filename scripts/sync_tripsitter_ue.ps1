@@ -4,17 +4,18 @@
 # Usage:
 #   .\sync_tripsitter_ue.ps1 -ToEngine    # Copy from repo to Engine (for building)
 #   .\sync_tripsitter_ue.ps1 -ToRepo      # Copy from Engine to repo (after editing in Engine)
+#   .\sync_tripsitter_ue.ps1 -EnginePath D:\UnrealEngine\Engine\Source\Programs\TripSitter
 #
 # Source locations:
 #   Repo:   BeatSyncEditor/unreal-prototype/Source/TripSitter/
-#   Engine: C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\
+#   Engine: D:\UnrealEngine\Engine\Source\Programs\TripSitter\
 
 param(
+    [string]$EnginePath,
     [switch]$ToEngine,
     [switch]$ToRepo,
     [switch]$NonInteractive
 )
-
 
 $RepoRoot = $PSScriptRoot | Split-Path -Parent
 $RepoSource = Join-Path $RepoRoot "unreal-prototype\Source\TripSitter"
@@ -25,26 +26,37 @@ if (-not (Test-Path $RepoSource)) {
 }
 
 function Get-EngineSourcePath {
-    $engineSource = $env:TRIPSITTER_ENGINE_PATH
-    # Trim whitespace from environment variable if present
+    $engineSource = $EnginePath
+    if (-not $engineSource -and $env:TRIPSITTER_ENGINE_PATH) {
+        $engineSource = $env:TRIPSITTER_ENGINE_PATH
+    }
     if ($engineSource) {
         $engineSource = $engineSource.Trim()
     }
+
     if (-not $engineSource) {
+        $engineSource = "D:\UnrealEngine\Engine\Source\Programs\TripSitter"
+    }
+
+    if (-not (Test-Path $engineSource)) {
         $isInteractive = -not $NonInteractive -and [Environment]::UserInteractive
         if ($isInteractive) {
-            $engineSource = Read-Host "Enter the path to the Unreal Engine source directory (e.g., C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter)"
-            # Trim whitespace from user input
-            if ($engineSource) {
-                $engineSource = $engineSource.Trim()
+            $prompt = "Enter the path to the Unreal Engine source directory " +
+                      "(default: D:\UnrealEngine\Engine\Source\Programs\TripSitter)"
+            $userInput = Read-Host $prompt
+            if ($userInput) {
+                $engineSource = $userInput.Trim()
             }
-        } else {
-            Write-Warning "Engine source path not set and cannot prompt in non-interactive mode. Set TRIPSITTER_ENGINE_PATH or pass interactively."
-            return $null
         }
     }
+
+    if (-not $engineSource) {
+        Write-Warning "Engine source path not set. Set TRIPSITTER_ENGINE_PATH, pass -EnginePath, or use the default path."
+        return $null
+    }
+
     if (-not (Test-Path $engineSource)) {
-        Write-Error "Engine source path '$engineSource' does not exist. Set TRIPSITTER_ENGINE_PATH environment variable or provide a valid path."
+        Write-Error "Engine source path '$engineSource' does not exist. Set TRIPSITTER_ENGINE_PATH, pass -EnginePath, or provide a valid path."
         return $null
     }
     return $engineSource

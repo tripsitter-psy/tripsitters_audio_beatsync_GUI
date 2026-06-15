@@ -21,7 +21,7 @@
    - TensorRT 10.9.0.34
 
 5. **Unreal Engine 5** (for TripSitter GUI)
-   - Source build at `C:\UE5_Source\UnrealEngine`
+   - Source build at `D:\UnrealEngine`
 
 ## Quick Start
 
@@ -70,7 +70,7 @@ cmake --build build --config Release --target beatsync_backend_shared
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DAUDIOFLUX_ROOT="C:/audioFlux"
 
 # Or combine with GPU acceleration
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets -DAUDIOFLUX_ROOT="C:/audioFlux"
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_TRIPLETS=triplets -DVCPKG_MANIFEST_FEATURES="gpu" -DAUDIOFLUX_ROOT="C:/audioFlux"
 
 # Build
 cmake --build build --config Release --target beatsync_backend_shared
@@ -82,9 +82,9 @@ cmake --build build --config Release --target beatsync_backend_shared
 ### TripSitter GUI (Unreal Engine)
 
 > **Before building the TripSitter GUI:**
-> - **PowerShell:** `$env:UE_ENGINE_PATH = 'C:\UE5_Source\UnrealEngine'`
-> - **cmd.exe:** `set UE_ENGINE_PATH=C:\UE5_Source\UnrealEngine`
-> - **bash:** `export UE_ENGINE_PATH=/mnt/c/UE5_Source/UnrealEngine`
+> - **PowerShell:** `$env:UE_ENGINE_PATH = 'D:\UnrealEngine'`
+> - **cmd.exe:** `set UE_ENGINE_PATH=D:\UnrealEngine`
+> - **bash:** `export UE_ENGINE_PATH=/mnt/d/UnrealEngine`
 
 
 
@@ -103,14 +103,34 @@ Output: `$env:UE_ENGINE_PATH\Engine\Binaries\Win64\TripSitter.exe`
 
 ### Deploy All DLLs to TripSitter
 
-**CRITICAL**: TripSitter.exe requires all dependency DLLs in its directory.
+**CRITICAL**: TripSitter.exe requires all dependency DLLs in its directory with correct file sizes.
+
+Target location: `D:\UnrealEngine\Engine\Binaries\Win64\`
+
+The TripSitter executable cannot run without:
+- **beatsync_backend_shared.dll** (300KB+) — Backend library
+- **FFmpeg DLLs** (~400MB total) — Audio/video processing
+- **ONNX Runtime DLLs** (~15MB+) — AI neural network inference
+- **ONNX provider DLLs** — GPU acceleration (CUDA, TensorRT)
+
+**Deploy the DLLs:**
 
 ```powershell
 # Recommended: Use the deployment script
 .\scripts\deploy_tripsitter.ps1
 
-# Or verify existing deployment
+# Verify DLL deployment and sizes
 .\scripts\deploy_tripsitter.ps1 -Verify
+
+# Or check DLLs manually
+.\check_dlls.ps1
+```
+
+See [DLL_VERIFICATION_GUIDE.md](DLL_VERIFICATION_GUIDE.md) for detailed troubleshooting if verification fails.
+
+**If deployment fails**, ensure dependencies are built:
+```powershell
+cmake --build build --config Release --target beatsync_backend_shared
 ```
 
 **IMPORTANT**: The build is configured to strictly separate project artifacts from dependencies. Dependency DLLs (FFmpeg, ONNX Runtime) are **NOT** copied to `build/Release/` to prevent mixing incompatible versions.
@@ -244,4 +264,4 @@ cmake --build build --config Release
 
 ---
 
-Last updated: January 21, 2026
+Last updated: May 5, 2026

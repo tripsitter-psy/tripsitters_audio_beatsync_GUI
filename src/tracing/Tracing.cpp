@@ -18,7 +18,7 @@ namespace tracing {
 struct Span::Impl {
     std::string name;
     std::chrono::steady_clock::time_point start;
-    bool ended = false;
+    std::atomic<bool> ended{false};
 };
 
 
@@ -44,6 +44,10 @@ void SetTracingFlushMode(TracingFlushMode mode, int period_ms) {
         // Use compare_exchange for atomic check-and-set to avoid race
         bool expected = false;
         if (g_flush_thread_running.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+            // Ensure any previous thread is joined before creating a new one to avoid std::terminate
+            if (g_flush_thread.joinable()) {
+                g_flush_thread.join();
+            }
             g_flush_thread = std::thread([]() {
                 while (g_flush_thread_running.load(std::memory_order_acquire)) {
                     std::unique_lock<std::mutex> lk(g_flush_cv_mutex);
@@ -112,7 +116,12 @@ void InitTracing(const std::string& outfile) {
             return;
         } else {
             // Switching to a new file: close and reset
-            bool need_stop_flusher = (g_flush_mode == TracingFlushMode::Periodic);
+            // Acquire g_flush_start_mutex to safely read g_flush_mode (written by SetTracingFlushMode)
+            bool need_stop_flusher;
+            {
+                std::lock_guard<std::mutex> flush_lk(g_flush_start_mutex);
+                need_stop_flusher = (g_flush_mode == TracingFlushMode::Periodic);
+            }
             std::unique_ptr<std::ofstream> local_out;
 
             // Stop flusher WHILE holding the main lock to prevent TOCTOU race
@@ -153,9 +162,19 @@ void InitTracing(const std::string& outfile) {
     } else {
         g_outfile_path = new_path.string();
         // Optionally start flusher if mode is periodic
-        if (g_flush_mode == TracingFlushMode::Periodic) {
-            SetTracingFlushMode(TracingFlushMode::Periodic, g_flush_period_ms);
+        // Unconditionally call SetTracingFlushMode to avoid race with g_flush_mode read
+        // SetTracingFlushMode is idempotent for Periodic mode if already running
+        {
+            std::lock_guard<std::mutex> flush_lk(g_flush_start_mutex);
+            if (g_flush_mode == TracingFlushMode::Periodic) {
+                // Release main lock before calling SetTracingFlushMode to avoid deadlock
+                lk.unlock();
+            } else {
+                // Not periodic mode, nothing to do
+                return;
+            }
         }
+        SetTracingFlushMode(TracingFlushMode::Periodic, g_flush_period_ms);
     }
 }
 
@@ -189,8 +208,10 @@ Span::~Span() {
 
 
 void Span::End() {
-    if (!impl_ || impl_->ended) return;
-    impl_->ended = true;
+    if (!impl_) return;
+    // Atomically test-and-set to prevent duplicate END log entries from concurrent calls
+    bool expected = false;
+    if (!impl_->ended.compare_exchange_strong(expected, true)) return;
     auto end = std::chrono::steady_clock::now();
     auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(end - impl_->start).count();
     std::lock_guard<std::mutex> lk(g_mutex);

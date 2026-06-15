@@ -36,7 +36,7 @@ if(DEFINED ENV{TRIPSITTER_EXE_PATH})
 else()
     find_program(TRIPSITTER_EXE_PATH TripSitter.exe
         HINTS
-        "C:/UE5_Source/UnrealEngine/Engine/Binaries/Win64"
+        "D:/UnrealEngine/Engine/Binaries/Win64"
         DOC "Path to TripSitter.exe"
     )
 endif()
@@ -49,14 +49,8 @@ if(NOT TRIPSITTER_EXE_PATH)
     endif()
 endif()
 
-# Configure NSIS installer template (run after BEATSYNC_VERSION is set so substitutions work)
-if(WIN32)
-    configure_file(
-        installer/nsis_template.nsi.in
-        installer/nsis_template.nsi
-        @ONLY
-    )
-endif()
+# NOTE: NSIS installer template is configured later (after AudioFlux search)
+# to ensure AUDIOFLUX_FFTW_DLL_NAME and other variables are set
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -333,6 +327,16 @@ if(USE_AUDIOFLUX)
     endif()
 endif()
 
+# Configure NSIS installer template AFTER AudioFlux search to ensure
+# AUDIOFLUX_FFTW_DLL_NAME and related variables are set
+if(WIN32)
+    configure_file(
+        installer/nsis_template.nsi.in
+        installer/nsis_template.nsi
+        @ONLY
+    )
+endif()
+
 # Bandlimited resampler support (libsamplerate)
 find_package(SampleRate CONFIG QUIET)
 if(SampleRate_FOUND)
@@ -437,8 +441,18 @@ set_target_properties(beatsync PROPERTIES
 # TripSitter is a Program target (standalone Slate app), NOT a Game.
 # Install TripSitter.exe with required Engine runtime files.
 
+# Use environment variable for UE5 root with fallback to default
+# Set UE5_ROOT environment variable or pass -DUE5_ROOT_DIR="..." to override
+if(DEFINED ENV{UE5_ROOT})
+    set(UE5_ROOT "$ENV{UE5_ROOT}" CACHE PATH "Path to UE5 source installation")
+elseif(DEFINED UE5_ROOT_DIR)
+    set(UE5_ROOT "${UE5_ROOT_DIR}" CACHE PATH "Path to UE5 source installation")
+else()
+    set(UE5_ROOT "D:/UnrealEngine" CACHE PATH "Path to UE5 source installation")
+endif()
+message(STATUS "UE5_ROOT: ${UE5_ROOT}")
+
 set(UE_BIN_DIR "Engine/Binaries/Win64")
-set(UE5_ROOT "C:/UE5_Source/UnrealEngine")
 set(UE5_BIN_DIR "${UE5_ROOT}/Engine/Binaries/Win64")
 
 # Install TripSitter.exe (Program target)
@@ -457,13 +471,14 @@ if(TARGET beatsync_backend_shared)
     )
 endif()
 
-# Install ONNX Runtime DLLs from build directory (configuration-aware for multi-config builds)
+# Install ONNX Runtime DLLs and other dependencies from build directory (configuration-aware for multi-config builds)
 set(ONNX_DLL_NAMES
     "onnxruntime.dll"
     "abseil_dll.dll"
     "libprotobuf.dll"
     "libprotobuf-lite.dll"
     "re2.dll"
+    "samplerate.dll"  # libsamplerate for high-quality audio resampling
 )
 foreach(DLL_NAME ${ONNX_DLL_NAMES})
     # Try Release first (most common), then other configurations
@@ -517,31 +532,31 @@ if(EXISTS "${RESOURCE_SRC_DIR}")
 endif()
 
 # Install Slate content from UE5 source (required for Slate UI rendering)
+# Install the entire Slate directory to ensure all required assets are present
 set(UE_SLATE_DIR "${UE5_ROOT}/Engine/Content/Slate")
 if(EXISTS "${UE_SLATE_DIR}")
     message(STATUS "Installing Slate content from ${UE_SLATE_DIR}")
-    # Common - UI brushes, backgrounds, borders (CRITICAL)
-    if(EXISTS "${UE_SLATE_DIR}/Common")
-        install(DIRECTORY "${UE_SLATE_DIR}/Common" DESTINATION "Engine/Content/Slate")
-    endif()
-    # Fonts - Roboto, DroidSans, etc.
-    if(EXISTS "${UE_SLATE_DIR}/Fonts")
-        install(DIRECTORY "${UE_SLATE_DIR}/Fonts" DESTINATION "Engine/Content/Slate")
-    endif()
-    # Cursor - Mouse cursor textures
-    if(EXISTS "${UE_SLATE_DIR}/Cursor")
-        install(DIRECTORY "${UE_SLATE_DIR}/Cursor" DESTINATION "Engine/Content/Slate")
-    endif()
-    # Old - Legacy brushes some widgets may reference
-    if(EXISTS "${UE_SLATE_DIR}/Old")
-        install(DIRECTORY "${UE_SLATE_DIR}/Old" DESTINATION "Engine/Content/Slate")
-    endif()
-    # Checkerboard texture
-    if(EXISTS "${UE_SLATE_DIR}/Checkerboard.png")
-        install(FILES "${UE_SLATE_DIR}/Checkerboard.png" DESTINATION "Engine/Content/Slate")
-    endif()
+    install(DIRECTORY "${UE_SLATE_DIR}/" DESTINATION "Engine/Content/Slate")
 else()
     message(WARNING "Slate content not found at ${UE_SLATE_DIR}")
+endif()
+
+# Install ICU Internationalization data (required by UE5 for text/locale support)
+set(UE_I18N_DIR "${UE5_ROOT}/Engine/Content/Internationalization")
+if(EXISTS "${UE_I18N_DIR}")
+    message(STATUS "Installing Internationalization content from ${UE_I18N_DIR}")
+    install(DIRECTORY "${UE_I18N_DIR}" DESTINATION "Engine/Content")
+else()
+    message(WARNING "Internationalization content not found at ${UE_I18N_DIR}")
+endif()
+
+# Install StandaloneRenderer shaders (required for Slate rendering in Program targets)
+set(UE_SHADERS_DIR "${UE5_ROOT}/Engine/Shaders/StandaloneRenderer")
+if(EXISTS "${UE_SHADERS_DIR}")
+    message(STATUS "Installing StandaloneRenderer shaders from ${UE_SHADERS_DIR}")
+    install(DIRECTORY "${UE_SHADERS_DIR}" DESTINATION "Engine/Shaders")
+else()
+    message(WARNING "StandaloneRenderer shaders not found at ${UE_SHADERS_DIR}")
 endif()
 
 # Install required Engine DLLs from UE5 source
@@ -592,9 +607,9 @@ if(EXISTS "${UE5_BIN_DIR}")
     endforeach()
 endif()
 
-# Install ONNX models if they exist
+# Install ONNX models if they exist (must be in same directory as executable)
 if(EXISTS "${CMAKE_SOURCE_DIR}/models")
-    install(DIRECTORY "${CMAKE_SOURCE_DIR}/models" DESTINATION .)
+    install(DIRECTORY "${CMAKE_SOURCE_DIR}/models" DESTINATION "${UE_BIN_DIR}")
 endif()
 
 # Install license files
@@ -653,20 +668,20 @@ if(WIN32)
         set(CPACK_NSIS_INSTALLED_ICON_NAME "TripSitter.exe")
     endif()
 
-    # Start menu and desktop shortcuts
+    # Start menu and desktop shortcuts - exe is in Engine/Binaries/Win64/
     set(CPACK_NSIS_CREATE_ICONS_EXTRA
-        "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk' '$INSTDIR\\\\TripSitter.exe'"
+        "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTVTS.lnk' '$INSTDIR\\\\Engine\\\\Binaries\\\\Win64\\\\TripSitter.exe'"
     )
     set(CPACK_NSIS_DELETE_ICONS_EXTRA
-        "Delete '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTV TripSitter.lnk'"
+        "Delete '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MTVTS.lnk'"
     )
 
     # Add option for desktop shortcut
     set(CPACK_NSIS_MODIFY_PATH OFF)
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
 
-    # Request admin rights for installation
-    set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
+    # Executables directory relative to install root
+    set(CPACK_NSIS_EXECUTABLES_DIRECTORY "Engine/Binaries/Win64")
 
     # Install to Program Files by default
     set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES64")

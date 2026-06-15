@@ -31,4 +31,7 @@ private:
 
     /** Main application window */
     TSharedPtr<SWindow> MainWindow;
+
+    /** Tracks whether this instance created/owns the Slate application */
+    bool bOwnsSlateApplication = false;
 };
