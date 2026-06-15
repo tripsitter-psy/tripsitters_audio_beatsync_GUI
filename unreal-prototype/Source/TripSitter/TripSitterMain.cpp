@@ -50,7 +50,7 @@ int RunTripSitter(const TCHAR* CommandLine)
 
     // Create main window
     TSharedRef<SWindow> MainWindow = SNew(SWindow)
-        .Title(FText::FromString(TEXT("TripSitter Beat Sync Editor")))
+        .Title(FText::FromString(TEXT("MTV Trip Sitter")))
         .ClientSize(FVector2D(1400, 900))
         .SupportsMaximize(true)
         .SupportsMinimize(true)
@@ -75,6 +75,20 @@ int RunTripSitter(const TCHAR* CommandLine)
         {
             FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
             FString IconPath = FPaths::Combine(ExeDir, TEXT("Resources"), TEXT("TripSitter.ico"));
+
+            // Fallback: dev builds have no Resources next to the exe; use the
+            // engine source location (same fallback the main widget uses for
+            // wallpaper/fonts). Without this the dev build shows the default UE icon.
+            if (!FPaths::FileExists(IconPath))
+            {
+                FString DevIconPath = FPaths::Combine(ExeDir, TEXT(".."), TEXT(".."), TEXT("Source"),
+                    TEXT("Programs"), TEXT("TripSitter"), TEXT("Resources"), TEXT("TripSitter.ico"));
+                DevIconPath = FPaths::ConvertRelativePathToFull(DevIconPath);
+                if (FPaths::FileExists(DevIconPath))
+                {
+                    IconPath = DevIconPath;
+                }
+            }
 
             if (FPaths::FileExists(IconPath))
             {

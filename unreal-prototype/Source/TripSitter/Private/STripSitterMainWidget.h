@@ -150,6 +150,8 @@ private:
 	bool bEnableBeatZoom = false;
 	bool bEnableColorGrade = false;
 	bool bEnableTransitions = false;
+	// Output orientation: false = landscape (1920x1080), true = vertical/portrait (1080x1920) for phones
+	bool bVerticalOutput = false;
 	float FlashIntensity = 0.5f;
 	float ZoomIntensity = 0.1f;
 	float VignetteStrength = 0.3f;

@@ -534,6 +534,12 @@ BEATSYNC_API void bs_video_set_cancel_flag(void* writer, const int* cancel_flag)
     w->setCancelFlag(cancel_flag);
 }
 
+BEATSYNC_API void bs_video_set_output_settings(void* writer, int width, int height, int fps) {
+    if (!writer || width <= 0 || height <= 0 || fps <= 0) return;
+    auto* w = static_cast<BeatSync::VideoWriter*>(writer);
+    w->setOutputSettings(width, height, fps);
+}
+
 BEATSYNC_API int bs_video_is_cancelled(void* writer) {
     if (!writer) return 0;
     auto* w = static_cast<BeatSync::VideoWriter*>(writer);

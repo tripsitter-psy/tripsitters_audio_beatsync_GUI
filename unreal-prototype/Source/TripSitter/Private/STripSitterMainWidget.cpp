@@ -1253,6 +1253,21 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateEffectsSection()
 		.Padding(FMargin(0, 8))
 		[
 			SNew(SHorizontalBox)
+			// Vertical output (portrait for phones) - output orientation, not an effect
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0, 0, 40, 0)
+			[
+				SNew(SCheckBox)
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
+					bVerticalOutput = (State == ECheckBoxState::Checked);
+				})
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Vertical 9:16 (phone)")))
+					.ColorAndOpacity(FLinearColor(0.6f, 0.9f, 1.0f))
+				]
+			]
 			// Vignette
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
@@ -2631,6 +2646,7 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	Params.bIsMultiClip = bIsMultiClip;
 	Params.BeatRate = static_cast<int32>(BeatRate);
 	Params.AnalysisMode = static_cast<EAnalysisModeParam>(AnalysisMode);
+	Params.bVerticalOutput = bVerticalOutput;
 
 	// Get selection range for audio trimming
 	if (WaveformViewer.IsValid() && WaveformViewer->GetDuration() > 0)

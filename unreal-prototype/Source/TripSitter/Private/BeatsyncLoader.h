@@ -183,6 +183,10 @@ public:
      *  The flag must remain valid for the lifetime of the video processing operation. */
     static void SetCancelFlag(void* Handle, const int* CancelFlag);
 
+    /** Set output resolution + frame rate. 1920x1080 = landscape (default), 1080x1920 = vertical/portrait.
+     *  Must be called before cut/normalize operations. */
+    static void SetOutputSettings(void* Handle, int Width, int Height, int Fps);
+
     /** Check if video processing was cancelled */
     static bool IsCancelled(void* Handle);
 

@@ -63,6 +63,9 @@ BEATSYNC_API void bs_video_set_progress_callback(void* writer, bs_progress_cb cb
 BEATSYNC_API void bs_video_set_cancel_flag(void* writer, const int* cancel_flag);
 // Check if cancel was requested
 BEATSYNC_API int bs_video_is_cancelled(void* writer);
+// Set output resolution and frame rate (e.g. 1920x1080 landscape, 1080x1920 vertical/portrait).
+// Must be called before cut/normalize operations; defaults are 1920x1080 @ 24fps.
+BEATSYNC_API void bs_video_set_output_settings(void* writer, int width, int height, int fps);
 BEATSYNC_API int bs_video_cut_at_beats(void* writer, const char* inputVideo, const double* beatTimes, size_t count, const char* outputVideo, double clipDuration);
 // Multi-video version: cycles through inputVideos for each beat
 BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVideos, size_t videoCount,

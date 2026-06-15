@@ -433,6 +433,19 @@ void FBeatsyncProcessingTask::DoWork()
     // Pass address of atomic int - backend will check this periodically during long operations
     FBeatsyncLoader::SetCancelFlag(Writer, reinterpret_cast<const int*>(&BackendCancelFlag));
 
+    // Set output orientation BEFORE any normalize/cut so the whole pipeline uses it.
+    // Vertical (phones) = 1080x1920, landscape (default) = 1920x1080. 24 fps either way.
+    if (Params.bVerticalOutput)
+    {
+        FBeatsyncLoader::SetOutputSettings(Writer, 1080, 1920, 24);
+        UE_LOG(LogTemp, Log, TEXT("TripSitter: Output orientation = VERTICAL (1080x1920)"));
+    }
+    else
+    {
+        FBeatsyncLoader::SetOutputSettings(Writer, 1920, 1080, 24);
+        UE_LOG(LogTemp, Log, TEXT("TripSitter: Output orientation = LANDSCAPE (1920x1080)"));
+    }
+
     // Set up progress callback for video processing
     // Note: SharedCancelFlag is a shared member that reflects runtime cancellation state
     // CRITICAL: This callback is called from a worker thread in the backend DLL,

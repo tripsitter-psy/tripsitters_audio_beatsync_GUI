@@ -65,6 +65,9 @@ struct FBeatsyncProcessingParams
     // Stem effect configurations (Kick, Snare, Hi-Hat, Synth)
     // Each stem can have its own beat times and mapped effect
     FStemEffectConfig StemConfigs[4];
+
+    // Output orientation: false = 1920x1080 landscape (default), true = 1080x1920 vertical/portrait (phones)
+    bool bVerticalOutput = false;
 };
 
 struct FBeatsyncProcessingResult
