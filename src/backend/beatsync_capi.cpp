@@ -1193,6 +1193,18 @@ BEATSYNC_API int bs_video_set_effects_config(void* writer, const bs_effects_conf
         cfg.effectStartTime = config->effectStartTime;
         cfg.effectEndTime = config->effectEndTime;
 
+        cfg.colorGradeStartTime = config->colorGradeStartTime;
+        cfg.colorGradeEndTime   = config->colorGradeEndTime;
+
+        cfg.vignetteStartTime   = config->vignetteStartTime;
+        cfg.vignetteEndTime     = config->vignetteEndTime;
+
+        cfg.beatFlashStartTime  = config->beatFlashStartTime;
+        cfg.beatFlashEndTime    = config->beatFlashEndTime;
+
+        cfg.beatZoomStartTime   = config->beatZoomStartTime;
+        cfg.beatZoomEndTime     = config->beatZoomEndTime;
+
         // Store in our map for later retrieval
         {
             std::lock_guard<std::mutex> lock(s_effectsConfigsMutex);

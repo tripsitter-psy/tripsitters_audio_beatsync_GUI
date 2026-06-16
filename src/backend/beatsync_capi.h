@@ -144,8 +144,23 @@ typedef struct {
 
     int effectBeatDivisor;       // 1=every beat, 2=every 2nd, 4=every 4th, etc.
 
-    double effectStartTime;      // Start time for effects in seconds (0 = from beginning)
-    double effectEndTime;        // End time for effects in seconds (-1 = to end of video)
+    double effectStartTime;      // Global fallback start time for effects (0 = from beginning)
+    double effectEndTime;        // Global fallback end time for effects (-1 = to end of video)
+
+    // Per-effect time ranges.
+    // start=0.0 and end=-1.0 (or <=0) means "use the global effectStartTime/effectEndTime fallback".
+    // Any other combination overrides the global range for that specific effect.
+    double colorGradeStartTime;  // Color grade active from (seconds)
+    double colorGradeEndTime;    // Color grade active until (seconds, -1 = to end)
+
+    double vignetteStartTime;    // Vignette active from (seconds)
+    double vignetteEndTime;      // Vignette active until (seconds, -1 = to end)
+
+    double beatFlashStartTime;   // Beat flash active from (seconds)
+    double beatFlashEndTime;     // Beat flash active until (seconds, -1 = to end)
+
+    double beatZoomStartTime;    // Beat zoom active from (seconds)
+    double beatZoomEndTime;      // Beat zoom active until (seconds, -1 = to end)
 } bs_effects_config_t;
 
 // Set effects configuration on video writer

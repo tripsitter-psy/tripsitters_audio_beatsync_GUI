@@ -64,9 +64,23 @@ struct EffectsConfig {
     
     int effectBeatDivisor = 1;            // Effect on every Nth beat (1=every, 2=every other, 4=every 4th)
     
-    // Effect region (for applying effects to a subset of the video)
+    // Global effect region (fallback when per-effect ranges are at defaults)
     double effectStartTime = 0.0;         // Start time for effects (0 = from beginning)
     double effectEndTime = -1.0;          // End time for effects (-1 = to end)
+
+    // Per-effect time ranges.
+    // When start==0.0 AND end<= 0.0, the global effectStartTime/effectEndTime is used instead.
+    double colorGradeStartTime = 0.0;
+    double colorGradeEndTime   = -1.0;
+
+    double vignetteStartTime   = 0.0;
+    double vignetteEndTime     = -1.0;
+
+    double beatFlashStartTime  = 0.0;
+    double beatFlashEndTime    = -1.0;
+
+    double beatZoomStartTime   = 0.0;
+    double beatZoomEndTime     = -1.0;
     
     double bpm = 120.0;                   // For beat-synced effects (fallback)
     double firstBeatOffset = 0.0;         // Time of first beat (for proper sync)

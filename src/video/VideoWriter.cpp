@@ -1920,22 +1920,62 @@ std::string VideoWriter::getColorGradeFilter(const std::string& preset) const {
 std::string VideoWriter::buildEffectsFilterChain() const {
     std::vector<std::string> filters;
 
+    // Helper: resolve effective [start, end] for a given per-effect range.
+    // If the per-effect end is <= 0, fall back to the global effectStartTime/effectEndTime.
+    auto resolveRange = [&](double perStart, double perEnd,
+                             double& outStart, double& outEnd) {
+        if (perEnd <= 0.0) {
+            // Default value — use the global fallback
+            outStart = m_effects.effectStartTime;
+            outEnd   = m_effects.effectEndTime;
+        } else {
+            outStart = perStart;
+            outEnd   = perEnd;
+        }
+    };
+
+    // Helper: build a FFmpeg enable expression string for a time range.
+    // Returns empty string when the range covers the whole video (no gating needed).
+    auto buildEnableExpr = [&](double start, double end) -> std::string {
+        bool hasStart = (start > 0.0);
+        bool hasEnd   = (end > 0.0);
+        if (!hasStart && !hasEnd) return "";  // Whole video — no enable clause
+
+        std::ostringstream expr;
+        expr << std::fixed << std::setprecision(6);
+        if (hasStart && hasEnd) {
+            expr << ":enable='between(t," << start << "," << end << ")'";
+        } else if (hasStart) {
+            expr << ":enable='gte(t," << start << ")'";
+        } else {
+            // hasEnd only
+            expr << ":enable='lte(t," << end << ")'";
+        }
+        return expr.str();
+    };
+
     // Color grading
     if (m_effects.enableColorGrade && m_effects.colorPreset != "none") {
         std::string colorFilter = getColorGradeFilter(m_effects.colorPreset);
         if (!colorFilter.empty()) {
+            double cStart, cEnd;
+            resolveRange(m_effects.colorGradeStartTime, m_effects.colorGradeEndTime, cStart, cEnd);
+            colorFilter += buildEnableExpr(cStart, cEnd);
             filters.push_back(colorFilter);
         }
     }
 
     // Vignette
     if (m_effects.enableVignette) {
+        double vStart, vEnd;
+        resolveRange(m_effects.vignetteStartTime, m_effects.vignetteEndTime, vStart, vEnd);
         std::ostringstream vig;
         vig << "vignette=PI/" << (4.0 / m_effects.vignetteStrength);
+        vig << buildEnableExpr(vStart, vEnd);
         filters.push_back(vig.str());
     }
 
-    // Blur
+    // Blur (no per-effect range — blur has no independent range field)
     if (m_effects.enableBlur) {
         std::ostringstream blur;
         blur << "gblur=sigma=" << m_effects.blurStrength;
@@ -2004,10 +2044,27 @@ std::string VideoWriter::buildGlTransitionFilterComplex(size_t numInputs, const 
 bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string& outputVideo) {
     std::string filterChain = buildEffectsFilterChain();
 
-    // Filter beat times by divisor (using original beat index) and region
-    std::vector<double> filteredBeats;
+    // Resolve per-effect time ranges.
+    // Rule: if an effect's own end <= 0, fall back to the global effectStartTime/effectEndTime.
+    auto resolveEffectRange = [&](double perStart, double perEnd,
+                                   double& outStart, double& outEnd) {
+        if (perEnd <= 0.0) {
+            outStart = m_effects.effectStartTime;
+            outEnd   = m_effects.effectEndTime;
+        } else {
+            outStart = perStart;
+            outEnd   = perEnd;
+        }
+    };
+
+    double flashStart, flashEnd, zoomStart, zoomEnd;
+    resolveEffectRange(m_effects.beatFlashStartTime, m_effects.beatFlashEndTime, flashStart, flashEnd);
+    resolveEffectRange(m_effects.beatZoomStartTime,  m_effects.beatZoomEndTime,  zoomStart,  zoomEnd);
+
+    // Filter beat times by divisor (using original beat index) and per-effect region.
+    // Two separate lists: flashBeats gates the flash filter, zoomBeats gates the zoom filter.
     bool hasOriginalIndices = (m_effects.originalBeatIndices.size() == m_effects.beatTimesInOutput.size());
-    
+
     // Debug: Pre-filtering log
     FILE* preLog = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
     if (preLog) {
@@ -2015,10 +2072,15 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         fprintf(preLog, "hasOriginalIndices=%d, beatTimesInOutput.size=%zu, originalBeatIndices.size=%zu\n",
                 hasOriginalIndices ? 1 : 0, m_effects.beatTimesInOutput.size(), m_effects.originalBeatIndices.size());
         fprintf(preLog, "effectBeatDivisor=%d\n", m_effects.effectBeatDivisor);
+        fprintf(preLog, "flashRange=[%.3f, %.3f], zoomRange=[%.3f, %.3f]\n",
+                flashStart, flashEnd, zoomStart, zoomEnd);
     }
-    
-    int skippedByDivisor = 0, skippedByRegion = 0, included = 0;
-    
+
+    std::vector<double> flashBeats;
+    std::vector<double> zoomBeats;
+
+    int skippedByDivisor = 0;
+
     for (size_t i = 0; i < m_effects.beatTimesInOutput.size(); ++i) {
         // Apply beat divisor using ORIGINAL beat index (not filtered array index)
         // This ensures "every 2nd beat" actually means every 2nd musical beat
@@ -2027,32 +2089,39 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
             if ((origIdx % m_effects.effectBeatDivisor) != 0) {
                 skippedByDivisor++;
                 if (preLog && i < 10) {
-                    fprintf(preLog, "  Beat %zu: origIdx=%zu, %zu%%%d=%zu -> SKIP\n", 
+                    fprintf(preLog, "  Beat %zu: origIdx=%zu, %zu%%%d=%zu -> SKIP\n",
                             i, origIdx, origIdx, m_effects.effectBeatDivisor, origIdx % m_effects.effectBeatDivisor);
                 }
                 continue;
             } else if (preLog && i < 20) {
-                fprintf(preLog, "  Beat %zu: origIdx=%zu, %zu%%%d=%zu -> PASS divisor\n", 
+                fprintf(preLog, "  Beat %zu: origIdx=%zu, %zu%%%d=%zu -> PASS divisor\n",
                         i, origIdx, origIdx, m_effects.effectBeatDivisor, origIdx % m_effects.effectBeatDivisor);
             }
         }
         double bt = m_effects.beatTimesInOutput[i];
-        // Apply effect region filter
-        if (m_effects.effectStartTime > 0 && bt < m_effects.effectStartTime) {
-            skippedByRegion++;
-            continue;
+
+        // Flash: include beat only if it falls within the flash range
+        if (m_effects.enableBeatFlash) {
+            bool afterStart = (flashStart <= 0.0) || (bt >= flashStart);
+            bool beforeEnd  = (flashEnd  <= 0.0) || (bt <= flashEnd);
+            if (afterStart && beforeEnd) {
+                flashBeats.push_back(bt);
+            }
         }
-        if (m_effects.effectEndTime > 0 && bt > m_effects.effectEndTime) {
-            skippedByRegion++;
-            continue;
+
+        // Zoom: include beat only if it falls within the zoom range
+        if (m_effects.enableBeatZoom) {
+            bool afterStart = (zoomStart <= 0.0) || (bt >= zoomStart);
+            bool beforeEnd  = (zoomEnd  <= 0.0) || (bt <= zoomEnd);
+            if (afterStart && beforeEnd) {
+                zoomBeats.push_back(bt);
+            }
         }
-        included++;
-        filteredBeats.push_back(bt);
     }
-    
+
     if (preLog) {
-        fprintf(preLog, "Result: skippedByDivisor=%d, skippedByRegion=%d, included=%d\n", 
-                skippedByDivisor, skippedByRegion, included);
+        fprintf(preLog, "Result: skippedByDivisor=%d, flashBeats=%zu, zoomBeats=%zu\n",
+                skippedByDivisor, flashBeats.size(), zoomBeats.size());
         fclose(preLog);
     }
 
@@ -2061,26 +2130,23 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         FILE* debugLog = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
         if (debugLog) {
             fprintf(debugLog, "\n--- Effects Debug ---\n");
-            fprintf(debugLog, "Original beats: %zu, After filter: %zu (divisor=%d, region=%.2f-%.2f, hasOrigIdx=%d)\n", 
-                    m_effects.beatTimesInOutput.size(), filteredBeats.size(),
-                    m_effects.effectBeatDivisor, m_effects.effectStartTime, m_effects.effectEndTime,
-                    hasOriginalIndices ? 1 : 0);
-            
+            fprintf(debugLog, "Original beats: %zu, flashBeats: %zu (range=%.2f-%.2f), zoomBeats: %zu (range=%.2f-%.2f)\n",
+                    m_effects.beatTimesInOutput.size(),
+                    flashBeats.size(), flashStart, flashEnd,
+                    zoomBeats.size(), zoomStart, zoomEnd);
+
             // Log original indices for first 20 beats
             fprintf(debugLog, "Original indices (first 20): ");
             for (size_t i = 0; i < m_effects.originalBeatIndices.size() && i < 20; ++i) {
                 fprintf(debugLog, "%zu ", m_effects.originalBeatIndices[i]);
             }
             fprintf(debugLog, "\n");
-            
-            fprintf(debugLog, "Filtered beat times:\n");
-            for (size_t i = 0; i < filteredBeats.size() && i < 20; ++i) {
-                fprintf(debugLog, "  Beat %zu: %.3f sec\n", i, filteredBeats[i]);
+
+            fprintf(debugLog, "Flash beat times (first 20):\n");
+            for (size_t i = 0; i < flashBeats.size() && i < 20; ++i) {
+                fprintf(debugLog, "  Beat %zu: %.3f sec\n", i, flashBeats[i]);
             }
-            if (filteredBeats.size() > 20) {
-                fprintf(debugLog, "  ... and %zu more\n", filteredBeats.size() - 20);
-            }
-            fprintf(debugLog, "BPM: %.2f, enableBeatFlash: %d (intensity=%.2f), enableBeatZoom: %d (intensity=%.2f)\n", 
+            fprintf(debugLog, "BPM: %.2f, enableBeatFlash: %d (intensity=%.2f), enableBeatZoom: %d (intensity=%.2f)\n",
                     m_effects.bpm, m_effects.enableBeatFlash, m_effects.flashIntensity,
                     m_effects.enableBeatZoom, m_effects.zoomIntensity);
             fclose(debugLog);
@@ -2130,8 +2196,8 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
     // - Use NVENC for encoding to leverage GPU
 
     bool useGpuPipeline = cudaAvailable && scaleCudaAvailable && nvencAvailable;
-    bool hasZoomEffect = m_effects.enableBeatZoom && !filteredBeats.empty();
-    bool hasFlashEffect = m_effects.enableBeatFlash && !filteredBeats.empty();
+    bool hasZoomEffect = m_effects.enableBeatZoom && !zoomBeats.empty();
+    bool hasFlashEffect = m_effects.enableBeatFlash && !flashBeats.empty();
 
     // Log GPU pipeline decision
     {
@@ -2183,16 +2249,16 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         double intensity = std::max(0.1, std::min(1.0, m_effects.flashIntensity));
 
         // Split beats into chunks, each handled by a separate eq filter
-        for (size_t chunk = 0; chunk * BEATS_PER_FILTER < filteredBeats.size(); ++chunk) {
+        for (size_t chunk = 0; chunk * BEATS_PER_FILTER < flashBeats.size(); ++chunk) {
             size_t startIdx = chunk * BEATS_PER_FILTER;
-            size_t endIdx = std::min(startIdx + BEATS_PER_FILTER, filteredBeats.size());
+            size_t endIdx = std::min(startIdx + BEATS_PER_FILTER, flashBeats.size());
 
             // Build enable expression for this chunk using between()
             std::ostringstream enableExpr;
             enableExpr << std::fixed << std::setprecision(6);
             for (size_t i = startIdx; i < endIdx; ++i) {
                 if (i > startIdx) enableExpr << "+";
-                double bt = filteredBeats[i];
+                double bt = flashBeats[i];
                 enableExpr << "between(t," << bt << "," << (bt + flashDuration) << ")";
             }
 
@@ -2243,7 +2309,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         prevOutput = priorFilterOutput;
 
         // Calculate total number of chunks upfront so we know which is the last
-        size_t totalChunks = (filteredBeats.size() + BEATS_PER_FILTER - 1) / BEATS_PER_FILTER;
+        size_t totalChunks = (zoomBeats.size() + BEATS_PER_FILTER - 1) / BEATS_PER_FILTER;
 
         // Determine if we can use GPU zoom filters
         // We can use GPU zoom if:
@@ -2263,9 +2329,9 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         }
 
         // Split beats into chunks
-        for (size_t chunk = 0; chunk * BEATS_PER_FILTER < filteredBeats.size(); ++chunk) {
+        for (size_t chunk = 0; chunk * BEATS_PER_FILTER < zoomBeats.size(); ++chunk) {
             size_t startIdx = chunk * BEATS_PER_FILTER;
-            size_t endIdx = std::min(startIdx + BEATS_PER_FILTER, filteredBeats.size());
+            size_t endIdx = std::min(startIdx + BEATS_PER_FILTER, zoomBeats.size());
             bool isLastChunk = (chunk == totalChunks - 1);
 
             // Build enable expression for this chunk
@@ -2273,7 +2339,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
             enableExpr << std::fixed << std::setprecision(6);
             for (size_t i = startIdx; i < endIdx; ++i) {
                 if (i > startIdx) enableExpr << "+";
-                double bt = filteredBeats[i];
+                double bt = zoomBeats[i];
                 enableExpr << "between(t," << bt << "," << (bt + zoomDuration) << ")";
             }
 

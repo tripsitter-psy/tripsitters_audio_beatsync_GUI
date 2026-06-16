@@ -63,6 +63,9 @@ BEATSYNC_API void bs_video_set_progress_callback(void* writer, bs_progress_cb cb
 BEATSYNC_API void bs_video_set_cancel_flag(void* writer, const int* cancel_flag);
 // Check if cancel was requested
 BEATSYNC_API int bs_video_is_cancelled(void* writer);
+// Set output resolution and frame rate (e.g. 1920x1080 landscape, 1080x1920 vertical/portrait).
+// Must be called before cut/normalize operations; defaults are 1920x1080 @ 24fps.
+BEATSYNC_API void bs_video_set_output_settings(void* writer, int width, int height, int fps);
 BEATSYNC_API int bs_video_cut_at_beats(void* writer, const char* inputVideo, const double* beatTimes, size_t count, const char* outputVideo, double clipDuration);
 // Multi-video version: cycles through inputVideos for each beat
 BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVideos, size_t videoCount,
@@ -141,8 +144,23 @@ typedef struct {
 
     int effectBeatDivisor;       // 1=every beat, 2=every 2nd, 4=every 4th, etc.
 
-    double effectStartTime;      // Start time for effects in seconds (0 = from beginning)
-    double effectEndTime;        // End time for effects in seconds (-1 = to end of video)
+    double effectStartTime;      // Global fallback start time for effects (0 = from beginning)
+    double effectEndTime;        // Global fallback end time for effects (-1 = to end of video)
+
+    // Per-effect time ranges.
+    // start=0.0 and end=-1.0 (or <=0) means "use the global effectStartTime/effectEndTime fallback".
+    // Any other combination overrides the global range for that specific effect.
+    double colorGradeStartTime;  // Color grade active from (seconds)
+    double colorGradeEndTime;    // Color grade active until (seconds, -1 = to end)
+
+    double vignetteStartTime;    // Vignette active from (seconds)
+    double vignetteEndTime;      // Vignette active until (seconds, -1 = to end)
+
+    double beatFlashStartTime;   // Beat flash active from (seconds)
+    double beatFlashEndTime;     // Beat flash active until (seconds, -1 = to end)
+
+    double beatZoomStartTime;    // Beat zoom active from (seconds)
+    double beatZoomEndTime;      // Beat zoom active until (seconds, -1 = to end)
 } bs_effects_config_t;
 
 // Set effects configuration on video writer
