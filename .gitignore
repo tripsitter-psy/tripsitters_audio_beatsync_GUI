@@ -68,6 +68,7 @@ assets/loading asset.gif
 vcpkg/
 unreal-prototype/Binaries/
 unreal-prototype/Intermediate/
+unreal-prototype/DerivedDataCache/
 # Note: Saved/ directories are ignored by the general Saved/ pattern above
 
 # Ignore transient CTest artifacts
