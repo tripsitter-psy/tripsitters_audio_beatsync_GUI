@@ -166,6 +166,42 @@ typedef struct {
 // Set effects configuration on video writer
 // Returns 0 on success, non-zero on error
 BEATSYNC_API int bs_video_set_effects_config(void* writer, const bs_effects_config_t* config);
+
+// ---------------------------------------------------------------------------
+// Per-clip speed ramps (slow-mo / speed-up)
+//
+// Speed ramps preserve beat-sync: each affected clip keeps its fixed OUTPUT
+// beat-slot duration. The multiplier only changes how much SOURCE footage is
+// sampled into that slot (source consumed = slotDuration * speed). A multiplier
+// < 1.0 is slow-motion, > 1.0 is speed-up. Audio (the master timeline) is never
+// retimed by this feature. Multipliers are clamped to [0.5, 2.0].
+// ---------------------------------------------------------------------------
+typedef struct {
+    int   enabled;             // 0 = off (no speed ramps applied)
+
+    float affected_fraction;   // 0..1 portion of beat clips affected (random mode)
+    unsigned int seed;         // reproducible randomization seed
+    int   selection_mode;      // 0 = random, 1 = every Nth clip, 2 = every Nth (beat divisor)
+    int   every_n;             // used by selection_mode 1/2
+
+    float speed_up_fraction;   // 0..1 of affected clips that speed up (>1x) vs slow down
+    float slow_min;            // slow-mo range (<1.0); set min==max for fixed amount
+    float slow_max;
+    float fast_min;            // speed-up range (>1.0)
+    float fast_max;
+
+    int   smoothing;           // 0 = duplicate frames, 1 = minterpolate optical flow
+    int   guard_clamp;         // 1 = clamp speed-up to available source, 0 = skip ramp instead
+} bs_speed_config_t;
+
+// Set per-clip speed ramp configuration on video writer.
+// Pass nullptr to reset/disable speed ramps.
+// Returns 0 on success, non-zero on error.
+BEATSYNC_API int bs_video_set_speed_config(void* writer, const bs_speed_config_t* config);
+
+// Number of clips whose speed ramp was clamped/skipped by the source-footage
+// guard during the most recent cut. Returns 0 if writer is null.
+BEATSYNC_API int bs_video_get_speed_clamp_count(void* writer);
 // Apply effects to video using beat times for beat-synced effects
 // Returns 0 on success, non-zero on error
 BEATSYNC_API int bs_video_apply_effects(void* writer, const char* inputVideo,

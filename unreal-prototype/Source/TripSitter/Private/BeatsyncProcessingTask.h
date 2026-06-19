@@ -50,6 +50,8 @@ struct FBeatsyncProcessingParams
     double AudioStart = 0.0;
     double AudioEnd = -1.0;
     FEffectsConfig EffectsConfig;
+    // Per-clip speed ramps (slow-mo / speed-up). Disabled by default.
+    FSpeedRampConfig SpeedConfig;
     // Analysis mode: determines which beat detection method to use
     EAnalysisModeParam AnalysisMode = EAnalysisModeParam::AIBeat;
     // Pre-analyzed beat times from the UI (user-edited markers)

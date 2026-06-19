@@ -427,6 +427,21 @@ void STripSitterMainWidget::Construct(const FArguments& InArgs)
 						.ColorAndOpacity(NeonPurple)
 					]
 
+					// Speed Ramps Section (per-clip slow-mo / speed-up)
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0, 15)
+					[
+						CreateSpeedRampsSection()
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						SNew(SSeparator)
+						.ColorAndOpacity(NeonPurple)
+					]
+
 					// Stems Section (for effect mapping to individual drums/instruments)
 					+ SVerticalBox::Slot()
 					.AutoHeight()
@@ -1384,6 +1399,201 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateEffectsSection()
 					.OnValueChanged_Lambda([this](float Value) {
 						ZoomIntensity = Value;
 					})
+				]
+			]
+		];
+}
+
+TSharedRef<SWidget> STripSitterMainWidget::CreateSpeedRampsSection()
+{
+	return SNew(SVerticalBox)
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 5))
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(TEXT("SPEED RAMPS")))
+			.Font(HeadingFont)
+			.ColorAndOpacity(NeonCyan)
+		]
+
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 2))
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(TEXT("Slow-mo / speed-up on a random subset of beat clips. Clips keep their beat slot, so cuts stay on the beat.")))
+			.ColorAndOpacity(FLinearColor(0.7f, 0.7f, 0.7f))
+			.AutoWrapText(true)
+		]
+
+		// Enable + smoothing toggles
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 8))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0, 0, 30, 0)
+			[
+				SNew(SCheckBox)
+				.IsChecked_Lambda([this] { return bEnableSpeedRamps ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
+					bEnableSpeedRamps = (State == ECheckBoxState::Checked);
+				})
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Enable Speed Ramps")))
+					.ColorAndOpacity(FLinearColor::White)
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			[
+				SNew(SCheckBox)
+				.IsChecked_Lambda([this] { return bSpeedSmoothInterpolate ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
+					bSpeedSmoothInterpolate = (State == ECheckBoxState::Checked);
+				})
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Smooth slow-mo (optical flow, slower render)")))
+					.ColorAndOpacity(FLinearColor::White)
+				]
+			]
+		]
+
+		// Affected fraction + speed-up vs slow-down mix sliders
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 8))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.FillWidth(0.5f)
+			.Padding(0, 0, 20, 0)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text_Lambda([this] {
+						return FText::FromString(FString::Printf(TEXT("Clips affected: %d%%"), FMath::RoundToInt(SpeedAffectedFraction * 100.0f)));
+					})
+					.ColorAndOpacity(FLinearColor::White)
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0, 4, 0, 0)
+				[
+					SNew(SSlider)
+					.Value_Lambda([this] { return SpeedAffectedFraction; })
+					.SliderBarColor(FLinearColor(0.3f, 0.3f, 0.3f))
+					.SliderHandleColor(NeonPurple)
+					.OnValueChanged_Lambda([this](float Value) { SpeedAffectedFraction = Value; })
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.FillWidth(0.5f)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text_Lambda([this] {
+						return FText::FromString(FString::Printf(TEXT("Speed-up vs slow-mo: %d%% fast"), FMath::RoundToInt(SpeedUpFraction * 100.0f)));
+					})
+					.ColorAndOpacity(FLinearColor::White)
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0, 4, 0, 0)
+				[
+					SNew(SSlider)
+					.Value_Lambda([this] { return SpeedUpFraction; })
+					.SliderBarColor(FLinearColor(0.3f, 0.3f, 0.3f))
+					.SliderHandleColor(NeonCyan)
+					.OnValueChanged_Lambda([this](float Value) { SpeedUpFraction = Value; })
+				]
+			]
+		]
+
+		// Slow amount + fast amount + seed spin boxes
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 8))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0, 0, 20, 0)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Slow-mo amount (x)")))
+					.ColorAndOpacity(FLinearColor::White)
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0, 4, 0, 0)
+				[
+					SNew(SSpinBox<float>)
+					.MinValue(0.5f).MaxValue(1.0f)
+					.MinSliderValue(0.5f).MaxSliderValue(1.0f)
+					.Delta(0.05f)
+					.Value_Lambda([this] { return SpeedSlowAmount; })
+					.OnValueChanged_Lambda([this](float Value) { SpeedSlowAmount = Value; })
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0, 0, 20, 0)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Speed-up amount (x)")))
+					.ColorAndOpacity(FLinearColor::White)
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0, 4, 0, 0)
+				[
+					SNew(SSpinBox<float>)
+					.MinValue(1.0f).MaxValue(2.0f)
+					.MinSliderValue(1.0f).MaxSliderValue(2.0f)
+					.Delta(0.05f)
+					.Value_Lambda([this] { return SpeedFastAmount; })
+					.OnValueChanged_Lambda([this](float Value) { SpeedFastAmount = Value; })
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Seed")))
+					.ColorAndOpacity(FLinearColor::White)
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0, 4, 0, 0)
+				[
+					SNew(SSpinBox<int32>)
+					.MinValue(0).MaxValue(99999)
+					.Value_Lambda([this] { return SpeedSeed; })
+					.OnValueChanged_Lambda([this](int32 Value) { SpeedSeed = Value; })
 				]
 			]
 		];
@@ -2676,6 +2886,19 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	// Use enum values directly (conversion to string happens in BeatsyncLoader)
 	Params.EffectsConfig.ColorPreset = ColorPreset;
 	Params.EffectsConfig.TransitionType = TransitionType;
+
+	// Per-clip speed ramps
+	Params.SpeedConfig.bEnabled = bEnableSpeedRamps;
+	Params.SpeedConfig.AffectedFraction = SpeedAffectedFraction;
+	Params.SpeedConfig.Seed = static_cast<uint32>(FMath::Max(0, SpeedSeed));
+	Params.SpeedConfig.SelectionMode = 0; // random
+	Params.SpeedConfig.SpeedUpFraction = SpeedUpFraction;
+	Params.SpeedConfig.SlowMin = SpeedSlowAmount;
+	Params.SpeedConfig.SlowMax = SpeedSlowAmount;
+	Params.SpeedConfig.FastMin = SpeedFastAmount;
+	Params.SpeedConfig.FastMax = SpeedFastAmount;
+	Params.SpeedConfig.Smoothing = bSpeedSmoothInterpolate ? 1 : 0;
+	Params.SpeedConfig.bGuardClampToAvailable = true;
 
 	// Get effect region from waveform viewer (if any effect regions are defined)
 	// Use the first effect region that matches enabled effects, or the whole selection range

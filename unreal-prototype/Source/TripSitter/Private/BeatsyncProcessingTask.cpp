@@ -600,6 +600,16 @@ void FBeatsyncProcessingTask::DoWork()
         Params.bIsMultiClip ? 1 : 0, VideosToProcess.Num(), FilteredBeats.Num(), ClipDuration);
     UE_LOG(LogTemp, Warning, TEXT("TripSitter: CUT DIAGNOSTIC - TempVideoPath=%s"), *TempVideoPath);
 
+    // Configure per-clip speed ramps on the writer before cutting (applies to
+    // both the multi- and single-video paths). Disabled config is a no-op.
+    FBeatsyncLoader::SetSpeedConfig(Writer, Params.SpeedConfig);
+    if (Params.SpeedConfig.bEnabled)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("TripSitter: Speed ramps ENABLED (mode=%d, affected=%.2f, seed=%u, smoothing=%d)"),
+            Params.SpeedConfig.SelectionMode, Params.SpeedConfig.AffectedFraction,
+            Params.SpeedConfig.Seed, Params.SpeedConfig.Smoothing);
+    }
+
     if (Params.bIsMultiClip && VideosToProcess.Num() > 1)
     {
         UE_LOG(LogTemp, Warning, TEXT("TripSitter: TAKING MULTI-VIDEO PATH with %d videos"), VideosToProcess.Num());

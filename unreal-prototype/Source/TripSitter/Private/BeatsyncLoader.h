@@ -113,6 +113,25 @@ struct FEffectsConfig
     double EffectEndTime = -1.0;
 };
 
+// Per-clip speed ramp configuration (slow-mo / speed-up).
+// Affected clips keep their beat-slot duration; the multiplier only changes how
+// much source footage is sampled into the slot. Multipliers clamp to [0.5, 2.0].
+struct FSpeedRampConfig
+{
+    bool bEnabled = false;
+    float AffectedFraction = 0.25f;   // 0..1 portion of beat clips affected (random mode)
+    uint32 Seed = 0;                  // reproducible randomization
+    int32 SelectionMode = 0;          // 0=random, 1=every Nth, 2=every Nth (beat divisor)
+    int32 EveryN = 4;
+    float SpeedUpFraction = 0.5f;     // of affected clips, portion that speed up (>1x)
+    float SlowMin = 0.5f;             // slow-mo range (<1.0); min==max for fixed amount
+    float SlowMax = 0.5f;
+    float FastMin = 2.0f;             // speed-up range (>1.0)
+    float FastMax = 2.0f;
+    int32 Smoothing = 0;              // 0=duplicate frames, 1=minterpolate optical flow
+    bool bGuardClampToAvailable = true;
+};
+
 // AI configuration for ONNX neural network analysis
 struct FAIConfig
 {
@@ -207,6 +226,11 @@ public:
     static void SetEffectsConfig(void* Handle, const FEffectsConfig& Config);
     static bool ApplyEffects(void* Handle, const FString& InputVideo, const FString& OutputVideo,
                               const TArray<double>& BeatTimes);
+
+    // Per-clip speed ramps. Call before a cut operation. Pass bEnabled=false to disable.
+    static void SetSpeedConfig(void* Handle, const FSpeedRampConfig& Config);
+    // Clips clamped/skipped by the source-footage guard during the most recent cut.
+    static int32 GetSpeedClampCount(void* Handle);
 
     // Frame Extraction
     static bool ExtractFrame(const FString& VideoPath, double Timestamp,

@@ -159,6 +159,16 @@ private:
 	EColorPreset ColorPreset = EColorPreset::Warm;
 	ETransitionType TransitionType = ETransitionType::Fade;
 
+	// Per-clip speed ramps (slow-mo / speed-up). Affected clips keep their
+	// beat-slot length; the multiplier only changes how much source is sampled.
+	bool bEnableSpeedRamps = false;
+	float SpeedAffectedFraction = 0.25f;  // 0..1 portion of clips affected
+	float SpeedUpFraction = 0.5f;         // of affected, portion that speed up vs slow down
+	float SpeedSlowAmount = 0.5f;         // slow-mo multiplier (0.5 = half speed)
+	float SpeedFastAmount = 2.0f;         // speed-up multiplier (2.0 = double speed)
+	bool bSpeedSmoothInterpolate = false; // false = duplicate frames, true = minterpolate
+	int32 SpeedSeed = 1;                  // reproducible randomization
+
 	// Stem configurations (Kick, Snare, HiHat, Synth)
 	TStaticArray<FStemConfig, STEM_COUNT> StemConfigs;
 	TArray<TSharedPtr<FString>> StemEffectOptions;
@@ -229,6 +239,7 @@ private:
 	TSharedRef<SWidget> CreateWaveformSection();
 	TSharedRef<SWidget> CreateAnalysisSection();
 	TSharedRef<SWidget> CreateEffectsSection();
+	TSharedRef<SWidget> CreateSpeedRampsSection();
 	TSharedRef<SWidget> CreateTransitionsSection();
 	TSharedRef<SWidget> CreateControlSection();
 	TSharedRef<SWidget> CreateStemsSection();

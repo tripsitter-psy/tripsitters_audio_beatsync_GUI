@@ -14,6 +14,9 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <random>
+#include <algorithm>
+#include <cmath>
 
 // libavformat for audio stream probing
 extern "C" {
@@ -404,6 +407,15 @@ bool VideoWriter::cutAtBeats(const std::string& inputVideo,
         segments.push_back(seg);
     }
 
+    // Per-clip speed ramps: assign a deterministic multiplier to each segment.
+    // The source-footage guard is applied per-clip inside extractSegments.
+    if (m_speed.enabled && !segments.empty()) {
+        std::vector<double> speeds = computeClipSpeeds(segments.size(), m_speed);
+        for (size_t i = 0; i < segments.size(); ++i) {
+            segments[i].speed = speeds[i];
+        }
+    }
+
     return extractSegments(inputVideo, segments, outputVideo);
 }
 
@@ -425,6 +437,23 @@ bool VideoWriter::extractSegments(const std::string& inputVideo,
     if (segments.empty()) {
         m_lastError = "No segments to extract";
         return false;
+    }
+
+    // Per-clip speed ramp setup: if any segment requests a speed != 1.0, probe
+    // the source length once so the source-footage guard can clamp speed-ups
+    // that would overrun the end of the video.
+    m_speedClampCount.store(0);
+    bool anySpeed = false;
+    for (const auto& s : segments) {
+        if (std::abs(s.speed - 1.0) > 1e-6) { anySpeed = true; break; }
+    }
+    double sourceLen = 0.0;
+    if (anySpeed) {
+        VideoProcessor proc;
+        if (proc.open(inputVideo)) {
+            sourceLen = proc.getInfo().duration;
+            proc.close();
+        }
     }
 
     // Use OS temp directory for intermediate segment files to avoid write-permission
@@ -481,10 +510,35 @@ bool VideoWriter::extractSegments(const std::string& inputVideo,
                 reportProgress(i / (double)segments.size() * 0.9);
             }
 
-            // Try fast copy, then precise copy as fallback
-            bool success = copySegmentFast(inputVideo, seg.startTime, duration, outFile);
-            if (!success) {
-                success = copySegmentPrecise(inputVideo, seg.startTime, duration, outFile);
+            // Per-clip speed ramp: a clip with speed != 1.0 must re-encode
+            // (stream copy cannot retime), so skip the fast path. The output
+            // clip stays `duration` long; source consumed = duration * speed.
+            double clipSpeed = seg.speed;
+            if (std::abs(clipSpeed - 1.0) > 1e-6) {
+                // Source-footage guard (speed-up only; slow-mo consumes less).
+                if (clipSpeed > 1.0 && sourceLen > 0.0) {
+                    double needed = duration * clipSpeed;
+                    double available = sourceLen - seg.startTime;
+                    if (needed > available) {
+                        m_speedClampCount.fetch_add(1);
+                        double maxSpeed = (duration > 0.0) ? (available / duration) : 1.0;
+                        clipSpeed = (m_speed.guardClampToAvailable && maxSpeed > 1.001)
+                                        ? std::min(clipSpeed, maxSpeed)
+                                        : 1.0;
+                    }
+                }
+            }
+
+            bool success;
+            if (std::abs(clipSpeed - 1.0) > 1e-6) {
+                success = copySegmentPrecise(inputVideo, seg.startTime, duration, outFile,
+                                             clipSpeed, m_speed.smoothing);
+            } else {
+                // Try fast copy, then precise copy as fallback
+                success = copySegmentFast(inputVideo, seg.startTime, duration, outFile);
+                if (!success) {
+                    success = copySegmentPrecise(inputVideo, seg.startTime, duration, outFile);
+                }
             }
 
             if (!success) {
@@ -798,7 +852,9 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
 bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
                                      double startTime,
                                      double duration,
-                                     const std::string& outputVideo) {
+                                     const std::string& outputVideo,
+                                     double speed,
+                                     int smoothing) {
     // Clamp very small start times to zero - values like 2e-05 (0.00002s) are essentially zero
     // and can cause FFmpeg errors with scientific notation even with std::fixed in some cases
     if (startTime < 0.001) {
@@ -829,6 +885,34 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
         }
     }
 
+    // Per-clip speed ramp: setpts retimes the video so that `duration` seconds
+    // of OUTPUT are produced while FFmpeg consumes `duration * speed` of source.
+    // The output `-t duration` (below) caps the slot, so the source amount is
+    // governed automatically. speed is clamped so a single atempo keeps audio
+    // length consistent for concatenation. See SpeedRampConfig.
+    bool applySpeed = (speed > 0.0 && std::abs(speed - 1.0) > 1e-6);
+    double clampedSpeed = speed;
+    if (applySpeed) {
+        clampedSpeed = std::max(static_cast<double>(SpeedRampConfig::kMinSpeed),
+                                std::min(static_cast<double>(SpeedRampConfig::kMaxSpeed), clampedSpeed));
+    }
+    const double ptsFactor = applySpeed ? (1.0 / clampedSpeed) : 1.0;
+
+    // Build the video-retime + framerate suffix appended to the filter chain.
+    // - dup-frame smoothing: setpts then plain fps (may judder on slow-mo).
+    // - minterpolate smoothing: motion-compensated frame interpolation to fps.
+    std::ostringstream retimeFps;
+    retimeFps << std::fixed << std::setprecision(6);
+    if (applySpeed) {
+        retimeFps << ",setpts=" << ptsFactor << "*(PTS-STARTPTS)";
+    }
+    if (applySpeed && smoothing == 1) {
+        retimeFps << ",minterpolate=fps=" << m_outputFps << ":mi_mode=mci:me_mode=bidir:vsbmc=1";
+    } else {
+        retimeFps << ",fps=" << m_outputFps;
+    }
+    const std::string retimeFpsStr = retimeFps.str();
+
     // Use fixed-point notation for time values - FFmpeg doesn't accept scientific notation (e.g., 2e-05)
     cmd << std::fixed << std::setprecision(6);
     cmd << " -i \"" << inputVideo << "\""
@@ -843,12 +927,20 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
         cmd << " -vf \"scale_cuda=" << m_outputWidth << ":" << m_outputHeight
             << ":force_original_aspect_ratio=decrease,hwdownload,format=nv12"
             << ",pad=" << m_outputWidth << ":" << m_outputHeight
-            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1" << retimeFpsStr << "\"";
     } else {
         // CPU filter chain (original behavior)
         cmd << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
             << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
-            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1" << retimeFpsStr << "\"";
+    }
+
+    // Retime audio to match the new video length so this segment file stays
+    // internally A/V-consistent for concatenation. atempo is valid for the
+    // clamped [0.5, 2.0] speed range. (The final master audio is muxed later.)
+    if (applySpeed) {
+        cmd << " -af \"atempo=" << std::fixed << std::setprecision(6) << clampedSpeed << "\"";
+        cmd << std::defaultfloat;
     }
 
     // Always use best available encoder (GPU preferred)
@@ -1902,6 +1994,79 @@ void VideoWriter::resetSegmentCounter() {
 
 void VideoWriter::setEffectsConfig(const EffectsConfig& config) {
     m_effects = config;
+}
+
+void VideoWriter::setSpeedConfig(const SpeedRampConfig& config) {
+    m_speed = config;
+    m_speedClampCount.store(0);
+}
+
+std::vector<double> VideoWriter::computeClipSpeeds(size_t clipCount, const SpeedRampConfig& config) {
+    std::vector<double> speeds(clipCount, 1.0);
+    if (!config.enabled || clipCount == 0) {
+        return speeds;
+    }
+
+    // Clamp configuration into valid ranges.
+    auto clampSpeed = [](float v) {
+        return std::max(SpeedRampConfig::kMinSpeed, std::min(SpeedRampConfig::kMaxSpeed, v));
+    };
+    const double slowLo = clampSpeed(std::min(config.slowMin, config.slowMax));
+    const double slowHi = clampSpeed(std::max(config.slowMin, config.slowMax));
+    const double fastLo = clampSpeed(std::min(config.fastMin, config.fastMax));
+    const double fastHi = clampSpeed(std::max(config.fastMin, config.fastMax));
+    const float affected = std::max(0.0f, std::min(1.0f, config.affectedFraction));
+    const float upFrac = std::max(0.0f, std::min(1.0f, config.speedUpFraction));
+    const int everyN = std::max(1, config.everyN);
+
+    // Single deterministic RNG seeded by config.seed → reproducible edits.
+    std::mt19937 rng(config.seed);
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+
+    // Decide which clip indices are affected.
+    std::vector<size_t> selected;
+    if (config.selectionMode == 1 || config.selectionMode == 2) {
+        // Deterministic every-Nth selection (mode 2 is treated the same here;
+        // beat-divisor nuance can be layered in by the caller via everyN).
+        for (size_t i = 0; i < clipCount; ++i) {
+            if ((i % static_cast<size_t>(everyN)) == 0) {
+                selected.push_back(i);
+            }
+        }
+    } else {
+        // Random selection of round(affected * clipCount) distinct clips.
+        size_t target = static_cast<size_t>(std::llround(affected * static_cast<double>(clipCount)));
+        target = std::min(target, clipCount);
+        std::vector<size_t> pool(clipCount);
+        for (size_t i = 0; i < clipCount; ++i) pool[i] = i;
+        std::shuffle(pool.begin(), pool.end(), rng);
+        selected.assign(pool.begin(), pool.begin() + target);
+    }
+
+    // Assign direction + amount to each selected clip.
+    for (size_t idx : selected) {
+        const bool speedUp = (unit(rng) < upFrac);
+        double s;
+        if (speedUp) {
+            s = (fastHi > fastLo) ? (fastLo + unit(rng) * (fastHi - fastLo)) : fastLo;
+        } else {
+            s = (slowHi > slowLo) ? (slowLo + unit(rng) * (slowHi - slowLo)) : slowLo;
+        }
+        speeds[idx] = clampSpeed(static_cast<float>(s));
+    }
+
+    return speeds;
+}
+
+bool VideoWriter::extractSpeedClip(const std::string& inputVideo,
+                                   double sourceStart,
+                                   double outputDuration,
+                                   double speed,
+                                   const std::string& outputVideo) {
+    // Speed clips always re-encode (stream copy cannot retime). Honor the
+    // configured smoothing mode. copySegmentPrecise handles speed == 1.0 too.
+    return copySegmentPrecise(inputVideo, sourceStart, outputDuration,
+                              outputVideo, speed, m_speed.smoothing);
 }
 
 std::string VideoWriter::getColorGradeFilter(const std::string& preset) const {

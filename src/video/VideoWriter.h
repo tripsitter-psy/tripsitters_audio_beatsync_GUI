@@ -6,6 +6,8 @@
 #include <vector>
 #include <functional>
 #include <mutex>
+#include <atomic>
+#include <cstdint>
 
 // Forward declarations
 struct AVFormatContext;
@@ -89,12 +91,51 @@ struct EffectsConfig {
 };
 
 /**
+ * @brief Configuration for per-clip speed ramps (slow-mo / speed-up)
+ *
+ * Speed ramps preserve beat-sync: each affected clip keeps its fixed OUTPUT
+ * beat-slot duration. The multiplier only changes how much SOURCE footage is
+ * sampled into that slot (source consumed = slotDuration * speed), via setpts.
+ * A multiplier < 1.0 is slow-motion, > 1.0 is speed-up. Audio (the master
+ * timeline) is never retimed by this feature.
+ */
+struct SpeedRampConfig {
+    bool enabled = false;
+
+    // Selection: which beat clips get a speed ramp.
+    float affectedFraction = 0.25f;  // 0..1 portion of eligible clips affected
+    uint32_t seed = 0;               // reproducible randomization
+    int selectionMode = 0;           // 0=random, 1=every Nth clip, 2=every Nth via beat divisor
+    int everyN = 4;                  // used by selectionMode 1/2
+
+    // Direction + amount. Multipliers are clamped to [0.5, 2.0] so a single
+    // atempo can keep per-clip audio length consistent for concatenation.
+    float speedUpFraction = 0.5f;    // of affected clips, portion that speed up (>1x) vs slow down
+    float slowMin = 0.5f;            // slow-mo range (<1.0); set min==max for a fixed amount
+    float slowMax = 0.5f;
+    float fastMin = 2.0f;            // speed-up range (>1.0)
+    float fastMax = 2.0f;
+
+    // Smoothness of the retimed video.
+    int smoothing = 0;               // 0=duplicate frames (fast), 1=minterpolate optical flow (smoother)
+
+    // Source-footage guard: clamp the multiplier toward 1.0 (or skip the ramp)
+    // when a speed-up would need more source than is available from the clip's
+    // start. When false, the ramp is skipped rather than clamped.
+    bool guardClampToAvailable = true;
+
+    static constexpr float kMinSpeed = 0.5f;
+    static constexpr float kMaxSpeed = 2.0f;
+};
+
+/**
  * @brief Video segment definition
  */
 struct VideoSegment {
     double startTime;  // Start time in seconds
     double endTime;    // End time in seconds
     std::string label; // Optional label for this segment
+    double speed = 1.0; // Per-clip speed multiplier (1.0 = unchanged). See SpeedRampConfig.
 };
 
 /**
@@ -214,6 +255,58 @@ public:
     void setEffectsConfig(const EffectsConfig& config);
 
     /**
+     * @brief Set per-clip speed ramp configuration
+     * @param config Speed ramp configuration
+     */
+    void setSpeedConfig(const SpeedRampConfig& config);
+
+    /**
+     * @brief Get the active speed ramp configuration
+     */
+    const SpeedRampConfig& getSpeedConfig() const { return m_speed; }
+
+    /**
+     * @brief Compute a deterministic per-clip speed multiplier for each clip.
+     *
+     * Returns a vector of size clipCount. Clips not selected for a ramp get 1.0.
+     * Selection and amounts are reproducible for a given config.seed. The
+     * source-footage guard is NOT applied here (it needs per-clip source
+     * availability) — apply it at extraction time.
+     *
+     * @param clipCount Number of beat clips
+     * @param config Speed ramp configuration
+     * @return Per-clip multipliers (1.0 = unchanged)
+     */
+    static std::vector<double> computeClipSpeeds(size_t clipCount, const SpeedRampConfig& config);
+
+    /**
+     * @brief Extract a single clip applying a per-clip speed multiplier (re-encodes).
+     *
+     * The output clip is always outputDuration seconds long (the beat slot);
+     * source consumed = outputDuration * speed. speed < 1.0 is slow-motion,
+     * > 1.0 is speed-up. speed == 1.0 behaves like a precise (re-encoded) copy.
+     * Honors the active SpeedRampConfig.smoothing mode.
+     *
+     * @param inputVideo Source video path
+     * @param sourceStart Start position in source (seconds)
+     * @param outputDuration Output (beat-slot) duration (seconds)
+     * @param speed Per-clip speed multiplier (clamped to [0.5, 2.0])
+     * @param outputVideo Output clip path
+     * @return true if successful
+     */
+    bool extractSpeedClip(const std::string& inputVideo,
+                          double sourceStart,
+                          double outputDuration,
+                          double speed,
+                          const std::string& outputVideo);
+
+    /**
+     * @brief Number of clips whose speed ramp was clamped/skipped by the
+     * source-footage guard during the most recent extraction batch.
+     */
+    size_t getLastSpeedClampCount() const { return m_speedClampCount.load(); }
+
+    /**
      * @brief Apply effects to concatenated video
      * @param inputVideo Path to concatenated video
      * @param outputVideo Path to output video with effects
@@ -260,6 +353,12 @@ private:
     // Effects configuration
     EffectsConfig m_effects;
 
+    // Per-clip speed ramp configuration
+    SpeedRampConfig m_speed;
+
+    // Count of clips clamped/skipped by the source-footage guard in the current batch.
+    mutable std::atomic<size_t> m_speedClampCount{0};
+
     /**
      * @brief Build FFmpeg filter chain from effects config
      * @return Filter chain string for -vf parameter
@@ -279,11 +378,18 @@ private:
 
     /**
      * @brief Copy video segment with re-encoding (slower, more precise)
+     *
+     * @param speed Per-clip speed multiplier (1.0 = none). When != 1.0, applies
+     *        setpts video retiming + atempo audio so the output is `duration`
+     *        seconds long while consuming `duration * speed` of source.
+     * @param smoothing 0 = duplicate frames, 1 = minterpolate optical flow.
      */
     bool copySegmentPrecise(const std::string& inputVideo,
                            double startTime,
                            double duration,
-                           const std::string& outputVideo);
+                           const std::string& outputVideo,
+                           double speed = 1.0,
+                           int smoothing = 0);
 
     /**
      * @brief Get FFmpeg executable path

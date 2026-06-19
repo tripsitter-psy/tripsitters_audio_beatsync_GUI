@@ -65,7 +65,25 @@ struct bs_effects_config_t {
     double effectEndTime;
 };
 
+// Speed ramp config structure matching C API (bs_speed_config_t)
+struct bs_speed_config_t {
+    int enabled;
+    float affected_fraction;
+    unsigned int seed;
+    int selection_mode;
+    int every_n;
+    float speed_up_fraction;
+    float slow_min;
+    float slow_max;
+    float fast_min;
+    float fast_max;
+    int smoothing;
+    int guard_clamp;
+};
+
 using bs_video_set_effects_config_t = void (*)(void*, const bs_effects_config_t*);
+using bs_video_set_speed_config_t = int (*)(void*, const bs_speed_config_t*);
+using bs_video_get_speed_clamp_count_t = int (*)(void*);
 using bs_video_apply_effects_t = int (*)(void*, const char*, const char*, const double*, size_t);
 using bs_video_extract_frame_t = int (*)(const char*, double, unsigned char**, int*, int*);
 using bs_free_frame_data_t = void (*)(unsigned char*);
@@ -138,6 +156,8 @@ struct FBeatsyncApi
     bs_get_waveform_bands_t get_waveform_bands = nullptr;
     bs_free_waveform_bands_t free_waveform_bands = nullptr;
     bs_video_set_effects_config_t video_set_effects_config = nullptr;
+    bs_video_set_speed_config_t video_set_speed_config = nullptr;
+    bs_video_get_speed_clamp_count_t video_get_speed_clamp_count = nullptr;
     bs_video_apply_effects_t video_apply_effects = nullptr;
     bs_video_extract_frame_t video_extract_frame = nullptr;
     bs_free_frame_data_t free_frame_data = nullptr;
@@ -274,6 +294,8 @@ bool FBeatsyncLoader::Initialize()
     GApi.get_waveform_bands = (bs_get_waveform_bands_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_get_waveform_bands"));
     GApi.free_waveform_bands = (bs_free_waveform_bands_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_waveform_bands"));
     GApi.video_set_effects_config = (bs_video_set_effects_config_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_effects_config"));
+    GApi.video_set_speed_config = (bs_video_set_speed_config_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_speed_config"));
+    GApi.video_get_speed_clamp_count = (bs_video_get_speed_clamp_count_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_get_speed_clamp_count"));
     GApi.video_apply_effects = (bs_video_apply_effects_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_apply_effects"));
     GApi.video_extract_frame = (bs_video_extract_frame_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_extract_frame"));
     GApi.free_frame_data = (bs_free_frame_data_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_frame_data"));
@@ -774,6 +796,33 @@ void FBeatsyncLoader::SetEffectsConfig(void* Handle, const FEffectsConfig& Confi
     CConfig.effectEndTime = Config.EffectEndTime;
 
     GApi.video_set_effects_config(Handle, &CConfig);
+}
+
+void FBeatsyncLoader::SetSpeedConfig(void* Handle, const FSpeedRampConfig& Config)
+{
+    if (!GApi.video_set_speed_config || !Handle) return;
+
+    bs_speed_config_t CConfig = {};
+    CConfig.enabled           = Config.bEnabled ? 1 : 0;
+    CConfig.affected_fraction = Config.AffectedFraction;
+    CConfig.seed              = Config.Seed;
+    CConfig.selection_mode    = Config.SelectionMode;
+    CConfig.every_n           = FMath::Max(1, Config.EveryN);
+    CConfig.speed_up_fraction = Config.SpeedUpFraction;
+    CConfig.slow_min          = Config.SlowMin;
+    CConfig.slow_max          = Config.SlowMax;
+    CConfig.fast_min          = Config.FastMin;
+    CConfig.fast_max          = Config.FastMax;
+    CConfig.smoothing         = Config.Smoothing;
+    CConfig.guard_clamp       = Config.bGuardClampToAvailable ? 1 : 0;
+
+    GApi.video_set_speed_config(Handle, &CConfig);
+}
+
+int32 FBeatsyncLoader::GetSpeedClampCount(void* Handle)
+{
+    if (!GApi.video_get_speed_clamp_count || !Handle) return 0;
+    return GApi.video_get_speed_clamp_count(Handle);
 }
 
 bool FBeatsyncLoader::ApplyEffects(void* Handle, const FString& InputVideo, const FString& OutputVideo,
