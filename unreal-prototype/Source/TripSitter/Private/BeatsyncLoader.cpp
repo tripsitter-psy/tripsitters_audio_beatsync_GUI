@@ -84,6 +84,7 @@ struct bs_speed_config_t {
 using bs_video_set_effects_config_t = void (*)(void*, const bs_effects_config_t*);
 using bs_video_set_speed_config_t = int (*)(void*, const bs_speed_config_t*);
 using bs_video_get_speed_clamp_count_t = int (*)(void*);
+using bs_video_set_interpolation_model_t = int (*)(void*, const char*);
 using bs_video_apply_effects_t = int (*)(void*, const char*, const char*, const double*, size_t);
 using bs_video_extract_frame_t = int (*)(const char*, double, unsigned char**, int*, int*);
 using bs_free_frame_data_t = void (*)(unsigned char*);
@@ -158,6 +159,7 @@ struct FBeatsyncApi
     bs_video_set_effects_config_t video_set_effects_config = nullptr;
     bs_video_set_speed_config_t video_set_speed_config = nullptr;
     bs_video_get_speed_clamp_count_t video_get_speed_clamp_count = nullptr;
+    bs_video_set_interpolation_model_t video_set_interpolation_model = nullptr;
     bs_video_apply_effects_t video_apply_effects = nullptr;
     bs_video_extract_frame_t video_extract_frame = nullptr;
     bs_free_frame_data_t free_frame_data = nullptr;
@@ -296,6 +298,7 @@ bool FBeatsyncLoader::Initialize()
     GApi.video_set_effects_config = (bs_video_set_effects_config_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_effects_config"));
     GApi.video_set_speed_config = (bs_video_set_speed_config_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_speed_config"));
     GApi.video_get_speed_clamp_count = (bs_video_get_speed_clamp_count_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_get_speed_clamp_count"));
+    GApi.video_set_interpolation_model = (bs_video_set_interpolation_model_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_interpolation_model"));
     GApi.video_apply_effects = (bs_video_apply_effects_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_apply_effects"));
     GApi.video_extract_frame = (bs_video_extract_frame_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_extract_frame"));
     GApi.free_frame_data = (bs_free_frame_data_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_frame_data"));
@@ -823,6 +826,13 @@ int32 FBeatsyncLoader::GetSpeedClampCount(void* Handle)
 {
     if (!GApi.video_get_speed_clamp_count || !Handle) return 0;
     return GApi.video_get_speed_clamp_count(Handle);
+}
+
+void FBeatsyncLoader::SetInterpolationModel(void* Handle, const FString& OnnxPath)
+{
+    if (!GApi.video_set_interpolation_model || !Handle) return;
+    FTCHARToUTF8 PathUtf8(*OnnxPath);
+    GApi.video_set_interpolation_model(Handle, PathUtf8.Get());
 }
 
 bool FBeatsyncLoader::ApplyEffects(void* Handle, const FString& InputVideo, const FString& OutputVideo,

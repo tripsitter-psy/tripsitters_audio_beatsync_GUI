@@ -175,6 +175,7 @@ if(USE_ONNX)
             src/audio/OnnxBeatDetector.cpp
             src/audio/OnnxStemSeparator.cpp
             src/audio/OnnxMusicAnalyzer.cpp
+            src/video/OnnxFrameInterpolator.cpp
         )
         add_definitions(-DUSE_ONNX)
 

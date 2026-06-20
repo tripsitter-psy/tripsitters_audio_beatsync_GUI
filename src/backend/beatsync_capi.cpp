@@ -1308,6 +1308,21 @@ BEATSYNC_API int bs_video_get_speed_clamp_count(void* writer) {
     }
 }
 
+BEATSYNC_API int bs_video_set_interpolation_model(void* writer, const char* onnxPath) {
+    if (!writer) return 1;
+    try {
+        auto* w = static_cast<BeatSync::VideoWriter*>(writer);
+        w->setInterpolationModelPath(onnxPath ? onnxPath : "");
+        return 0;
+    } catch (const std::exception& e) {
+        s_lastError = e.what();
+        return 3;
+    } catch (...) {
+        s_lastError = "unknown error in bs_video_set_interpolation_model";
+        return 4;
+    }
+}
+
 BEATSYNC_API int bs_video_apply_effects(void* writer, const char* inputVideo,
                                          const char* outputVideo,
                                          const double* beatTimes, size_t beatCount) {

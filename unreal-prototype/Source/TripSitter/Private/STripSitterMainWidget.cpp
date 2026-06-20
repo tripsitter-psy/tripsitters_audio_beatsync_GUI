@@ -1465,6 +1465,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateSpeedRampsSection()
 			]
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
+			.Padding(0, 0, 30, 0)
 			[
 				SNew(SCheckBox)
 				.IsChecked_Lambda([this] { return bSpeedSmoothInterpolate ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
@@ -1473,8 +1474,22 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateSpeedRampsSection()
 				})
 				[
 					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("Smooth slow-mo (optical flow, slower render)")))
+					.Text(FText::FromString(TEXT("Smooth slow-mo (optical flow)")))
 					.ColorAndOpacity(FLinearColor::White)
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			[
+				SNew(SCheckBox)
+				.IsChecked_Lambda([this] { return bSpeedUseRife ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
+					bSpeedUseRife = (State == ECheckBoxState::Checked);
+				})
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("AI interpolation (RIFE, needs model)")))
+					.ColorAndOpacity(NeonCyan)
 				]
 			]
 		]
@@ -3177,7 +3192,8 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	Params.SpeedConfig.SlowMax = SpeedSlowAmount;
 	Params.SpeedConfig.FastMin = SpeedFastAmount;
 	Params.SpeedConfig.FastMax = SpeedFastAmount;
-	Params.SpeedConfig.Smoothing = bSpeedSmoothInterpolate ? 1 : 0;
+	// Smoothing: 0 = duplicate frames, 1 = minterpolate, 2 = RIFE (AI). RIFE wins.
+	Params.SpeedConfig.Smoothing = bSpeedUseRife ? 2 : (bSpeedSmoothInterpolate ? 1 : 0);
 	Params.SpeedConfig.bGuardClampToAvailable = true;
 
 	// Dynamic sync (per-section beat divisor)

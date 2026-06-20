@@ -202,6 +202,12 @@ BEATSYNC_API int bs_video_set_speed_config(void* writer, const bs_speed_config_t
 // Number of clips whose speed ramp was clamped/skipped by the source-footage
 // guard during the most recent cut. Returns 0 if writer is null.
 BEATSYNC_API int bs_video_get_speed_clamp_count(void* writer);
+
+// Set the RIFE ONNX model path used for neural slow-mo interpolation
+// (speed config smoothing == 2). Pass nullptr/empty to clear. If unset or the
+// model fails to load, smoothing == 2 falls back to minterpolate.
+// Returns 0 on success, non-zero on error.
+BEATSYNC_API int bs_video_set_interpolation_model(void* writer, const char* onnxPath);
 // Apply effects to video using beat times for beat-synced effects
 // Returns 0 on success, non-zero on error
 BEATSYNC_API int bs_video_apply_effects(void* writer, const char* inputVideo,

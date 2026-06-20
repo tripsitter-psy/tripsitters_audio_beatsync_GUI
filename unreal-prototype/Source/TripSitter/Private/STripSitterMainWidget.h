@@ -166,7 +166,8 @@ private:
 	float SpeedUpFraction = 0.5f;         // of affected, portion that speed up vs slow down
 	float SpeedSlowAmount = 0.5f;         // slow-mo multiplier (0.5 = half speed)
 	float SpeedFastAmount = 2.0f;         // speed-up multiplier (2.0 = double speed)
-	bool bSpeedSmoothInterpolate = false; // false = duplicate frames, true = minterpolate
+	bool bSpeedSmoothInterpolate = false; // minterpolate optical-flow smoothing
+	bool bSpeedUseRife = false;           // AI neural interpolation (RIFE); overrides minterpolate
 	int32 SpeedSeed = 1;                  // reproducible randomization
 
 	// Dynamic sync: per-section beat divisor that varies across the track.

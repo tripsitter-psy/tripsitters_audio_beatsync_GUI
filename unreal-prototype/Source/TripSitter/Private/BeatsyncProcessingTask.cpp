@@ -698,6 +698,30 @@ void FBeatsyncProcessingTask::DoWork()
             Params.SpeedConfig.Seed, Params.SpeedConfig.Smoothing);
     }
 
+    // Neural slow-mo interpolation (smoothing == 2) needs the RIFE ONNX model.
+    // Resolve models/rife.onnx next to the executable (ThirdParty fallback).
+    if (Params.SpeedConfig.bEnabled && Params.SpeedConfig.Smoothing == 2)
+    {
+        FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
+        FString RifePath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("rife.onnx"));
+        if (!FPaths::FileExists(RifePath))
+        {
+            FString Alt = FPaths::Combine(ExeDir, TEXT(".."), TEXT(".."), TEXT("Source"), TEXT("Programs"),
+                                          TEXT("TripSitter"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("models"), TEXT("rife.onnx"));
+            Alt = FPaths::ConvertRelativePathToFull(Alt);
+            if (FPaths::FileExists(Alt)) RifePath = Alt;
+        }
+        if (FPaths::FileExists(RifePath))
+        {
+            FBeatsyncLoader::SetInterpolationModel(Writer, RifePath);
+            UE_LOG(LogTemp, Warning, TEXT("TripSitter: RIFE interpolation model: %s"), *RifePath);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("TripSitter: RIFE model not found (models/rife.onnx); slow-mo will fall back to minterpolate"));
+        }
+    }
+
     if (Params.bIsMultiClip && VideosToProcess.Num() > 1)
     {
         UE_LOG(LogTemp, Warning, TEXT("TripSitter: TAKING MULTI-VIDEO PATH with %d videos"), VideosToProcess.Num());

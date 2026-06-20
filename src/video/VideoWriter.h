@@ -8,6 +8,7 @@
 #include <mutex>
 #include <atomic>
 #include <cstdint>
+#include <memory>
 
 // Forward declarations
 struct AVFormatContext;
@@ -16,6 +17,8 @@ struct SwsContext;
 class VideoWriterTestAccess;  // Test access helper
 
 namespace BeatSync {
+
+class OnnxFrameInterpolator;  // Neural frame interpolation (RIFE), optional
 
 /**
  * @brief Information about a detected video encoder
@@ -301,6 +304,13 @@ public:
                           const std::string& outputVideo);
 
     /**
+     * @brief Set the path to the RIFE ONNX model used for neural slow-mo
+     * interpolation (SpeedRampConfig.smoothing == 2). If unset or the model
+     * fails to load, interpolation falls back to minterpolate.
+     */
+    void setInterpolationModelPath(const std::string& path);
+
+    /**
      * @brief Number of clips whose speed ramp was clamped/skipped by the
      * source-footage guard during the most recent extraction batch.
      */
@@ -359,6 +369,12 @@ private:
     // Count of clips clamped/skipped by the source-footage guard in the current batch.
     mutable std::atomic<size_t> m_speedClampCount{0};
 
+    // Neural frame interpolation (RIFE) for smooth slow-mo. Lazily loaded.
+    std::string m_interpModelPath;
+    std::unique_ptr<OnnxFrameInterpolator> m_interpolator;
+    bool m_interpLoadAttempted = false;
+    std::mutex m_interpMutex;
+
     /**
      * @brief Build FFmpeg filter chain from effects config
      * @return Filter chain string for -vf parameter
@@ -390,6 +406,24 @@ private:
                            const std::string& outputVideo,
                            double speed = 1.0,
                            int smoothing = 0);
+
+    /**
+     * @brief Slow-mo speed clip rendered with neural frame interpolation (RIFE).
+     *
+     * Decodes the source window to RGB frames, synthesizes the output-rate frame
+     * sequence by interpolating between source frames at arbitrary timesteps, and
+     * encodes the result directly at the output fps (no setpts needed). Used for
+     * SpeedRampConfig.smoothing == 2. Returns false (so callers can fall back) if
+     * the model isn't available or any stage fails.
+     */
+    bool extractSpeedClipInterpolated(const std::string& inputVideo,
+                                      double sourceStart,
+                                      double outputDuration,
+                                      double speed,
+                                      const std::string& outputVideo);
+
+    /** @brief Lazily load the interpolation model. Returns true if usable. */
+    bool ensureInterpolator();
 
     /**
      * @brief Get FFmpeg executable path

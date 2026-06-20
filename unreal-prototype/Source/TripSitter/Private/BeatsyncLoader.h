@@ -231,6 +231,8 @@ public:
     static void SetSpeedConfig(void* Handle, const FSpeedRampConfig& Config);
     // Clips clamped/skipped by the source-footage guard during the most recent cut.
     static int32 GetSpeedClampCount(void* Handle);
+    // RIFE ONNX model path for neural slow-mo interpolation (smoothing == 2). Empty to clear.
+    static void SetInterpolationModel(void* Handle, const FString& OnnxPath);
 
     // Frame Extraction
     static bool ExtractFrame(const FString& VideoPath, double Timestamp,

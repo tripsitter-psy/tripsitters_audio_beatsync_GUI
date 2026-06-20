@@ -1,5 +1,6 @@
 #include "VideoWriter.h"
 #include "TransitionLibrary.h"
+#include "OnnxFrameInterpolator.h"
 #include <iostream>
 #include <sstream>
 #include <iomanip>
@@ -17,6 +18,7 @@
 #include <random>
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 
 // libavformat for audio stream probing
 extern "C" {
@@ -531,8 +533,7 @@ bool VideoWriter::extractSegments(const std::string& inputVideo,
 
             bool success;
             if (std::abs(clipSpeed - 1.0) > 1e-6) {
-                success = copySegmentPrecise(inputVideo, seg.startTime, duration, outFile,
-                                             clipSpeed, m_speed.smoothing);
+                success = extractSpeedClip(inputVideo, seg.startTime, duration, clipSpeed, outFile);
             } else {
                 // Try fast copy, then precise copy as fallback
                 success = copySegmentFast(inputVideo, seg.startTime, duration, outFile);
@@ -2063,10 +2064,208 @@ bool VideoWriter::extractSpeedClip(const std::string& inputVideo,
                                    double outputDuration,
                                    double speed,
                                    const std::string& outputVideo) {
+    // Neural interpolation (RIFE) for smooth slow-mo. Only meaningful for
+    // slow-mo (speed < 1.0); a speed-up discards frames so dup/minterpolate is
+    // fine. Fall back to minterpolate if the model/pipeline is unavailable.
+    if (m_speed.smoothing == 2 && speed < 1.0) {
+        if (extractSpeedClipInterpolated(inputVideo, sourceStart, outputDuration, speed, outputVideo)) {
+            return true;
+        }
+        std::cout << "[RIFE] Interpolation unavailable (" << getLastError()
+                  << "); falling back to minterpolate for this clip\n";
+        return copySegmentPrecise(inputVideo, sourceStart, outputDuration, outputVideo, speed, 1);
+    }
+
     // Speed clips always re-encode (stream copy cannot retime). Honor the
-    // configured smoothing mode. copySegmentPrecise handles speed == 1.0 too.
+    // configured smoothing mode (0 dup / 1 minterpolate). copySegmentPrecise
+    // handles speed == 1.0 too.
+    int smoothing = (m_speed.smoothing == 2) ? 1 : m_speed.smoothing;
     return copySegmentPrecise(inputVideo, sourceStart, outputDuration,
-                              outputVideo, speed, m_speed.smoothing);
+                              outputVideo, speed, smoothing);
+}
+
+void VideoWriter::setInterpolationModelPath(const std::string& path) {
+    std::lock_guard<std::mutex> lock(m_interpMutex);
+    if (path != m_interpModelPath) {
+        m_interpModelPath = path;
+        m_interpolator.reset();
+        m_interpLoadAttempted = false;
+    }
+}
+
+bool VideoWriter::ensureInterpolator() {
+    std::lock_guard<std::mutex> lock(m_interpMutex);
+    if (m_interpolator && m_interpolator->isLoaded()) return true;
+    if (m_interpLoadAttempted) return m_interpolator && m_interpolator->isLoaded();
+
+    m_interpLoadAttempted = true;
+    if (!OnnxFrameInterpolator::isAvailable()) {
+        m_lastError = "ONNX Runtime not compiled in (no RIFE)";
+        return false;
+    }
+    if (m_interpModelPath.empty()) {
+        m_lastError = "No RIFE model path set";
+        return false;
+    }
+    if (!std::filesystem::exists(m_interpModelPath)) {
+        m_lastError = "RIFE model not found: " + m_interpModelPath;
+        return false;
+    }
+    m_interpolator = std::make_unique<OnnxFrameInterpolator>();
+    if (!m_interpolator->loadModel(m_interpModelPath, /*useGPU=*/true)) {
+        m_lastError = "RIFE model load failed: " + m_interpolator->getLastError();
+        m_interpolator.reset();
+        return false;
+    }
+    std::cout << "[RIFE] Model loaded: " << m_interpModelPath << "\n";
+    return true;
+}
+
+bool VideoWriter::extractSpeedClipInterpolated(const std::string& inputVideo,
+                                               double sourceStart,
+                                               double outputDuration,
+                                               double speed,
+                                               const std::string& outputVideo) {
+    if (!ensureInterpolator()) {
+        return false;  // m_lastError set by ensureInterpolator
+    }
+    if (sourceStart < 0.001) sourceStart = 0.0;
+
+    // Probe source frame rate (to know how many real frames we have to work with).
+    double srcFps = 0.0;
+    {
+        VideoProcessor proc;
+        if (proc.open(inputVideo)) {
+            srcFps = proc.getInfo().fps;
+            proc.close();
+        }
+    }
+    if (srcFps <= 0.0) srcFps = m_outputFps > 0 ? m_outputFps : 30;
+
+    const int W = m_outputWidth;
+    const int H = m_outputHeight;
+    const double windowDur = outputDuration * speed;  // source seconds consumed
+    if (W <= 0 || H <= 0 || windowDur <= 0.0) {
+        m_lastError = "Invalid interpolation parameters";
+        return false;
+    }
+
+    std::string tempDir = getTempDir();
+    if (tempDir.empty()) { m_lastError = "No temp dir for interpolation"; return false; }
+
+    // Unique temp basenames (this runs across worker threads).
+    std::ostringstream tag;
+    tag << "rife_" << std::this_thread::get_id() << "_"
+        << std::chrono::steady_clock::now().time_since_epoch().count();
+    std::string srcRaw = tempDir + tag.str() + "_src.rgb";
+    std::string outRaw = tempDir + tag.str() + "_out.rgb";
+
+    struct RawCleanup {
+        std::vector<std::string> files;
+        ~RawCleanup() { for (auto& f : files) std::remove(f.c_str()); }
+    } cleanup{{srcRaw, outRaw}};
+
+    // Stage 1: decode the source window to raw RGB24 frames at output WxH and
+    // the source frame rate (scaled+padded to match the rest of the pipeline).
+    const std::string ffmpegPath = getFFmpegPath();
+    {
+        std::ostringstream cmd;
+        cmd << "\"" << ffmpegPath << "\" -nostdin";
+        cmd << std::fixed << std::setprecision(6);
+        cmd << " -ss " << sourceStart << " -t " << windowDur;
+        cmd << std::defaultfloat;
+        cmd << " -i \"" << inputVideo << "\"";
+        cmd << " -vf \"scale=" << W << ":" << H
+            << ":force_original_aspect_ratio=decrease,pad=" << W << ":" << H
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << srcFps << ",format=rgb24\"";
+        cmd << " -f rawvideo -y \"" << srcRaw << "\"";
+
+        std::string out; int rc;
+#ifdef _WIN32
+        rc = runHiddenCommand(cmd.str(), out, m_cancelFlag);
+#else
+        FILE* p = popen_compat((cmd.str() + " 2>&1").c_str(), "r");
+        rc = p ? pclose_compat(p) : -1;
+#endif
+        if (rc != 0) { m_lastError = "RIFE: source frame extraction failed"; return false; }
+    }
+
+    const size_t frameBytes = static_cast<size_t>(W) * H * 3;
+    // Read all source frames into memory (beat clips are short).
+    std::vector<std::vector<uint8_t>> srcFrames;
+    {
+        std::ifstream in(srcRaw, std::ios::binary);
+        if (!in) { m_lastError = "RIFE: could not read extracted frames"; return false; }
+        std::vector<uint8_t> buf(frameBytes);
+        while (in.read(reinterpret_cast<char*>(buf.data()), frameBytes)) {
+            srcFrames.push_back(buf);
+        }
+    }
+    const int Ns = static_cast<int>(srcFrames.size());
+    if (Ns == 0) { m_lastError = "RIFE: no source frames decoded"; return false; }
+    if (Ns == 1) {
+        // Single source frame: nothing to interpolate between. Let the caller
+        // fall back to the (dup-frame) precise path.
+        m_lastError = "RIFE: only one source frame in window";
+        return false;
+    }
+
+    // Stage 2: synthesize the output frame sequence at the output fps. Output
+    // frame k maps to source position s = k*(Ns-1)/(No-1); interpolate between
+    // the bracketing source frames at the fractional timestep.
+    const int No = std::max(2, static_cast<int>(std::lround(outputDuration * m_outputFps)));
+    std::ofstream outFile(outRaw, std::ios::binary);
+    if (!outFile) { m_lastError = "RIFE: could not open output frame file"; return false; }
+
+    std::vector<uint8_t> interp;
+    for (int k = 0; k < No; ++k) {
+        if (isCancelled()) { m_lastError = "Cancelled"; return false; }
+        double s = (No > 1) ? (static_cast<double>(k) * (Ns - 1) / (No - 1)) : 0.0;
+        int i0 = static_cast<int>(std::floor(s));
+        i0 = std::min(i0, Ns - 1);
+        double frac = s - i0;
+
+        if (frac < 1e-3 || i0 + 1 >= Ns) {
+            const auto& f = srcFrames[std::min(i0, Ns - 1)];
+            outFile.write(reinterpret_cast<const char*>(f.data()), frameBytes);
+        } else {
+            if (!m_interpolator->interpolate(srcFrames[i0].data(), srcFrames[i0 + 1].data(),
+                                             W, H, static_cast<float>(frac), interp)) {
+                m_lastError = "RIFE: inference failed: " + m_interpolator->getLastError();
+                return false;
+            }
+            outFile.write(reinterpret_cast<const char*>(interp.data()), frameBytes);
+        }
+    }
+    outFile.close();
+
+    // Stage 3: encode the synthesized frames at the output fps into the slot
+    // clip (silent AAC track keeps segment streams consistent for concat; the
+    // master audio is muxed over the whole timeline later).
+    {
+        std::ostringstream cmd;
+        cmd << "\"" << ffmpegPath << "\" -nostdin";
+        cmd << " -f rawvideo -pix_fmt rgb24 -s " << W << "x" << H
+            << " -r " << m_outputFps << " -i \"" << outRaw << "\"";
+        cmd << " -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100";
+        cmd << " -vf format=yuv420p";
+        cmd << " " << getEncoderArgs("ultrafast");
+        cmd << " -c:a aac -b:a 192k -ar 44100 -shortest";
+        cmd << " -video_track_timescale 90000";
+        cmd << std::fixed << std::setprecision(6) << " -t " << outputDuration << std::defaultfloat;
+        cmd << " -y \"" << outputVideo << "\"";
+
+        std::string out; int rc;
+#ifdef _WIN32
+        rc = runHiddenCommand(cmd.str(), out, m_cancelFlag);
+#else
+        FILE* p = popen_compat((cmd.str() + " 2>&1").c_str(), "r");
+        rc = p ? pclose_compat(p) : -1;
+#endif
+        if (rc != 0) { m_lastError = "RIFE: output encode failed"; return false; }
+    }
+
+    return true;
 }
 
 std::string VideoWriter::getColorGradeFilter(const std::string& preset) const {
