@@ -145,6 +145,17 @@ public:
     void setProgressCallback(std::function<void(double)> callback);
 
     /**
+     * @brief Set cancel flag pointer (non-zero value requests cancellation)
+     * @param flag Pointer to an int the caller toggles; processing aborts when *flag != 0
+     */
+    void setCancelFlag(const int* flag);
+
+    /**
+     * @brief Check whether cancellation has been requested via the cancel flag
+     */
+    bool isCancelled() const;
+
+    /**
      * @brief Copy video segment using stream copy (fast, no re-encoding)
      */
     bool copySegmentFast(const std::string& inputVideo,
@@ -224,6 +235,9 @@ private:
 
     std::string m_lastError;
     std::function<void(double)> m_progressCallback;
+
+    // Cancellation: caller-owned int pointer, non-zero requests abort
+    const int* m_cancelFlag = nullptr;
 
     // Output settings (defaults)
     int m_outputWidth = 1920;

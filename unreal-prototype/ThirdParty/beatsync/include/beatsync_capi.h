@@ -58,6 +58,11 @@ BEATSYNC_API void bs_destroy_video_writer(void* writer);
 BEATSYNC_API const char* bs_video_get_last_error(void* writer); // returned string is owned by library (valid until next call)
 BEATSYNC_API const char* bs_resolve_ffmpeg_path(); // returned string is owned by library
 BEATSYNC_API void bs_video_set_progress_callback(void* writer, bs_progress_cb cb, void* user_data);
+// Set cancel flag for video processing (pass pointer to int, non-zero value = cancel)
+// The writer checks this flag periodically during long operations
+BEATSYNC_API void bs_video_set_cancel_flag(void* writer, const int* cancel_flag);
+// Check if cancel was requested
+BEATSYNC_API int bs_video_is_cancelled(void* writer);
 BEATSYNC_API int bs_video_cut_at_beats(void* writer, const char* inputVideo, const double* beatTimes, size_t count, const char* outputVideo, double clipDuration);
 // Multi-video version: cycles through inputVideos for each beat
 BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVideos, size_t videoCount,
@@ -160,7 +165,7 @@ BEATSYNC_API void bs_free_frame_data(unsigned char* data);
 // Initialize tracing (returns 0 on success, non-zero on error)
 BEATSYNC_API int bs_initialize_tracing(const char* service_name);
 // Shutdown tracing and flush spans
-BEATSYNC_API void bs_shutdown_tracing();
+BEATSYNC_API void bs_shutdown_tracing(void);
 
 // Lightweight C API for creating spans from the consumer (returns opaque handle)
 typedef void* bs_span_t;
@@ -197,6 +202,8 @@ typedef struct {
     int gpu_device_id;              // GPU device ID (default 0)
     float beat_threshold;           // Beat activation threshold (0.0-1.0, default 0.5)
     float downbeat_threshold;       // Downbeat activation threshold (0.0-1.0, default 0.5)
+    int kick_only_mode;             // Apply 200Hz low-pass filter for psytrance/EDM kick-only detection
+    float kick_freq_cutoff;         // Low-pass filter cutoff frequency in Hz (default 200.0)
 } bs_ai_config_t;
 
 
@@ -267,10 +274,12 @@ BEATSYNC_API const char* bs_ai_get_last_error(void* analyzer);
 BEATSYNC_API const char* bs_ai_get_model_info(void* analyzer);
 
 // Check if ONNX Runtime is available
-BEATSYNC_API int bs_ai_is_available();
+BEATSYNC_API int bs_ai_is_available(void);
 
 // Get available ONNX execution providers (returns comma-separated string)
-BEATSYNC_API const char* bs_ai_get_providers();
+// Returns a library-owned, NUL-terminated string. Do not free.
+// Valid until library unloads or next call to bs_ai_get_providers().
+BEATSYNC_API const char* bs_ai_get_providers(void);
 
 // Check if GPU is enabled for a specific analyzer instance (returns 1 if GPU active, 0 if CPU)
 BEATSYNC_API int bs_ai_is_gpu_enabled(void* analyzer);
@@ -283,7 +292,7 @@ BEATSYNC_API const char* bs_ai_get_active_provider(void* analyzer);
 // =============================================================================
 
 // Check if AudioFlux is available
-BEATSYNC_API int bs_audioflux_is_available();
+BEATSYNC_API int bs_audioflux_is_available(void);
 
 // Analyze audio using AudioFlux spectral flux onset detection
 // Returns 0 on success, non-zero on error

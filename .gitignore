@@ -1,8 +1,12 @@
 # Build directories
 build/
+build-mac/
 bin/
 lib/
 out/
+
+# Vendored / locally-built third-party deps (reproducible via imgui-gui/README.md)
+third_party/
 
 # IDE and editor files
 .vs/
