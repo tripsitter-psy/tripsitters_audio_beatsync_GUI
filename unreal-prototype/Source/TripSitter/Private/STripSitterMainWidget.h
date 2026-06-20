@@ -169,6 +169,23 @@ private:
 	bool bSpeedSmoothInterpolate = false; // false = duplicate frames, true = minterpolate
 	int32 SpeedSeed = 1;                  // reproducible randomization
 
+	// Dynamic sync: per-section beat divisor that varies across the track.
+	bool bEnableDynamicSync = false;
+	bool bDynamicRandomBlocks = false;    // false = energy-driven, true = random blocks
+	float DynEnergyHighThreshold = 0.50f; // energy >= -> densest tier
+	float DynEnergyLowThreshold = 0.22f;  // energy < -> sparsest tier
+	int32 DynEnergyHighDivisor = 1;       // high-energy divisor (every beat)
+	int32 DynEnergyMidDivisor = 2;
+	int32 DynEnergyLowDivisor = 4;        // low-energy divisor (sparse)
+	int32 DynEnergySmoothingBeats = 4;    // moving-average window (beats)
+	int32 DynBlockMinBeats = 8;           // random block length range
+	int32 DynBlockMaxBeats = 16;
+	int32 DynBlockSeed = 1;
+	bool bDynAllowDiv1 = true;            // divisors a random block may pick
+	bool bDynAllowDiv2 = true;
+	bool bDynAllowDiv4 = true;
+	bool bDynAllowDiv8 = false;
+
 	// Stem configurations (Kick, Snare, HiHat, Synth)
 	TStaticArray<FStemConfig, STEM_COUNT> StemConfigs;
 	TArray<TSharedPtr<FString>> StemEffectOptions;
@@ -240,6 +257,7 @@ private:
 	TSharedRef<SWidget> CreateAnalysisSection();
 	TSharedRef<SWidget> CreateEffectsSection();
 	TSharedRef<SWidget> CreateSpeedRampsSection();
+	TSharedRef<SWidget> CreateDynamicSyncSection();
 	TSharedRef<SWidget> CreateTransitionsSection();
 	TSharedRef<SWidget> CreateControlSection();
 	TSharedRef<SWidget> CreateStemsSection();

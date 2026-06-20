@@ -17,6 +17,42 @@ enum class EAnalysisModeParam
     StemsFlux = 4  // Stem-aware AudioFlux detector
 };
 
+// Dynamic sync: how the beat divisor varies across the track.
+enum class EDynamicSyncMode : uint8
+{
+    Off = 0,          // Single global divisor (BeatRate) for the whole track
+    Energy = 1,       // Divisor driven by local bass energy (high energy = denser cuts)
+    RandomBlocks = 2  // Track split into blocks, each block gets a random divisor
+};
+
+// Configuration for dynamic (per-section) sync ratios.
+struct FDynamicSyncConfig
+{
+    EDynamicSyncMode Mode = EDynamicSyncMode::Off;
+
+    // --- Energy mode ---
+    // Local bass energy (0..1, smoothed) maps to a divisor tier:
+    //   energy >= HighThreshold              -> HighDivisor (densest, e.g. every beat)
+    //   LowThreshold <= energy < HighThreshold -> MidDivisor
+    //   energy <  LowThreshold               -> LowDivisor (sparsest)
+    float EnergyHighThreshold = 0.50f;
+    float EnergyLowThreshold = 0.22f;
+    int32 EnergyHighDivisor = 1;
+    int32 EnergyMidDivisor = 2;
+    int32 EnergyLowDivisor = 4;
+    int32 EnergySmoothingBeats = 4;   // moving-average window (in beats) to avoid flicker
+
+    // --- Random blocks mode ---
+    int32 BlockMinBeats = 8;          // block length drawn from [min, max] beats
+    int32 BlockMaxBeats = 16;
+    uint32 BlockSeed = 1;             // reproducible randomization
+    // Allowed divisors a block may pick from.
+    bool bAllowDiv1 = true;
+    bool bAllowDiv2 = true;
+    bool bAllowDiv4 = true;
+    bool bAllowDiv8 = false;
+};
+
 // Stem effect type enum (matches STripSitterMainWidget::EStemEffect)
 enum class EStemEffectParam : uint8
 {
@@ -52,6 +88,8 @@ struct FBeatsyncProcessingParams
     FEffectsConfig EffectsConfig;
     // Per-clip speed ramps (slow-mo / speed-up). Disabled by default.
     FSpeedRampConfig SpeedConfig;
+    // Dynamic sync: per-section beat divisor (energy-driven or random blocks).
+    FDynamicSyncConfig DynamicSync;
     // Analysis mode: determines which beat detection method to use
     EAnalysisModeParam AnalysisMode = EAnalysisModeParam::AIBeat;
     // Pre-analyzed beat times from the UI (user-edited markers)
