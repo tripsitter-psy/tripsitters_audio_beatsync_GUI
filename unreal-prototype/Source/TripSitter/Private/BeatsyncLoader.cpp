@@ -103,17 +103,6 @@ struct bs_dynamic_sync_config_t {
     double min_section_sec;
 };
 
-struct bs_speed_ramp_config_t {
-    int enabled;
-    double calm_speed;
-    double normal_speed;
-    double frantic_speed;
-    const char* interp_mode;
-    const int* beat_bands;
-    size_t band_count;
-    const char* rife_model_path;
-};
-
 using bs_dynamic_sync_filter_beats_t = int (*)(const char*, const double*, size_t, const bs_dynamic_sync_config_t*, double**, size_t*);
 using bs_dynamic_sync_classify_beats_t = int (*)(const char*, const double*, size_t, const bs_dynamic_sync_config_t*, int**);
 using bs_free_beats_t = void (*)(double*);
@@ -907,12 +896,10 @@ void FBeatsyncLoader::SetSpeedRampConfig(void* Handle, bool bEnabled, double Cal
     // RIFE needs a model; it ships next to the executable like the beat/stem models.
     if (CConfig.smoothing == 2)
     {
+        // OnnxFrameInterpolator expects a RIFE v4.x export with separate
+        // img0/img1/timestep inputs (e.g. rife47_ensemble_True_scale_1_sim.onnx).
         FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
-        FString ModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("rife_v4.15.onnx"));
-        if (!FPaths::FileExists(ModelPath))
-        {
-            ModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("rife.onnx"));
-        }
+        FString ModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("rife.onnx"));
         if (FPaths::FileExists(ModelPath))
         {
             SetInterpolationModel(Handle, ModelPath);

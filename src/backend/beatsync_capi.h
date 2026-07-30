@@ -228,21 +228,22 @@ typedef struct {
     int   selection_mode;      // 0 = random, 1 = every Nth clip, 2 = every Nth (beat divisor), 3 = energy band
     int   every_n;             // used by selection_mode 1/2
 
-    // selection_mode 3: speed comes from band_speed[band] per clip instead of the
-    // random ranges above, so calm sections melt and drops stay at full rate.
-    // Bands come from bs_dynamic_sync_classify_beats; the array is copied.
-    const int* beat_bands;     // one band per clip (NULL disables mode 3)
-    size_t band_count;
-    double band_speed[3];      // playback speed for calm / normal / frantic
-
     float speed_up_fraction;   // 0..1 of affected clips that speed up (>1x) vs slow down
     float slow_min;            // slow-mo range (<1.0); set min==max for fixed amount
     float slow_max;
     float fast_min;            // speed-up range (>1.0)
     float fast_max;
 
-    int   smoothing;           // 0 = duplicate frames, 1 = minterpolate optical flow
+    int   smoothing;           // 0 = duplicate frames, 1 = minterpolate optical flow, 2 = RIFE
     int   guard_clamp;         // 1 = clamp speed-up to available source, 0 = skip ramp instead
+
+    // selection_mode 3: speed comes from band_speed[band] per clip instead of the
+    // random ranges above, so calm sections melt and drops stay at full rate.
+    // Bands come from bs_dynamic_sync_classify_beats; the array is copied.
+    // Appended at the end of the struct to keep the layout backwards compatible.
+    const int* beat_bands;     // one band per clip (NULL disables mode 3)
+    size_t band_count;
+    double band_speed[3];      // playback speed for calm / normal / frantic
 } bs_speed_config_t;
 
 // Set per-clip speed ramp configuration on video writer.
