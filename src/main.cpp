@@ -1,5 +1,6 @@
 #include "audio/AudioAnalyzer.h"
 #include "audio/BeatGrid.h"
+#include "audio/DynamicSync.h"
 #include "video/VideoProcessor.h"
 #include "video/VideoWriter.h"
 #include <iostream>
@@ -15,6 +16,36 @@
 namespace fs = std::filesystem;
 using namespace BeatSync;
 
+// Apply dynamic sync (energy-driven cut density) to a detected beat list.
+// Prints section statistics and returns the filtered beats.
+static std::vector<double> applyDynamicSync(AudioAnalyzer& analyzer,
+                                            const std::string& audioFile,
+                                            const std::vector<double>& beats) {
+    const double hopSec = 0.05;
+    DynamicSyncConfig cfg;
+
+    auto audio = analyzer.loadAudioFile(audioFile);
+    if (audio.samples.empty()) {
+        std::cerr << "Warning: could not reload audio for dynamic sync, using all beats\n";
+        return beats;
+    }
+
+    auto envelope = DynamicSync::computeEnergyEnvelope(audio.samples, audio.sampleRate,
+                                                       hopSec, cfg.smoothingSec);
+    auto bands = DynamicSync::classifyBeats(beats, envelope, hopSec, cfg);
+    auto filtered = DynamicSync::filterBeats(beats, envelope, hopSec, cfg);
+
+    size_t counts[3] = {0, 0, 0};
+    for (int b : bands) {
+        counts[b]++;
+    }
+    std::cout << "Dynamic sync: " << beats.size() << " beats -> " << filtered.size() << " cuts\n";
+    std::cout << "  Calm (1/" << cfg.calmDivisor << " beats): " << counts[0] << " beats\n";
+    std::cout << "  Normal (1/" << cfg.normalDivisor << " beats): " << counts[1] << " beats\n";
+    std::cout << "  Frantic (1/" << cfg.franticDivisor << " beats): " << counts[2] << " beats\n\n";
+    return filtered;
+}
+
 void printUsage(const char* programName) {
     std::cout << "BeatSync Editor - Video & Audio Beat Sync Tool\n";
     std::cout << "Version 1.0.0 - Phase 2: Video Processing\n\n";
@@ -29,6 +60,8 @@ void printUsage(const char* programName) {
     std::cout << "  -s, --sensitivity <value>   Beat detection sensitivity (0.0-1.0, default: 0.5)\n";
     std::cout << "  -d, --duration <seconds>    Clip duration for sync (default: auto)\n";
     std::cout << "  -o, --output <file>         Output file path\n";
+    std::cout << "  --dynamic                   Dynamic sync: cut density follows track energy\n";
+    std::cout << "                              (calm sections cut slower, drops cut every beat)\n";
     std::cout << "  -h, --help                  Show this help message\n\n";
     std::cout << "Examples:\n";
     std::cout << "  " << programName << " analyze song.mp3\n";
@@ -151,6 +184,7 @@ int main(int argc, char* argv[]) {
         std::string outputFile = "output_synced.mp4";
         double sensitivity = 0.5;
         double clipDuration = 0.0; // 0 = auto (until next beat)
+        bool dynamicSync = false;
 
         // Parse options
         for (int i = 4; i < argc; ++i) {
@@ -160,6 +194,8 @@ int main(int argc, char* argv[]) {
                 sensitivity = std::stod(argv[++i]);
             } else if ((std::strcmp(argv[i], "-d") == 0 || std::strcmp(argv[i], "--duration") == 0) && i + 1 < argc) {
                 clipDuration = std::stod(argv[++i]);
+            } else if (std::strcmp(argv[i], "--dynamic") == 0) {
+                dynamicSync = true;
             }
         }
 
@@ -184,6 +220,10 @@ int main(int argc, char* argv[]) {
         }
 
         std::cout << "Found " << beatGrid.getNumBeats() << " beats at " << beatGrid.getBPM() << " BPM\n\n";
+
+        if (dynamicSync) {
+            beatGrid.setBeats(applyDynamicSync(analyzer, audioFile, beatGrid.getBeats()));
+        }
 
         // Sync video
         std::cout << "Step 2: Syncing video with beats...\n";
@@ -292,6 +332,7 @@ int main(int argc, char* argv[]) {
         std::string outputFile = "output_multiclip.mp4";
         double sensitivity = 0.5;
         double clipDuration = 0.0; // 0 = auto (until next beat)
+        bool dynamicSync = false;
 
         // Parse options
         for (int i = 4; i < argc; ++i) {
@@ -301,6 +342,8 @@ int main(int argc, char* argv[]) {
                 sensitivity = std::stod(argv[++i]);
             } else if ((std::strcmp(argv[i], "-d") == 0 || std::strcmp(argv[i], "--duration") == 0) && i + 1 < argc) {
                 clipDuration = std::stod(argv[++i]);
+            } else if (std::strcmp(argv[i], "--dynamic") == 0) {
+                dynamicSync = true;
             }
         }
 
@@ -358,7 +401,10 @@ int main(int argc, char* argv[]) {
         // Create segments from beats, cycling through video clips
         std::cout << "Step 2: Creating beat-synced segments...\n";
         std::vector<std::string> tempFiles;
-        const auto& beats = beatGrid.getBeats();
+        std::vector<double> beats = beatGrid.getBeats();
+        if (dynamicSync) {
+            beats = applyDynamicSync(analyzer, audioFile, beats);
+        }
         double totalVideoDuration = 0.0;
 
         for (size_t i = 0; i < beats.size(); ++i) {

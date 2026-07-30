@@ -108,6 +108,18 @@ if(BUILD_TESTS)
         set_tests_properties(audioflux PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     endif()
 
+    # Dynamic sync (energy-driven cut density) tests
+    add_executable(test_dynamic_sync
+        catch_main.cpp
+        test_dynamic_sync.cpp
+        ../src/audio/DynamicSync.cpp
+    )
+
+    target_include_directories(test_dynamic_sync PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(test_dynamic_sync PRIVATE Catch2::Catch2)
+    add_test(NAME dynamic_sync COMMAND test_dynamic_sync)
+    set_tests_properties(dynamic_sync PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
     # Spectral flux tests
     add_executable(test_spectral_flux
         catch_main.cpp

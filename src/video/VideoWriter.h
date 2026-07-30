@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <memory>
 #include <mutex>
 
 // Forward declarations
@@ -12,6 +13,8 @@ struct AVFormatContext;
 struct AVCodecContext;
 struct SwsContext;
 class VideoWriterTestAccess;  // Test access helper
+
+namespace BeatSync { class RifeInterpolator; }
 
 namespace BeatSync {
 
@@ -72,6 +75,21 @@ struct EffectsConfig {
     double firstBeatOffset = 0.0;         // Time of first beat (for proper sync)
     std::vector<double> beatTimesInOutput; // Precise beat times in output video timeline
     std::vector<size_t> originalBeatIndices; // Original beat indices (for divisor filtering)
+};
+
+/**
+ * @brief Configuration for per-clip speed ramps (dynamic-sync aware)
+ *
+ * Speed ramps stretch or compress clip playback per energy band: calm sections
+ * get slow-mo "melts", high-energy sections can slam. Slowed footage loses
+ * motion samples, so frames are rebuilt with FFmpeg's minterpolate filter.
+ */
+struct SpeedRampConfig {
+    bool enabled = false;
+    double bandSpeed[3] = {0.5, 1.0, 1.0};  // Playback speed per band: calm, normal, frantic
+    std::string interpMode = "blend";        // "rife" (AI, GPU), "mci" (motion-compensated), "blend" (fast), "none"
+    std::vector<int> beatBands;              // Band per beat index (from DynamicSync::classifyBeats)
+    std::string rifeModelPath;               // RIFE ONNX model for interpMode "rife" (empty = models/rife_v4.15.onnx)
 };
 
 /**
@@ -164,6 +182,36 @@ public:
                         const std::string& outputVideo);
 
     /**
+     * @brief Set speed ramp configuration (consulted by bs_video_cut_at_beats_multi)
+     */
+    void setSpeedRampConfig(const SpeedRampConfig& config);
+
+    /**
+     * @brief Get current speed ramp configuration
+     */
+    const SpeedRampConfig& getSpeedRampConfig() const;
+
+    /**
+     * @brief Extract a segment played back at a different speed, filling a fixed output slot
+     * @param inputVideo Source clip
+     * @param sourceStart Start position in the source (seconds)
+     * @param slotDuration Duration the segment occupies in the output timeline (seconds)
+     * @param speedFactor Playback speed: <1 slow-mo (melt), >1 speed-up (slam). Clamped to [0.5, 2.0]
+     * @param interpMode Frame rebuild mode for stretched footage: "mci", "blend", or "none"
+     * @param outputVideo Output segment path
+     *
+     * Consumes slotDuration * speedFactor seconds of source footage and re-times it
+     * to exactly slotDuration, so beat alignment is preserved. Audio is retimed with
+     * atempo to stay in sync (it is normally replaced by the music track later).
+     */
+    bool copySegmentRamped(const std::string& inputVideo,
+                           double sourceStart,
+                           double slotDuration,
+                           double speedFactor,
+                           const std::string& interpMode,
+                           const std::string& outputVideo);
+
+    /**
      * @brief Concatenate multiple video files
      */
     bool concatenateVideos(const std::vector<std::string>& inputVideos,
@@ -246,6 +294,21 @@ private:
 
     // Effects configuration
     EffectsConfig m_effects;
+
+    // Speed ramp configuration (consulted by the multi-cut C API path)
+    SpeedRampConfig m_speedRamp;
+
+    // Lazily-created RIFE interpolator for interpMode "rife"
+    std::unique_ptr<RifeInterpolator> m_rife;
+
+    /**
+     * @brief RIFE-based slow-mo segment: decode frames, synthesize midpoints on
+     * the GPU, re-encode. Only supports speedFactor 0.5 (frame doubling).
+     */
+    bool copySegmentRifeSlow(const std::string& inputVideo,
+                             double sourceStart,
+                             double slotDuration,
+                             const std::string& outputVideo);
 
     /**
      * @brief Build FFmpeg filter chain from effects config

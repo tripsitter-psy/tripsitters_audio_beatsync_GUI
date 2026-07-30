@@ -382,6 +382,23 @@ void FBeatsyncProcessingTask::DoWork()
     UE_LOG(LogTemp, Log, TEXT("TripSitter: Selection range %.2f - %.2f, filtered %d beats to %d"),
         SelectionStart, SelectionEnd, BeatGrid.Beats.Num(), FilteredBeats.Num());
 
+    // Dynamic sync: replace the fixed beat-rate list with an energy-driven one
+    // (calm sections cut sparser, high-energy sections cut on every beat)
+    if (Params.bDynamicSync && FilteredBeats.Num() > 0)
+    {
+        TArray<double> DynamicBeats;
+        if (FBeatsyncLoader::DynamicSyncFilterBeats(Params.AudioPath, FilteredBeats, DynamicBeats))
+        {
+            UE_LOG(LogTemp, Log, TEXT("TripSitter: Dynamic sync %d beats -> %d cuts"),
+                FilteredBeats.Num(), DynamicBeats.Num());
+            FilteredBeats = MoveTemp(DynamicBeats);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("TripSitter: Dynamic sync failed, using all beats"));
+        }
+    }
+
     Result.BeatCount = FilteredBeats.Num();
 
     // Step 3: Create video writer
@@ -396,6 +413,25 @@ void FBeatsyncProcessingTask::DoWork()
         });
         SignalWorkComplete();
         return;
+    }
+
+    // Output resolution and framerate (1080x1920 = vertical 9:16 for Reels/TikTok/Shorts)
+    FBeatsyncLoader::SetOutputSettings(Writer, Params.OutputWidth, Params.OutputHeight, Params.OutputFps);
+
+    // Speed ramps: classify cuts by energy band so calm sections get slow-mo melts
+    if (Params.bSpeedRamps && FilteredBeats.Num() > 0)
+    {
+        TArray<int32> BeatBands;
+        if (FBeatsyncLoader::DynamicSyncClassifyBeats(Params.AudioPath, FilteredBeats, BeatBands))
+        {
+            FBeatsyncLoader::SetSpeedRampConfig(Writer, true, 0.5, 1.0, 1.0, Params.RampInterpMode, BeatBands);
+            UE_LOG(LogTemp, Log, TEXT("TripSitter: Speed ramps enabled (interp=%s, %d bands)"),
+                *Params.RampInterpMode, BeatBands.Num());
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("TripSitter: Speed ramp band classification failed, ramps disabled"));
+        }
     }
 
     // Set up cancel flag for video processing (allows backend to check for cancellation)

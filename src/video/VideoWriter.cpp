@@ -11,6 +11,9 @@
 #include <ctime>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <atomic>
+#include "RifeInterpolator.h"
 #include <thread>
 #include <mutex>
 #include <atomic>
@@ -19,6 +22,8 @@
 extern "C" {
 #include <libavformat/avformat.h>
 }
+
+#include <algorithm>
 
 // Cross-platform popen/pclose
 #ifdef _WIN32
@@ -781,6 +786,278 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
     return true;
 }
 
+namespace {
+
+// Minimal binary PPM (P6, maxval 255) I/O for the RIFE frame pipeline.
+// ffmpeg reads/writes the format natively, so no image library is needed.
+bool readPpm(const std::string& path, std::vector<uint8_t>& rgb, int& width, int& height) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    std::string magic;
+    int maxval = 0;
+    f >> magic >> width >> height >> maxval;
+    if (magic != "P6" || maxval != 255 || width <= 0 || height <= 0) return false;
+    f.get();  // single whitespace after header
+    rgb.resize(static_cast<size_t>(width) * height * 3);
+    f.read(reinterpret_cast<char*>(rgb.data()), rgb.size());
+    return static_cast<size_t>(f.gcount()) == rgb.size();
+}
+
+bool writePpm(const std::string& path, const std::vector<uint8_t>& rgb, int width, int height) {
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return false;
+    f << "P6\n" << width << " " << height << "\n255\n";
+    f.write(reinterpret_cast<const char*>(rgb.data()), rgb.size());
+    return f.good();
+}
+
+} // namespace
+
+bool VideoWriter::copySegmentRifeSlow(const std::string& inputVideo,
+                                      double sourceStart,
+                                      double slotDuration,
+                                      const std::string& outputVideo) {
+    // Frame doubling covers exactly 0.5x; other speeds fall back before we get here
+    const double sourceSpan = slotDuration * 0.5;
+
+    if (!m_rife) {
+        m_rife = std::make_unique<RifeInterpolator>();
+        std::string modelPath = m_speedRamp.rifeModelPath.empty()
+            ? std::string("models/rife_v4.15.onnx") : m_speedRamp.rifeModelPath;
+        if (!m_rife->loadModel(modelPath)) {
+            m_lastError = "RIFE model load failed: " + m_rife->getLastError();
+            return false;
+        }
+    }
+    if (!m_rife->isLoaded()) {
+        m_lastError = "RIFE interpolator unavailable";
+        return false;
+    }
+
+    namespace fs = std::filesystem;
+    static std::atomic<uint64_t> s_rifeDirCounter{0};
+    const std::string frameDir = getTempDir() + "beatsync_rife_" +
+        std::to_string(s_rifeDirCounter.fetch_add(1)) + "/";
+    std::error_code ec;
+    fs::create_directories(frameDir, ec);
+    if (ec) {
+        m_lastError = "Could not create RIFE frame directory: " + frameDir;
+        return false;
+    }
+    // Ensure temp frames are removed on every exit path
+    struct DirCleanup {
+        std::string dir;
+        ~DirCleanup() { std::error_code e; std::filesystem::remove_all(dir, e); }
+    } cleanup{frameDir};
+
+    std::string ffmpegPath = getFFmpegPath();
+
+    // Stage 1: decode source frames at output fps (scaled/padded like every other segment)
+    {
+        std::ostringstream cmd;
+        cmd << "\"" << ffmpegPath << "\"";
+        cmd << std::fixed << std::setprecision(6);
+        cmd << " -i \"" << inputVideo << "\" -ss " << sourceStart << " -t " << sourceSpan;
+        cmd << std::defaultfloat;
+        cmd << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
+            << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\""
+            << " -y \"" << frameDir << "in_%05d.ppm\" 2>&1";
+        std::string output;
+        FILE* pipe = popen_compat(cmd.str().c_str(), "r");
+        if (!pipe) {
+            m_lastError = "Failed to run FFmpeg for RIFE frame extraction";
+            return false;
+        }
+        char buffer[512];
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) output += buffer;
+        if (pclose_compat(pipe) != 0) {
+            m_lastError = "FFmpeg RIFE frame extraction failed";
+            appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentRifeSlow::extract", cmd.str(), 1, output, "");
+            return false;
+        }
+    }
+
+    // Count extracted frames
+    int frameCount = 0;
+    while (fs::exists(frameDir + "in_" + [](int n){ char b[16]; snprintf(b, sizeof(b), "%05d", n); return std::string(b); }(frameCount + 1) + ".ppm")) {
+        frameCount++;
+    }
+    if (frameCount < 2) {
+        m_lastError = "RIFE: not enough source frames extracted (" + std::to_string(frameCount) + ")";
+        return false;
+    }
+
+    // Stage 2: interleave originals with GPU-synthesized midpoints (2N-1 frames)
+    auto inName = [&](int n) { char b[32]; snprintf(b, sizeof(b), "in_%05d.ppm", n); return frameDir + b; };
+    auto outName = [&](int n) { char b[32]; snprintf(b, sizeof(b), "out_%05d.ppm", n); return frameDir + b; };
+
+    std::vector<uint8_t> prev, next, mid;
+    int w = 0, h = 0;
+    if (!readPpm(inName(1), prev, w, h)) {
+        m_lastError = "RIFE: failed to read extracted frame";
+        return false;
+    }
+    fs::rename(inName(1), outName(1), ec);
+    int outIdx = 1;
+    for (int i = 2; i <= frameCount; ++i) {
+        if (m_cancelFlag && *m_cancelFlag != 0) {
+            m_lastError = "Cancelled by user";
+            return false;
+        }
+        int w2 = 0, h2 = 0;
+        if (!readPpm(inName(i), next, w2, h2) || w2 != w || h2 != h) {
+            m_lastError = "RIFE: failed to read extracted frame";
+            return false;
+        }
+        if (!m_rife->interpolate(prev.data(), next.data(), w, h, 0.5f, mid)) {
+            m_lastError = "RIFE inference failed: " + m_rife->getLastError();
+            return false;
+        }
+        if (!writePpm(outName(++outIdx), mid, w, h)) {
+            m_lastError = "RIFE: failed to write interpolated frame";
+            return false;
+        }
+        fs::rename(inName(i), outName(++outIdx), ec);
+        prev.swap(next);
+    }
+
+    // Stage 3: encode the doubled sequence, with source audio retimed to match
+    {
+        std::ostringstream cmd;
+        cmd << "\"" << ffmpegPath << "\"";
+        cmd << " -framerate " << m_outputFps << " -i \"" << frameDir << "out_%05d.ppm\"";
+        cmd << std::fixed << std::setprecision(6);
+        cmd << " -ss " << sourceStart << " -t " << sourceSpan << " -i \"" << inputVideo << "\"";
+        cmd << " -map 0:v -map \"1:a?\" -af \"atempo=0.5\"";
+        cmd << " -t " << slotDuration;
+        cmd << std::defaultfloat;
+        cmd << " " << getEncoderArgs("ultrafast");
+        cmd << " -c:a aac -b:a 192k -ar 44100"
+            << " -video_track_timescale 90000"
+            << " -avoid_negative_ts make_zero"
+            << " -y \"" << outputVideo << "\" 2>&1";
+        std::string output;
+        FILE* pipe = popen_compat(cmd.str().c_str(), "r");
+        if (!pipe) {
+            m_lastError = "Failed to run FFmpeg for RIFE encode";
+            return false;
+        }
+        char buffer[512];
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) output += buffer;
+        if (pclose_compat(pipe) != 0) {
+            m_lastError = "FFmpeg RIFE encode failed";
+            appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentRifeSlow::encode", cmd.str(), 1, output, "");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void VideoWriter::setSpeedRampConfig(const SpeedRampConfig& config) {
+    m_speedRamp = config;
+    for (double& s : m_speedRamp.bandSpeed) {
+        s = std::clamp(s, 0.5, 2.0);  // atempo's single-stage range; keeps ramps tasteful too
+    }
+}
+
+const SpeedRampConfig& VideoWriter::getSpeedRampConfig() const {
+    return m_speedRamp;
+}
+
+bool VideoWriter::copySegmentRamped(const std::string& inputVideo,
+                                    double sourceStart,
+                                    double slotDuration,
+                                    double speedFactor,
+                                    const std::string& interpMode,
+                                    const std::string& outputVideo) {
+    speedFactor = std::clamp(speedFactor, 0.5, 2.0);
+    if (sourceStart < 0.001) {
+        sourceStart = 0.0;
+    }
+
+    std::string mode = interpMode;
+    if (mode == "rife") {
+        // AI interpolation covers the 0.5x frame-doubling case; anything else
+        // (and any RIFE failure) falls back to minterpolate blend
+        if (std::fabs(speedFactor - 0.5) < 0.01 &&
+            copySegmentRifeSlow(inputVideo, sourceStart, slotDuration, outputVideo)) {
+            return true;
+        }
+        std::cerr << "[BeatSync] RIFE unavailable for this segment ("
+                  << m_lastError << "), using blend" << std::endl;
+        mode = "blend";
+    }
+    const double sourceSpan = slotDuration * speedFactor;
+
+    std::string ffmpegPath = getFFmpegPath();
+    std::ostringstream cmd;
+    cmd << "\"" << ffmpegPath << "\"";
+
+    // Software decode: minterpolate runs on the CPU, so frames must stay in
+    // system memory. Encoding still uses the GPU encoder when available.
+    cmd << std::fixed << std::setprecision(6);
+    cmd << " -i \"" << inputVideo << "\""
+        << " -ss " << sourceStart
+        << " -t " << sourceSpan;
+    cmd << std::defaultfloat;
+
+    std::ostringstream vf;
+    vf << "scale=" << m_outputWidth << ":" << m_outputHeight
+       << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
+       << ":(ow-iw)/2:(oh-ih)/2,setsar=1"
+       << ",setpts=PTS/" << speedFactor;
+    if (mode == "mci") {
+        vf << ",minterpolate=fps=" << m_outputFps << ":mi_mode=mci:mc_mode=aobmc:vsbmc=1";
+    } else if (mode == "blend") {
+        vf << ",minterpolate=fps=" << m_outputFps << ":mi_mode=blend";
+    } else {
+        vf << ",fps=" << m_outputFps;
+    }
+
+    cmd << " -vf \"" << vf.str() << "\"";
+    // Retime audio to match; replaced by the music track later but keeps streams consistent
+    cmd << " -af \"atempo=" << speedFactor << "\"";
+    cmd << " " << getEncoderArgs("ultrafast");
+    cmd << " -c:a aac -b:a 192k -ar 44100"
+        << " -video_track_timescale 90000"
+        << " -avoid_negative_ts make_zero"
+        << " -y \"" << outputVideo << "\"";
+
+    std::string ffmpegOutput;
+    int exitCode;
+#ifdef _WIN32
+    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput, m_cancelFlag);
+    if (exitCode == -2) {
+        m_lastError = "Cancelled by user";
+        return false;
+    }
+#else
+    std::string fullCmd = cmd.str() + " 2>&1";
+    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
+    if (!pipe) {
+        m_lastError = "Failed to execute FFmpeg for ramped segment";
+        appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentRamped::popen_failed", fullCmd, -1, "",
+                        "start=" + std::to_string(sourceStart) + ", slot=" + std::to_string(slotDuration));
+        return false;
+    }
+    char buffer[512];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        ffmpegOutput += buffer;
+    }
+    exitCode = pclose_compat(pipe);
+#endif
+
+    if (exitCode != 0) {
+        m_lastError = "FFmpeg ramped segment extraction failed";
+        appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentRamped::ffmpeg_failed", cmd.str(), exitCode,
+                        ffmpegOutput, "speed=" + std::to_string(speedFactor) + ", interp=" + mode);
+        return false;
+    }
+    return true;
+}
+
 bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
                                      double startTime,
                                      double duration,
@@ -1150,7 +1427,12 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 
     int missingCount = 0;
     for (const auto& video : inputVideos) {
-        fprintf(f, "file '%s'\n", video.c_str());
+        // FFmpeg resolves relative entries against the list file's directory (the
+        // temp dir), not the process cwd - write absolute paths so callers can pass either.
+        std::error_code absEc;
+        std::filesystem::path absVideo = std::filesystem::absolute(video, absEc);
+        const std::string videoEntry = absEc ? video : absVideo.string();
+        fprintf(f, "file '%s'\n", videoEntry.c_str());
         std::cout << "  - " << video;
 
         // Check if file exists

@@ -60,6 +60,18 @@ struct FBeatsyncProcessingParams
     // Stem effect configurations (Kick, Snare, Hi-Hat, Synth)
     // Each stem can have its own beat times and mapped effect
     FStemEffectConfig StemConfigs[4];
+
+    // Dynamic sync: cut density follows the track's energy (calm = sparse, drops = every beat)
+    bool bDynamicSync = false;
+
+    // Speed ramps: calm sections play clips in slow-mo with frame interpolation
+    bool bSpeedRamps = false;
+    FString RampInterpMode = TEXT("blend");  // "mci" (quality), "blend" (fast), "none"
+
+    // Output dimensions; 1080x1920 = vertical 9:16 for Reels/TikTok/Shorts
+    int32 OutputWidth = 1920;
+    int32 OutputHeight = 1080;
+    int32 OutputFps = 24;
 };
 
 struct FBeatsyncProcessingResult

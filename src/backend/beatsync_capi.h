@@ -116,6 +116,74 @@ BEATSYNC_API int bs_get_waveform_bands(void* analyzer, const char* filepath,
                                         bs_waveform_bands_t* out_bands);
 BEATSYNC_API void bs_free_waveform_bands(bs_waveform_bands_t* bands);
 
+// =============================================================================
+// Dynamic Sync (energy-driven cut density)
+// =============================================================================
+// Makes the edit breathe with the track: calm sections cut slower (every Nth
+// beat), high-energy sections cut on every beat, breakdowns get room to build.
+// Sections come from the track's smoothed energy envelope, normalized per-track.
+typedef struct {
+    double low_threshold;    // Normalized energy below this = calm (default 0.35)
+    double high_threshold;   // Normalized energy above this = frantic (default 0.70)
+    int calm_divisor;        // Cut every Nth beat in calm sections (default 4)
+    int normal_divisor;      // Cut every Nth beat in mid-energy sections (default 2)
+    int frantic_divisor;     // Cut every Nth beat in high-energy sections (default 1)
+    double smoothing_sec;    // Energy envelope smoothing window (default 2.0)
+    double min_section_sec;  // Minimum section length before rate can change (default 4.0)
+} bs_dynamic_sync_config_t;
+
+// Fill config with default values
+BEATSYNC_API void bs_dynamic_sync_default_config(bs_dynamic_sync_config_t* out_config);
+
+// Filter a beat list to energy-driven cut density.
+// Loads audio_path to compute the energy envelope, then keeps every Nth beat
+// according to the local energy band. The first beat of each section is always
+// kept so drops/breakdown boundaries land on a cut.
+// config may be NULL to use defaults.
+// out_beats is malloc'd and must be freed with bs_free_beats(); on failure it is
+// set to NULL and out_count to 0.
+// Returns 0 on success, non-zero on error.
+BEATSYNC_API int bs_dynamic_sync_filter_beats(const char* audio_path,
+                                              const double* beats, size_t beat_count,
+                                              const bs_dynamic_sync_config_t* config,
+                                              double** out_beats, size_t* out_count);
+BEATSYNC_API void bs_free_beats(double* beats);
+
+// Classify each beat into an energy band: 0=calm, 1=normal, 2=frantic.
+// Used to drive speed ramps (see bs_speed_ramp_config_t). config may be NULL.
+// out_bands is malloc'd (one int per input beat) and must be freed with bs_free_bands().
+// Returns 0 on success, non-zero on error.
+BEATSYNC_API int bs_dynamic_sync_classify_beats(const char* audio_path,
+                                                const double* beats, size_t beat_count,
+                                                const bs_dynamic_sync_config_t* config,
+                                                int** out_bands);
+BEATSYNC_API void bs_free_bands(int* bands);
+
+// =============================================================================
+// Speed Ramps (per-clip slow-mo / speed-up with frame interpolation)
+// =============================================================================
+// Ramped clips play slower ("melts") or faster ("slams") per energy band while
+// still filling their beat slot exactly. Stretched footage is rebuilt with
+// FFmpeg minterpolate ("mci" = motion-compensated quality, "blend" = fast).
+typedef struct {
+    int enabled;
+    double calm_speed;       // Playback speed in calm sections (default 0.5 = slow-mo melt)
+    double normal_speed;     // Playback speed in mid-energy sections (default 1.0)
+    double frantic_speed;    // Playback speed in high-energy sections (default 1.0)
+    const char* interp_mode; // "rife" (AI, GPU), "mci", "blend", or "none" (NULL = "blend")
+    const int* beat_bands;   // Band per beat from bs_dynamic_sync_classify_beats (NULL = all normal)
+    size_t band_count;
+    const char* rife_model_path; // RIFE ONNX model for "rife" mode (NULL = models/rife_v4.15.onnx)
+} bs_speed_ramp_config_t;
+
+// Configure speed ramps on a video writer; consulted by bs_video_cut_at_beats_multi.
+// The bands array is copied. Pass NULL config to disable ramps.
+BEATSYNC_API void bs_video_set_speed_ramp_config(void* writer, const bs_speed_ramp_config_t* config);
+
+// Set output video dimensions and framerate (default 1920x1080 @ 24fps).
+// Use 1080x1920 for vertical 9:16 output (Reels/TikTok/Shorts).
+BEATSYNC_API void bs_video_set_output_settings(void* writer, int width, int height, int fps);
+
 // Effects configuration for video processing
 // NOTE: String fields (transitionType, colorPreset) are copied by the implementation
 // into internal std::string storage. Callers only need to keep the pointers valid

@@ -90,8 +90,10 @@ option(USE_AUDIOREACTIVE "Enable FFT-driven audio-reactive effects" OFF)
 set(CORE_SOURCES
     src/audio/AudioAnalyzer.cpp
     src/audio/BeatGrid.cpp
+    src/audio/DynamicSync.cpp
     src/video/VideoProcessor.cpp
     src/video/VideoWriter.cpp
+    src/video/RifeInterpolator.cpp
     src/backend/tracing.cpp
     src/utils/DebugLogger.cpp
 )

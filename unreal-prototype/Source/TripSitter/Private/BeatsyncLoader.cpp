@@ -69,6 +69,35 @@ using bs_video_apply_effects_t = int (*)(void*, const char*, const char*, const 
 using bs_video_extract_frame_t = int (*)(const char*, double, unsigned char**, int*, int*);
 using bs_free_frame_data_t = void (*)(unsigned char*);
 
+// Dynamic sync + speed ramp C API types
+struct bs_dynamic_sync_config_t {
+    double low_threshold;
+    double high_threshold;
+    int calm_divisor;
+    int normal_divisor;
+    int frantic_divisor;
+    double smoothing_sec;
+    double min_section_sec;
+};
+
+struct bs_speed_ramp_config_t {
+    int enabled;
+    double calm_speed;
+    double normal_speed;
+    double frantic_speed;
+    const char* interp_mode;
+    const int* beat_bands;
+    size_t band_count;
+    const char* rife_model_path;
+};
+
+using bs_dynamic_sync_filter_beats_t = int (*)(const char*, const double*, size_t, const bs_dynamic_sync_config_t*, double**, size_t*);
+using bs_dynamic_sync_classify_beats_t = int (*)(const char*, const double*, size_t, const bs_dynamic_sync_config_t*, int**);
+using bs_free_beats_t = void (*)(double*);
+using bs_free_bands_t = void (*)(int*);
+using bs_video_set_speed_ramp_config_t = void (*)(void*, const bs_speed_ramp_config_t*);
+using bs_video_set_output_settings_t = void (*)(void*, int, int, int);
+
 // AI analyzer C API types
 struct bs_ai_config_t {
     const char* beat_model_path;
@@ -136,6 +165,12 @@ struct FBeatsyncApi
     bs_get_waveform_bands_t get_waveform_bands = nullptr;
     bs_free_waveform_bands_t free_waveform_bands = nullptr;
     bs_video_set_effects_config_t video_set_effects_config = nullptr;
+    bs_dynamic_sync_filter_beats_t dynamic_sync_filter_beats = nullptr;
+    bs_dynamic_sync_classify_beats_t dynamic_sync_classify_beats = nullptr;
+    bs_free_beats_t free_beats = nullptr;
+    bs_free_bands_t free_bands = nullptr;
+    bs_video_set_speed_ramp_config_t video_set_speed_ramp_config = nullptr;
+    bs_video_set_output_settings_t video_set_output_settings = nullptr;
     bs_video_apply_effects_t video_apply_effects = nullptr;
     bs_video_extract_frame_t video_extract_frame = nullptr;
     bs_free_frame_data_t free_frame_data = nullptr;
@@ -271,6 +306,12 @@ bool FBeatsyncLoader::Initialize()
     GApi.get_waveform_bands = (bs_get_waveform_bands_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_get_waveform_bands"));
     GApi.free_waveform_bands = (bs_free_waveform_bands_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_waveform_bands"));
     GApi.video_set_effects_config = (bs_video_set_effects_config_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_effects_config"));
+    GApi.dynamic_sync_filter_beats = (bs_dynamic_sync_filter_beats_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_dynamic_sync_filter_beats"));
+    GApi.dynamic_sync_classify_beats = (bs_dynamic_sync_classify_beats_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_dynamic_sync_classify_beats"));
+    GApi.free_beats = (bs_free_beats_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_beats"));
+    GApi.free_bands = (bs_free_bands_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_bands"));
+    GApi.video_set_speed_ramp_config = (bs_video_set_speed_ramp_config_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_speed_ramp_config"));
+    GApi.video_set_output_settings = (bs_video_set_output_settings_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_output_settings"));
     GApi.video_apply_effects = (bs_video_apply_effects_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_apply_effects"));
     GApi.video_extract_frame = (bs_video_extract_frame_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_extract_frame"));
     GApi.free_frame_data = (bs_free_frame_data_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_frame_data"));
@@ -771,6 +812,74 @@ void FBeatsyncLoader::SetEffectsConfig(void* Handle, const FEffectsConfig& Confi
     CConfig.effectEndTime = Config.EffectEndTime;
 
     GApi.video_set_effects_config(Handle, &CConfig);
+}
+
+bool FBeatsyncLoader::DynamicSyncFilterBeats(const FString& AudioPath, const TArray<double>& Beats, TArray<double>& OutFiltered)
+{
+    OutFiltered.Reset();
+    if (!GApi.dynamic_sync_filter_beats || !GApi.free_beats || Beats.Num() == 0) return false;
+
+    FTCHARToUTF8 PathUtf8(*AudioPath);
+    double* Filtered = nullptr;
+    size_t Count = 0;
+    int Result = GApi.dynamic_sync_filter_beats(PathUtf8.Get(), Beats.GetData(), Beats.Num(), nullptr, &Filtered, &Count);
+    if (Result != 0 || !Filtered || Count == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("DynamicSyncFilterBeats failed (rc=%d)"), Result);
+        return false;
+    }
+    OutFiltered.SetNum(Count);
+    FMemory::Memcpy(OutFiltered.GetData(), Filtered, Count * sizeof(double));
+    GApi.free_beats(Filtered);
+    return true;
+}
+
+bool FBeatsyncLoader::DynamicSyncClassifyBeats(const FString& AudioPath, const TArray<double>& Beats, TArray<int32>& OutBands)
+{
+    OutBands.Reset();
+    if (!GApi.dynamic_sync_classify_beats || !GApi.free_bands || Beats.Num() == 0) return false;
+
+    FTCHARToUTF8 PathUtf8(*AudioPath);
+    int* Bands = nullptr;
+    int Result = GApi.dynamic_sync_classify_beats(PathUtf8.Get(), Beats.GetData(), Beats.Num(), nullptr, &Bands);
+    if (Result != 0 || !Bands)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("DynamicSyncClassifyBeats failed (rc=%d)"), Result);
+        return false;
+    }
+    OutBands.SetNum(Beats.Num());
+    FMemory::Memcpy(OutBands.GetData(), Bands, Beats.Num() * sizeof(int32));
+    GApi.free_bands(Bands);
+    return true;
+}
+
+void FBeatsyncLoader::SetSpeedRampConfig(void* Handle, bool bEnabled, double CalmSpeed, double NormalSpeed,
+                                         double FranticSpeed, const FString& InterpMode, const TArray<int32>& BeatBands)
+{
+    if (!GApi.video_set_speed_ramp_config || !Handle) return;
+
+    // RIFE model ships next to the executable, same as the beat/stem models
+    FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
+    FString RifeModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("rife_v4.15.onnx"));
+
+    FTCHARToUTF8 ModeUtf8(*InterpMode);
+    FTCHARToUTF8 RifeUtf8(*RifeModelPath);
+    bs_speed_ramp_config_t CConfig = {};
+    CConfig.enabled = bEnabled ? 1 : 0;
+    CConfig.calm_speed = CalmSpeed;
+    CConfig.normal_speed = NormalSpeed;
+    CConfig.frantic_speed = FranticSpeed;
+    CConfig.interp_mode = ModeUtf8.Get();
+    CConfig.beat_bands = BeatBands.Num() > 0 ? BeatBands.GetData() : nullptr;
+    CConfig.band_count = BeatBands.Num();
+    CConfig.rife_model_path = FPaths::FileExists(RifeModelPath) ? RifeUtf8.Get() : nullptr;
+    GApi.video_set_speed_ramp_config(Handle, &CConfig);
+}
+
+void FBeatsyncLoader::SetOutputSettings(void* Handle, int32 Width, int32 Height, int32 Fps)
+{
+    if (!GApi.video_set_output_settings || !Handle) return;
+    GApi.video_set_output_settings(Handle, Width, Height, Fps);
 }
 
 bool FBeatsyncLoader::ApplyEffects(void* Handle, const FString& InputVideo, const FString& OutputVideo,

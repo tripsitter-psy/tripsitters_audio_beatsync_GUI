@@ -46,7 +46,9 @@ enum class EResolution : uint8
 	HD1080 = 0,
 	HD720 = 1,
 	UHD4K = 2,
-	QHD2K = 3
+	QHD2K = 3,
+	Vertical1080 = 4,  // 1080x1920 - 9:16 for Reels/TikTok/Shorts
+	Vertical720 = 5    // 720x1280 - 9:16 HD
 };
 
 enum class EFPS : uint8
@@ -142,6 +144,12 @@ private:
 	EBeatRate BeatRate = EBeatRate::Every;
 	EAnalysisMode AnalysisMode = EAnalysisMode::AIBeat;
 	EResolution Resolution = EResolution::HD1080;
+
+	// Dynamic sync + speed ramps
+	bool bDynamicSync = false;
+	bool bSpeedRamps = false;
+	FString RampInterpMode = TEXT("blend");
+	TArray<TSharedPtr<FString>> InterpModeOptions;
 	EFPS FPS = EFPS::FPS30;
 
 	// Effects config

@@ -201,6 +201,13 @@ public:
 
     // Effects
     static void SetEffectsConfig(void* Handle, const FEffectsConfig& Config);
+
+    // Dynamic sync (energy-driven cut density) + speed ramps
+    static bool DynamicSyncFilterBeats(const FString& AudioPath, const TArray<double>& Beats, TArray<double>& OutFiltered);
+    static bool DynamicSyncClassifyBeats(const FString& AudioPath, const TArray<double>& Beats, TArray<int32>& OutBands);
+    static void SetSpeedRampConfig(void* Handle, bool bEnabled, double CalmSpeed, double NormalSpeed,
+                                   double FranticSpeed, const FString& InterpMode, const TArray<int32>& BeatBands);
+    static void SetOutputSettings(void* Handle, int32 Width, int32 Height, int32 Fps);
     static bool ApplyEffects(void* Handle, const FString& InputVideo, const FString& OutputVideo,
                               const TArray<double>& BeatTimes);
 

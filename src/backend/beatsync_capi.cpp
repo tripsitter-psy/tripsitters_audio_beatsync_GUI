@@ -6,6 +6,7 @@
 #include "beatsync_capi.h"
 #include "../audio/AudioAnalyzer.h"
 #include "../audio/BeatGrid.h"
+#include "../audio/DynamicSync.h"
 #include "../video/VideoWriter.h"
 #include "../video/VideoProcessor.h"
 #include "../tracing/Tracing.h"
@@ -462,6 +463,171 @@ BEATSYNC_API void bs_free_waveform_bands(bs_waveform_bands_t* bands) {
         bands->high_peaks = nullptr;
         bands->count = 0;
     }
+}
+
+// ==================== Dynamic Sync API ====================
+
+// Envelope sampling interval; fine enough to catch section changes between beats
+static constexpr double kDynamicSyncHopSec = 0.05;
+
+BEATSYNC_API void bs_dynamic_sync_default_config(bs_dynamic_sync_config_t* out_config) {
+    if (!out_config) {
+        return;
+    }
+    BeatSync::DynamicSyncConfig defaults;
+    out_config->low_threshold = defaults.lowThreshold;
+    out_config->high_threshold = defaults.highThreshold;
+    out_config->calm_divisor = defaults.calmDivisor;
+    out_config->normal_divisor = defaults.normalDivisor;
+    out_config->frantic_divisor = defaults.franticDivisor;
+    out_config->smoothing_sec = defaults.smoothingSec;
+    out_config->min_section_sec = defaults.minSectionSec;
+}
+
+BEATSYNC_API int bs_dynamic_sync_filter_beats(const char* audio_path,
+                                              const double* beats, size_t beat_count,
+                                              const bs_dynamic_sync_config_t* config,
+                                              double** out_beats, size_t* out_count) {
+    TRACE_FUNC();
+
+    if (out_beats) *out_beats = nullptr;
+    if (out_count) *out_count = 0;
+    if (!audio_path || !beats || beat_count == 0 || !out_beats || !out_count) {
+        return -1;
+    }
+
+    try {
+        BeatSync::DynamicSyncConfig cfg;
+        if (config) {
+            cfg.lowThreshold = config->low_threshold;
+            cfg.highThreshold = config->high_threshold;
+            cfg.calmDivisor = config->calm_divisor;
+            cfg.normalDivisor = config->normal_divisor;
+            cfg.franticDivisor = config->frantic_divisor;
+            cfg.smoothingSec = config->smoothing_sec;
+            cfg.minSectionSec = config->min_section_sec;
+        }
+
+        BeatSync::AudioAnalyzer loader;
+        auto audio = loader.loadAudioFile(audio_path);
+        if (audio.samples.empty()) {
+            return -2;
+        }
+
+        std::vector<double> beatVec(beats, beats + beat_count);
+        std::vector<double> envelope = BeatSync::DynamicSync::computeEnergyEnvelope(
+            audio.samples, audio.sampleRate, kDynamicSyncHopSec, cfg.smoothingSec);
+        std::vector<double> filtered = BeatSync::DynamicSync::filterBeats(
+            beatVec, envelope, kDynamicSyncHopSec, cfg);
+
+        if (filtered.empty()) {
+            return -3;
+        }
+
+        double* result = static_cast<double*>(malloc(filtered.size() * sizeof(double)));
+        if (!result) {
+            return -4;
+        }
+        memcpy(result, filtered.data(), filtered.size() * sizeof(double));
+        *out_beats = result;
+        *out_count = filtered.size();
+        return 0;
+    } catch (...) {
+        return -5;
+    }
+}
+
+BEATSYNC_API void bs_free_beats(double* beats) {
+    if (beats) {
+        free(beats);
+    }
+}
+
+BEATSYNC_API int bs_dynamic_sync_classify_beats(const char* audio_path,
+                                                const double* beats, size_t beat_count,
+                                                const bs_dynamic_sync_config_t* config,
+                                                int** out_bands) {
+    TRACE_FUNC();
+
+    if (out_bands) *out_bands = nullptr;
+    if (!audio_path || !beats || beat_count == 0 || !out_bands) {
+        return -1;
+    }
+
+    try {
+        BeatSync::DynamicSyncConfig cfg;
+        if (config) {
+            cfg.lowThreshold = config->low_threshold;
+            cfg.highThreshold = config->high_threshold;
+            cfg.smoothingSec = config->smoothing_sec;
+            cfg.minSectionSec = config->min_section_sec;
+        }
+
+        BeatSync::AudioAnalyzer loader;
+        auto audio = loader.loadAudioFile(audio_path);
+        if (audio.samples.empty()) {
+            return -2;
+        }
+
+        std::vector<double> beatVec(beats, beats + beat_count);
+        std::vector<double> envelope = BeatSync::DynamicSync::computeEnergyEnvelope(
+            audio.samples, audio.sampleRate, kDynamicSyncHopSec, cfg.smoothingSec);
+        std::vector<int> bands = BeatSync::DynamicSync::classifyBeats(
+            beatVec, envelope, kDynamicSyncHopSec, cfg);
+        if (bands.size() != beat_count) {
+            return -3;
+        }
+
+        int* result = static_cast<int*>(malloc(beat_count * sizeof(int)));
+        if (!result) {
+            return -4;
+        }
+        memcpy(result, bands.data(), beat_count * sizeof(int));
+        *out_bands = result;
+        return 0;
+    } catch (...) {
+        return -5;
+    }
+}
+
+BEATSYNC_API void bs_free_bands(int* bands) {
+    if (bands) {
+        free(bands);
+    }
+}
+
+BEATSYNC_API void bs_video_set_speed_ramp_config(void* writer, const bs_speed_ramp_config_t* config) {
+    TRACE_FUNC();
+    if (!writer) {
+        return;
+    }
+    auto* w = static_cast<BeatSync::VideoWriter*>(writer);
+
+    BeatSync::SpeedRampConfig cfg;
+    if (config) {
+        cfg.enabled = config->enabled != 0;
+        cfg.bandSpeed[0] = config->calm_speed;
+        cfg.bandSpeed[1] = config->normal_speed;
+        cfg.bandSpeed[2] = config->frantic_speed;
+        if (config->interp_mode) {
+            cfg.interpMode = config->interp_mode;
+        }
+        if (config->beat_bands && config->band_count > 0) {
+            cfg.beatBands.assign(config->beat_bands, config->beat_bands + config->band_count);
+        }
+        if (config->rife_model_path) {
+            cfg.rifeModelPath = config->rife_model_path;
+        }
+    }
+    w->setSpeedRampConfig(cfg);
+}
+
+BEATSYNC_API void bs_video_set_output_settings(void* writer, int width, int height, int fps) {
+    TRACE_FUNC();
+    if (!writer || width <= 0 || height <= 0 || fps <= 0) {
+        return;
+    }
+    static_cast<BeatSync::VideoWriter*>(writer)->setOutputSettings(width, height, fps);
 }
 
 // ==================== VideoWriter API ====================
@@ -924,7 +1090,21 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
                     fflush(logFile);
                 }
 
-                if (w->copySegmentFast(videos[beatVideoIdx], sourceStart, sourceDuration, tempFile)) {
+                // Speed ramps: play this slot's footage slower/faster per its energy band
+                const BeatSync::SpeedRampConfig& ramp = w->getSpeedRampConfig();
+                double rampSpeed = 1.0;
+                if (ramp.enabled) {
+                    int band = (i < ramp.beatBands.size()) ? ramp.beatBands[i] : 1;
+                    if (band < 0 || band > 2) band = 1;
+                    rampSpeed = ramp.bandSpeed[band];
+                }
+                const bool useRamp = ramp.enabled && std::fabs(rampSpeed - 1.0) > 1e-6;
+
+                const bool segOk = useRamp
+                    ? w->copySegmentRamped(videos[beatVideoIdx], sourceStart, sourceDuration,
+                                           rampSpeed, ramp.interpMode, tempFile)
+                    : w->copySegmentFast(videos[beatVideoIdx], sourceStart, sourceDuration, tempFile);
+                if (segOk) {
                     tempFiles.push_back(tempFile);
                     totalSegmentCount++;
                 } else {

@@ -30,10 +30,13 @@
 #include "Rendering/SlateRenderer.h"
 #include "Brushes/SlateImageBrush.h"
 
-#if WITH_EDITOR
+// DesktopPlatform is available in editor builds and on Linux, where it routes
+// file dialogs to the SlateFileDialogs module (works in standalone programs).
+#if WITH_EDITOR || PLATFORM_LINUX
 #include "DesktopPlatformModule.h"
 #include "IDesktopPlatform.h"
-#else
+#endif
+#if !WITH_EDITOR
 // Windows native file dialog for standalone builds
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -250,6 +253,13 @@ void STripSitterMainWidget::Construct(const FArguments& InArgs)
 	ResolutionOptions.Add(MakeShared<FString>(TEXT("1280x720 (HD)")));
 	ResolutionOptions.Add(MakeShared<FString>(TEXT("3840x2160 (4K)")));
 	ResolutionOptions.Add(MakeShared<FString>(TEXT("2560x1440 (2K)")));
+	ResolutionOptions.Add(MakeShared<FString>(TEXT("1080x1920 (Vertical 9:16)")));
+	ResolutionOptions.Add(MakeShared<FString>(TEXT("720x1280 (Vertical HD)")));
+
+	InterpModeOptions.Add(MakeShared<FString>(TEXT("rife")));
+	InterpModeOptions.Add(MakeShared<FString>(TEXT("blend")));
+	InterpModeOptions.Add(MakeShared<FString>(TEXT("mci")));
+	InterpModeOptions.Add(MakeShared<FString>(TEXT("none")));
 
 	FPSOptions.Add(MakeShared<FString>(TEXT("24 fps (Cinematic)")));
 	FPSOptions.Add(MakeShared<FString>(TEXT("30 fps (Standard)")));
@@ -1154,6 +1164,76 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 			]
 		]
 
+		// Dynamic sync + speed ramps
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 8))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0, 0, 20, 0)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SCheckBox)
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
+					bDynamicSync = (State == ECheckBoxState::Checked);
+				})
+				.ToolTipText(FText::FromString(TEXT("Cut density follows the track's energy: calm sections cut every 4th beat, drops cut every beat")))
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Dynamic Sync")))
+					.ColorAndOpacity(FLinearColor::White)
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0, 0, 20, 0)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SCheckBox)
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
+					bSpeedRamps = (State == ECheckBoxState::Checked);
+				})
+				.ToolTipText(FText::FromString(TEXT("Calm sections play clips in slow-mo with frame interpolation for smooth melts")))
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Speed Ramps")))
+					.ColorAndOpacity(FLinearColor::White)
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(0, 0, 8, 0)
+			[
+				SNew(STextBlock)
+				.Text(FText::FromString(TEXT("Interpolation:")))
+				.ColorAndOpacity(FLinearColor::White)
+				.ToolTipText(FText::FromString(TEXT("Frame rebuild for slow-mo: rife = AI on GPU (best), blend = fast, mci = motion-compensated (slow), none = duplicate frames")))
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			[
+				SNew(SComboBox<TSharedPtr<FString>>)
+				.OptionsSource(&InterpModeOptions)
+				.OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+					return SNew(STextBlock).Text(FText::FromString(*Item));
+				})
+				.OnSelectionChanged_Lambda([this](TSharedPtr<FString> Item, ESelectInfo::Type) {
+					if (Item.IsValid()) {
+						RampInterpMode = *Item;
+					}
+				})
+				[
+					SNew(STextBlock)
+					.Text_Lambda([this]() {
+						return FText::FromString(RampInterpMode);
+					})
+				]
+			]
+		]
 		+ SVerticalBox::Slot()
 		.AutoHeight()
 		.Padding(FMargin(0, 8))
@@ -1726,7 +1806,7 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateStemsSection()
 
 FReply STripSitterMainWidget::OnBrowseAudioClicked()
 {
-#if WITH_EDITOR
+#if WITH_EDITOR || PLATFORM_LINUX
 	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
 	if (DesktopPlatform)
 	{
@@ -1774,7 +1854,7 @@ FReply STripSitterMainWidget::OnBrowseAudioClicked()
 
 FReply STripSitterMainWidget::OnBrowseVideoClicked()
 {
-#if WITH_EDITOR
+#if WITH_EDITOR || PLATFORM_LINUX
 	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
 	if (DesktopPlatform)
 	{
@@ -1862,7 +1942,7 @@ void STripSitterMainWidget::ScanFolderForVideos(const FString& FolderPath)
 
 FReply STripSitterMainWidget::OnBrowseVideoFolderClicked()
 {
-#if WITH_EDITOR
+#if WITH_EDITOR || PLATFORM_LINUX
 	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
 	if (DesktopPlatform)
 	{
@@ -1925,7 +2005,7 @@ FReply STripSitterMainWidget::OnBrowseVideoFolderClicked()
 
 FReply STripSitterMainWidget::OnBrowseOutputClicked()
 {
-#if WITH_EDITOR
+#if WITH_EDITOR || PLATFORM_LINUX
 	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
 	if (DesktopPlatform)
 	{
@@ -1979,7 +2059,7 @@ FReply STripSitterMainWidget::OnBrowseStemClicked(int32 StemIndex)
 
 	const TCHAR* StemNames[] = { TEXT("Kick"), TEXT("Snare"), TEXT("Hi-Hat"), TEXT("Synth") };
 
-#if WITH_EDITOR
+#if WITH_EDITOR || PLATFORM_LINUX
 	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
 	if (DesktopPlatform)
 	{
@@ -2631,6 +2711,25 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	Params.bIsMultiClip = bIsMultiClip;
 	Params.BeatRate = static_cast<int32>(BeatRate);
 	Params.AnalysisMode = static_cast<EAnalysisModeParam>(AnalysisMode);
+	Params.bDynamicSync = bDynamicSync;
+	Params.bSpeedRamps = bSpeedRamps;
+	Params.RampInterpMode = RampInterpMode;
+
+	switch (Resolution)
+	{
+		case EResolution::HD1080:       Params.OutputWidth = 1920; Params.OutputHeight = 1080; break;
+		case EResolution::HD720:        Params.OutputWidth = 1280; Params.OutputHeight = 720;  break;
+		case EResolution::UHD4K:        Params.OutputWidth = 3840; Params.OutputHeight = 2160; break;
+		case EResolution::QHD2K:        Params.OutputWidth = 2560; Params.OutputHeight = 1440; break;
+		case EResolution::Vertical1080: Params.OutputWidth = 1080; Params.OutputHeight = 1920; break;
+		case EResolution::Vertical720:  Params.OutputWidth = 720;  Params.OutputHeight = 1280; break;
+	}
+	switch (FPS)
+	{
+		case EFPS::FPS24: Params.OutputFps = 24; break;
+		case EFPS::FPS30: Params.OutputFps = 30; break;
+		case EFPS::FPS60: Params.OutputFps = 60; break;
+	}
 
 	// Get selection range for audio trimming
 	if (WaveformViewer.IsValid() && WaveformViewer->GetDuration() > 0)
