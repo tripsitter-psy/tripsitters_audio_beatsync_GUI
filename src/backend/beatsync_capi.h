@@ -63,6 +63,9 @@ BEATSYNC_API void bs_video_set_progress_callback(void* writer, bs_progress_cb cb
 BEATSYNC_API void bs_video_set_cancel_flag(void* writer, const int* cancel_flag);
 // Check if cancel was requested
 BEATSYNC_API int bs_video_is_cancelled(void* writer);
+// Set output resolution and frame rate (e.g. 1920x1080 landscape, 1080x1920 vertical/portrait).
+// Must be called before cut/normalize operations; defaults are 1920x1080 @ 24fps.
+BEATSYNC_API void bs_video_set_output_settings(void* writer, int width, int height, int fps);
 BEATSYNC_API int bs_video_cut_at_beats(void* writer, const char* inputVideo, const double* beatTimes, size_t count, const char* outputVideo, double clipDuration);
 // Multi-video version: cycles through inputVideos for each beat
 BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVideos, size_t videoCount,
@@ -150,7 +153,8 @@ BEATSYNC_API int bs_dynamic_sync_filter_beats(const char* audio_path,
 BEATSYNC_API void bs_free_beats(double* beats);
 
 // Classify each beat into an energy band: 0=calm, 1=normal, 2=frantic.
-// Used to drive speed ramps (see bs_speed_ramp_config_t). config may be NULL.
+// Feed the result to bs_speed_config_t.beat_bands with selection_mode 3 to drive
+// speed ramps from the track's energy. config may be NULL.
 // out_bands is malloc'd (one int per input beat) and must be freed with bs_free_bands().
 // Returns 0 on success, non-zero on error.
 BEATSYNC_API int bs_dynamic_sync_classify_beats(const char* audio_path,
@@ -158,31 +162,6 @@ BEATSYNC_API int bs_dynamic_sync_classify_beats(const char* audio_path,
                                                 const bs_dynamic_sync_config_t* config,
                                                 int** out_bands);
 BEATSYNC_API void bs_free_bands(int* bands);
-
-// =============================================================================
-// Speed Ramps (per-clip slow-mo / speed-up with frame interpolation)
-// =============================================================================
-// Ramped clips play slower ("melts") or faster ("slams") per energy band while
-// still filling their beat slot exactly. Stretched footage is rebuilt with
-// FFmpeg minterpolate ("mci" = motion-compensated quality, "blend" = fast).
-typedef struct {
-    int enabled;
-    double calm_speed;       // Playback speed in calm sections (default 0.5 = slow-mo melt)
-    double normal_speed;     // Playback speed in mid-energy sections (default 1.0)
-    double frantic_speed;    // Playback speed in high-energy sections (default 1.0)
-    const char* interp_mode; // "rife" (AI, GPU), "mci", "blend", or "none" (NULL = "blend")
-    const int* beat_bands;   // Band per beat from bs_dynamic_sync_classify_beats (NULL = all normal)
-    size_t band_count;
-    const char* rife_model_path; // RIFE ONNX model for "rife" mode (NULL = models/rife_v4.15.onnx)
-} bs_speed_ramp_config_t;
-
-// Configure speed ramps on a video writer; consulted by bs_video_cut_at_beats_multi.
-// The bands array is copied. Pass NULL config to disable ramps.
-BEATSYNC_API void bs_video_set_speed_ramp_config(void* writer, const bs_speed_ramp_config_t* config);
-
-// Set output video dimensions and framerate (default 1920x1080 @ 24fps).
-// Use 1080x1920 for vertical 9:16 output (Reels/TikTok/Shorts).
-BEATSYNC_API void bs_video_set_output_settings(void* writer, int width, int height, int fps);
 
 // Effects configuration for video processing
 // NOTE: String fields (transitionType, colorPreset) are copied by the implementation
@@ -209,13 +188,77 @@ typedef struct {
 
     int effectBeatDivisor;       // 1=every beat, 2=every 2nd, 4=every 4th, etc.
 
-    double effectStartTime;      // Start time for effects in seconds (0 = from beginning)
-    double effectEndTime;        // End time for effects in seconds (-1 = to end of video)
+    double effectStartTime;      // Global fallback start time for effects (0 = from beginning)
+    double effectEndTime;        // Global fallback end time for effects (-1 = to end of video)
+
+    // Per-effect time ranges.
+    // start=0.0 and end=-1.0 (or <=0) means "use the global effectStartTime/effectEndTime fallback".
+    // Any other combination overrides the global range for that specific effect.
+    double colorGradeStartTime;  // Color grade active from (seconds)
+    double colorGradeEndTime;    // Color grade active until (seconds, -1 = to end)
+
+    double vignetteStartTime;    // Vignette active from (seconds)
+    double vignetteEndTime;      // Vignette active until (seconds, -1 = to end)
+
+    double beatFlashStartTime;   // Beat flash active from (seconds)
+    double beatFlashEndTime;     // Beat flash active until (seconds, -1 = to end)
+
+    double beatZoomStartTime;    // Beat zoom active from (seconds)
+    double beatZoomEndTime;      // Beat zoom active until (seconds, -1 = to end)
 } bs_effects_config_t;
 
 // Set effects configuration on video writer
 // Returns 0 on success, non-zero on error
 BEATSYNC_API int bs_video_set_effects_config(void* writer, const bs_effects_config_t* config);
+
+// ---------------------------------------------------------------------------
+// Per-clip speed ramps (slow-mo / speed-up)
+//
+// Speed ramps preserve beat-sync: each affected clip keeps its fixed OUTPUT
+// beat-slot duration. The multiplier only changes how much SOURCE footage is
+// sampled into that slot (source consumed = slotDuration * speed). A multiplier
+// < 1.0 is slow-motion, > 1.0 is speed-up. Audio (the master timeline) is never
+// retimed by this feature. Multipliers are clamped to [0.5, 2.0].
+// ---------------------------------------------------------------------------
+typedef struct {
+    int   enabled;             // 0 = off (no speed ramps applied)
+
+    float affected_fraction;   // 0..1 portion of beat clips affected (random mode)
+    unsigned int seed;         // reproducible randomization seed
+    int   selection_mode;      // 0 = random, 1 = every Nth clip, 2 = every Nth (beat divisor), 3 = energy band
+    int   every_n;             // used by selection_mode 1/2
+
+    // selection_mode 3: speed comes from band_speed[band] per clip instead of the
+    // random ranges above, so calm sections melt and drops stay at full rate.
+    // Bands come from bs_dynamic_sync_classify_beats; the array is copied.
+    const int* beat_bands;     // one band per clip (NULL disables mode 3)
+    size_t band_count;
+    double band_speed[3];      // playback speed for calm / normal / frantic
+
+    float speed_up_fraction;   // 0..1 of affected clips that speed up (>1x) vs slow down
+    float slow_min;            // slow-mo range (<1.0); set min==max for fixed amount
+    float slow_max;
+    float fast_min;            // speed-up range (>1.0)
+    float fast_max;
+
+    int   smoothing;           // 0 = duplicate frames, 1 = minterpolate optical flow
+    int   guard_clamp;         // 1 = clamp speed-up to available source, 0 = skip ramp instead
+} bs_speed_config_t;
+
+// Set per-clip speed ramp configuration on video writer.
+// Pass nullptr to reset/disable speed ramps.
+// Returns 0 on success, non-zero on error.
+BEATSYNC_API int bs_video_set_speed_config(void* writer, const bs_speed_config_t* config);
+
+// Number of clips whose speed ramp was clamped/skipped by the source-footage
+// guard during the most recent cut. Returns 0 if writer is null.
+BEATSYNC_API int bs_video_get_speed_clamp_count(void* writer);
+
+// Set the RIFE ONNX model path used for neural slow-mo interpolation
+// (speed config smoothing == 2). Pass nullptr/empty to clear. If unset or the
+// model fails to load, smoothing == 2 falls back to minterpolate.
+// Returns 0 on success, non-zero on error.
+BEATSYNC_API int bs_video_set_interpolation_model(void* writer, const char* onnxPath);
 // Apply effects to video using beat times for beat-synced effects
 // Returns 0 on success, non-zero on error
 BEATSYNC_API int bs_video_apply_effects(void* writer, const char* inputVideo,

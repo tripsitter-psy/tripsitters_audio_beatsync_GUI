@@ -1,0 +1,107 @@
+# Demucs Kick-Only Separation Config
+# For training a model to separate kick drum from psytrance/EDM
+#
+# Usage: dora run -d variant=kick_separator
+# Or override inline: dora run -d sources="['kick','other']" dset=kick_psytrance
+
+# Model architecture - Hybrid Transformer Demucs (best quality)
+model: htdemucs
+
+# Sources to separate - kick drum vs everything else
+sources:
+  - kick
+  - other
+
+# Dataset configuration
+dset:
+  # Path to your dataset (update this!)
+  path: /path/to/your/kick_dataset
+
+  # Dataset format matches MusDB structure
+  # Each track folder contains: kick.wav, other.wav, mixture.wav
+  sources:
+    - kick
+    - other
+
+  # Audio parameters
+  samplerate: 44100
+  channels: 2
+
+  # Segment length for training (seconds)
+  # Shorter = faster training, less context
+  segment: 7.8
+
+  # Number of workers for data loading
+  num_workers: 4
+
+# Training parameters
+optim:
+  # Learning rate (lower for fine-tuning)
+  lr: 3e-4
+
+  # Batch size (reduce if GPU OOM)
+  batch_size: 4
+
+  # Number of epochs
+  epochs: 200
+
+  # Optimizer
+  optimizer: adam
+
+  # Learning rate schedule
+  lr_decay: 0.98
+
+# Augmentation (helps with small datasets)
+augment:
+  # Pitch shift range (semitones)
+  pitch_shift: 2
+
+  # Time stretch range
+  tempo: 0.1
+
+  # Random gain
+  gain: 0.25
+
+  # Mix augmentation (remix sources with different gains)
+  remix: true
+
+# Model-specific parameters for htdemucs
+htdemucs:
+  # Number of encoder/decoder layers
+  depth: 4
+
+  # Transformer layers
+  t_layers: 5
+
+  # Hidden channels
+  channels: 48
+
+  # Growth factor per layer
+  growth: 2
+
+  # Kernel size
+  kernel_size: 8
+
+  # Stride
+  stride: 4
+
+# Evaluation
+eval:
+  # Evaluate every N epochs
+  every: 20
+
+  # Number of workers for evaluation
+  num_workers: 2
+
+# Checkpointing
+checkpoint:
+  # Save every N epochs
+  every: 10
+
+  # Keep N best checkpoints
+  keep: 5
+
+# For fine-tuning from pretrained model (optional)
+# Uncomment to start from drums model instead of scratch
+# continue_from: htdemucs_ft
+# continue_best: true

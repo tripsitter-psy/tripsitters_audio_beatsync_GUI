@@ -61,16 +61,29 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Paths
+# Paths - use environment variables with fallbacks
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
 $BuildDir = Join-Path $ProjectRoot "build"
-$UE5Root = "C:\UE5_Source\UnrealEngine"
+
+# UE5 root - check env var first, then use default
+if ($env:UE5_ROOT) {
+    $UE5Root = $env:UE5_ROOT
+} else {
+    $UE5Root = "D:\UnrealEngine"
+}
+
+# AudioFlux root - check env var first, then use default
+if ($env:AUDIOFLUX_ROOT) {
+    $AudioFluxRoot = $env:AUDIOFLUX_ROOT
+} else {
+    $AudioFluxRoot = "C:\audioFlux"
+}
+
 $TripSitterSource = Join-Path $ProjectRoot "unreal-prototype\Source\TripSitter"
 $TripSitterDest = Join-Path $UE5Root "Engine\Source\Programs\TripSitter"
 $TripSitterExe = Join-Path $UE5Root "Engine\Binaries\Win64\TripSitter.exe"
 $VcpkgToolchain = Join-Path $ProjectRoot "vcpkg\scripts\buildsystems\vcpkg.cmake"
-$AudioFluxRoot = "C:\audioFlux"
 
 # Colors for output
 function Write-Step { param($msg) Write-Host "`n=== $msg ===" -ForegroundColor Cyan }

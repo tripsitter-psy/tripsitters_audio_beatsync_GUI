@@ -432,7 +432,8 @@ void FBeatsyncLoader::SetEffectsConfig(FVideoWriterHandle writer, const FEffects
     auto TransitionTypeUtf8 = StringCast<UTF8CHAR>(*TransitionTypeStr);
     auto ColorPresetUtf8 = StringCast<UTF8CHAR>(*ColorPresetStr);
 
-    bs_effects_config_t cfg;
+    // Zero-initialize to avoid garbage in padding/unknown fields
+    bs_effects_config_t cfg = {};
 
     cfg.enableTransitions = config.bEnableTransitions ? 1 : 0;
     cfg.transitionType = TransitionTypeUtf8.Get();
@@ -485,19 +486,30 @@ bool FBeatsyncLoader::AddAudioTrack(FVideoWriterHandle writer, const FString& in
 
 bool FBeatsyncLoader::ExtractFrame(const FString& videoPath, double timestamp, TArray<uint8>& outRgb24, int32& outWidth, int32& outHeight)
 {
-    if (!GApi.video_extract_frame) return false;
+    // Check both extract and free functions upfront to prevent leaks if free is unavailable
+    if (!GApi.video_extract_frame || !GApi.free_frame_data) return false;
+
+    // Capture free function locally to ensure consistent cleanup
+    auto FreeFn = GApi.free_frame_data;
 
     unsigned char* data = nullptr;
     int w = 0, h = 0;
     FTCHARToUTF8 VideoPathUtf8(*videoPath);
     int res = GApi.video_extract_frame(VideoPathUtf8.Get(), timestamp, &data, &w, &h);
-    if (res != 0 || !data) return false;
+
+    // Always free data if allocated, even on error return codes
+    if (res != 0)
+    {
+        if (data) FreeFn(data);
+        return false;
+    }
+    if (!data) return false;
 
     // Validate dimensions are positive, not too large, and compute size using wider type to prevent overflow
     constexpr int32 MAX_DIM = 16384;
     if (w <= 0 || h <= 0 || w > MAX_DIM || h > MAX_DIM)
     {
-        if (GApi.free_frame_data) GApi.free_frame_data(data);
+        FreeFn(data);
         return false;
     }
 
@@ -506,7 +518,7 @@ bool FBeatsyncLoader::ExtractFrame(const FString& videoPath, double timestamp, T
     if (size64 > static_cast<uint64>(MAX_int32))
     {
         UE_LOG(LogTemp, Error, TEXT("ExtractFrame: Frame size %llu exceeds INT32_MAX"), size64);
-        if (GApi.free_frame_data) GApi.free_frame_data(data);
+        FreeFn(data);
         return false;
     }
 
@@ -516,7 +528,7 @@ bool FBeatsyncLoader::ExtractFrame(const FString& videoPath, double timestamp, T
     outWidth = w;
     outHeight = h;
 
-    if (GApi.free_frame_data) GApi.free_frame_data(data);
+    FreeFn(data);
     return true;
 }
 

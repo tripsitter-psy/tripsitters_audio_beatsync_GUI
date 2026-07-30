@@ -17,6 +17,42 @@ enum class EAnalysisModeParam
     StemsFlux = 4  // Stem-aware AudioFlux detector
 };
 
+// Dynamic sync: how the beat divisor varies across the track.
+enum class EDynamicSyncMode : uint8
+{
+    Off = 0,          // Single global divisor (BeatRate) for the whole track
+    Energy = 1,       // Divisor driven by local bass energy (high energy = denser cuts)
+    RandomBlocks = 2  // Track split into blocks, each block gets a random divisor
+};
+
+// Configuration for dynamic (per-section) sync ratios.
+struct FDynamicSyncConfig
+{
+    EDynamicSyncMode Mode = EDynamicSyncMode::Off;
+
+    // --- Energy mode ---
+    // Local bass energy (0..1, smoothed) maps to a divisor tier:
+    //   energy >= HighThreshold              -> HighDivisor (densest, e.g. every beat)
+    //   LowThreshold <= energy < HighThreshold -> MidDivisor
+    //   energy <  LowThreshold               -> LowDivisor (sparsest)
+    float EnergyHighThreshold = 0.50f;
+    float EnergyLowThreshold = 0.22f;
+    int32 EnergyHighDivisor = 1;
+    int32 EnergyMidDivisor = 2;
+    int32 EnergyLowDivisor = 4;
+    int32 EnergySmoothingBeats = 4;   // moving-average window (in beats) to avoid flicker
+
+    // --- Random blocks mode ---
+    int32 BlockMinBeats = 8;          // block length drawn from [min, max] beats
+    int32 BlockMaxBeats = 16;
+    uint32 BlockSeed = 1;             // reproducible randomization
+    // Allowed divisors a block may pick from.
+    bool bAllowDiv1 = true;
+    bool bAllowDiv2 = true;
+    bool bAllowDiv4 = true;
+    bool bAllowDiv8 = false;
+};
+
 // Stem effect type enum (matches STripSitterMainWidget::EStemEffect)
 enum class EStemEffectParam : uint8
 {
@@ -50,12 +86,21 @@ struct FBeatsyncProcessingParams
     double AudioStart = 0.0;
     double AudioEnd = -1.0;
     FEffectsConfig EffectsConfig;
+    // Per-clip speed ramps (slow-mo / speed-up). Disabled by default.
+    FSpeedRampConfig SpeedConfig;
+    // Dynamic sync: per-section beat divisor (energy-driven or random blocks).
+    FDynamicSyncConfig DynamicSync;
     // Analysis mode: determines which beat detection method to use
     EAnalysisModeParam AnalysisMode = EAnalysisModeParam::AIBeat;
     // Pre-analyzed beat times from the UI (user-edited markers)
     // If non-empty, these are used instead of re-analyzing the audio
     TArray<double> PreAnalyzedBeatTimes;
     double PreAnalyzedBPM = 0.0;
+
+    // New Pro feature: Respect arrangement breaks using energy/segment analysis
+    // When true, automatically thins or removes beats in low-energy drops and atmospheric sections
+    bool bRespectBreaks = true;
+    float BreakEnergyThreshold = 0.15f;  // Tune this for psytrance (lower = more aggressive at removing beats in breaks)
 
     // Stem effect configurations (Kick, Snare, Hi-Hat, Synth)
     // Each stem can have its own beat times and mapped effect
@@ -66,12 +111,17 @@ struct FBeatsyncProcessingParams
 
     // Speed ramps: calm sections play clips in slow-mo with frame interpolation
     bool bSpeedRamps = false;
-    FString RampInterpMode = TEXT("blend");  // "mci" (quality), "blend" (fast), "none"
+    FString RampInterpMode = TEXT("blend");  // "rife" (AI), "mci", "blend" (fast), "none"
 
-    // Output dimensions; 1080x1920 = vertical 9:16 for Reels/TikTok/Shorts
+    // Output resolution and framerate, from the Resolution/FPS dropdowns.
     int32 OutputWidth = 1920;
     int32 OutputHeight = 1080;
     int32 OutputFps = 24;
+
+    // Orientation modifier: when true, a landscape resolution above is rotated to
+    // portrait (e.g. 1920x1080 -> 1080x1920) for Reels/TikTok/Shorts. Applying it
+    // to an already-portrait resolution is a no-op.
+    bool bVerticalOutput = false;
 };
 
 struct FBeatsyncProcessingResult

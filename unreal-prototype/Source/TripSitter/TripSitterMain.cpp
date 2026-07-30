@@ -5,7 +5,7 @@
 #include "StandaloneRenderer.h"
 #include "Stats/StatsSystem.h"
 #include "Private/STripSitterMainWidget.h"
-#include "Private/BeatsyncLoader.h"
+#include "BeatsyncLoader.h"  // From TripSitterUE plugin
 #include "Misc/Paths.h"
 #include "HAL/PlatformProcess.h"
 
@@ -52,7 +52,7 @@ int RunTripSitter(const TCHAR* CommandLine)
     // Held as a TSharedPtr so the reference can be released before Slate and ICU
     // are torn down (see cleanup below).
     TSharedPtr<SWindow> MainWindow = SNew(SWindow)
-        .Title(FText::FromString(TEXT("TripSitter Beat Sync Editor")))
+        .Title(FText::FromString(TEXT("MTV Trip Sitter")))
         .ClientSize(FVector2D(1400, 900))
         .SupportsMaximize(true)
         .SupportsMinimize(true)
@@ -78,13 +78,27 @@ int RunTripSitter(const TCHAR* CommandLine)
             FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
             FString IconPath = FPaths::Combine(ExeDir, TEXT("Resources"), TEXT("TripSitter.ico"));
 
+            // Fallback: dev builds have no Resources next to the exe; use the
+            // engine source location (same fallback the main widget uses for
+            // wallpaper/fonts). Without this the dev build shows the default UE icon.
+            if (!FPaths::FileExists(IconPath))
+            {
+                FString DevIconPath = FPaths::Combine(ExeDir, TEXT(".."), TEXT(".."), TEXT("Source"),
+                    TEXT("Programs"), TEXT("TripSitter"), TEXT("Resources"), TEXT("TripSitter.ico"));
+                DevIconPath = FPaths::ConvertRelativePathToFull(DevIconPath);
+                if (FPaths::FileExists(DevIconPath))
+                {
+                    IconPath = DevIconPath;
+                }
+            }
+
             if (FPaths::FileExists(IconPath))
             {
                 GWindowIcon = (HICON)LoadImageW(NULL, *IconPath, IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE);
                 if (GWindowIcon)
                 {
-                    SendMessage(Hwnd, WM_SETICON, ICON_BIG, (LPARAM)GWindowIcon);
-                    SendMessage(Hwnd, WM_SETICON, ICON_SMALL, (LPARAM)GWindowIcon);
+                    ::SendMessageW(Hwnd, WM_SETICON, ICON_BIG, (LPARAM)GWindowIcon);
+                    ::SendMessageW(Hwnd, WM_SETICON, ICON_SMALL, (LPARAM)GWindowIcon);
                     UE_LOG(LogTemp, Log, TEXT("Custom window icon set from: %s"), *IconPath);
                 }
                 else

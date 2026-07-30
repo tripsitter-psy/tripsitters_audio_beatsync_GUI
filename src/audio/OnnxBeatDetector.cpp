@@ -318,39 +318,140 @@ struct OnnxBeatDetector::Impl {
             // Try to use GPU if requested
             activeProvider = "CPU";  // Default to CPU
             if (cfg.useGPU) {
-                // Try CUDA first using the C API
-                try {
-                    OrtCUDAProviderOptionsV2* cudaOptions = nullptr;
-                    const OrtApi& ortApi = Ort::GetApi();
-                    OrtStatus* status = ortApi.CreateCUDAProviderOptions(&cudaOptions);
-                    if (status == nullptr && cudaOptions != nullptr) {
-                        // Set device ID
-                        const char* keys[] = {"device_id"};
-                        char deviceIdStr[16];
-                        snprintf(deviceIdStr, sizeof(deviceIdStr), "%d", cfg.gpuDeviceId);
-                        const char* values[] = {deviceIdStr};
-                        status = ortApi.UpdateCUDAProviderOptions(cudaOptions, keys, values, 1);
-                        if (status == nullptr) {
-                            status = ortApi.SessionOptionsAppendExecutionProvider_CUDA_V2(
-                                static_cast<OrtSessionOptions*>(*sessionOptions), cudaOptions);
-                            if (status == nullptr) {
-                                activeProvider = "CUDA";
+                const OrtApi& ortApi = Ort::GetApi();
+
+                // ============================================================
+                // TensorRT Execution Provider (Best performance on RTX GPUs)
+                // ============================================================
+                // Try TensorRT first - provides best performance on RTX cards
+                // with Tensor Cores via FP16 inference optimization
+                if (activeProvider == "CPU") {
+                    try {
+                        OrtTensorRTProviderOptionsV2* trtOptions = nullptr;
+                        OrtStatus* status = ortApi.CreateTensorRTProviderOptions(&trtOptions);
+                        if (status == nullptr && trtOptions != nullptr) {
+                            // Configure TensorRT for maximum performance
+                            // Keys: device_id, trt_max_workspace_size, trt_fp16_enable, trt_engine_cache_enable
+                            const char* trtKeys[] = {
+                                "device_id",
+                                "trt_max_workspace_size",
+                                "trt_fp16_enable",           // Enable FP16 for Tensor Cores (2x speedup)
+                                "trt_engine_cache_enable",   // Cache compiled engines
+                                "trt_engine_cache_path"
+                            };
+                            char deviceIdStr[16];
+                            snprintf(deviceIdStr, sizeof(deviceIdStr), "%d", cfg.gpuDeviceId);
+
+                            // 8GB workspace for RTX 4090 (plenty of VRAM)
+                            const char* workspaceSize = "8589934592"; // 8GB in bytes
+
+                            // Get temp path for engine cache
+                            std::string cachePath;
+                            const char* tempDir = std::getenv("TEMP");
+                            if (tempDir) {
+                                cachePath = std::string(tempDir) + "\\beatsync_trt_cache";
                             } else {
+                                cachePath = "beatsync_trt_cache";
+                            }
+
+                            const char* trtValues[] = {
+                                deviceIdStr,
+                                workspaceSize,
+                                "1",  // Enable FP16
+                                "1",  // Enable engine caching
+                                cachePath.c_str()
+                            };
+
+                            status = ortApi.UpdateTensorRTProviderOptions(trtOptions, trtKeys, trtValues, 5);
+                            if (status == nullptr) {
+                                status = ortApi.SessionOptionsAppendExecutionProvider_TensorRT_V2(
+                                    static_cast<OrtSessionOptions*>(*sessionOptions), trtOptions);
+                                if (status == nullptr) {
+                                    activeProvider = "TensorRT";
+                                    std::cerr << "[OnnxBeatDetector] TensorRT EP enabled with FP16 and 8GB workspace" << std::endl;
+                                } else {
+                                    std::cerr << "[OnnxBeatDetector] TensorRT session append failed: "
+                                              << ortApi.GetErrorMessage(status) << std::endl;
+                                    ortApi.ReleaseStatus(status);
+                                }
+                            } else {
+                                std::cerr << "[OnnxBeatDetector] TensorRT options update failed: "
+                                          << ortApi.GetErrorMessage(status) << std::endl;
                                 ortApi.ReleaseStatus(status);
                             }
-                        } else {
+                            ortApi.ReleaseTensorRTProviderOptions(trtOptions);
+                        } else if (status != nullptr) {
+                            std::cerr << "[OnnxBeatDetector] TensorRT provider creation failed: "
+                                      << ortApi.GetErrorMessage(status) << std::endl;
                             ortApi.ReleaseStatus(status);
                         }
-                        ortApi.ReleaseCUDAProviderOptions(cudaOptions);
-                    } else if (status != nullptr) {
-                        ortApi.ReleaseStatus(status);
+                    } catch (const std::exception& e) {
+                        std::cerr << "[OnnxBeatDetector] TensorRT exception: " << e.what() << std::endl;
+                    } catch (...) {
+                        std::cerr << "[OnnxBeatDetector] TensorRT unknown exception" << std::endl;
                     }
-                } catch (...) {
-                    // CUDA not available, activeProvider remains "CPU"
                 }
 
-                // Note: DirectML fallback removed - requires separate directml.lib linking
-                // CUDA EP is the preferred GPU acceleration method
+                // ============================================================
+                // CUDA Execution Provider (Fallback if TensorRT unavailable)
+                // ============================================================
+                if (activeProvider == "CPU") {
+                    try {
+                        OrtCUDAProviderOptionsV2* cudaOptions = nullptr;
+                        OrtStatus* status = ortApi.CreateCUDAProviderOptions(&cudaOptions);
+                        if (status == nullptr && cudaOptions != nullptr) {
+                            // Configure CUDA with optimized memory settings
+                            const char* cudaKeys[] = {
+                                "device_id",
+                                "arena_extend_strategy",       // How to grow memory arena
+                                "gpu_mem_limit",               // Max GPU memory (8GB)
+                                "cudnn_conv_algo_search",      // Optimize convolutions
+                                "do_copy_in_default_stream"    // Overlap compute/transfer
+                            };
+                            char deviceIdStr[16];
+                            snprintf(deviceIdStr, sizeof(deviceIdStr), "%d", cfg.gpuDeviceId);
+
+                            const char* cudaValues[] = {
+                                deviceIdStr,
+                                "kSameAsRequested",    // Grow arena as needed
+                                "8589934592",          // 8GB limit
+                                "EXHAUSTIVE",          // Find best conv algorithm
+                                "0"                    // Use separate streams for overlap
+                            };
+
+                            status = ortApi.UpdateCUDAProviderOptions(cudaOptions, cudaKeys, cudaValues, 5);
+                            if (status == nullptr) {
+                                status = ortApi.SessionOptionsAppendExecutionProvider_CUDA_V2(
+                                    static_cast<OrtSessionOptions*>(*sessionOptions), cudaOptions);
+                                if (status == nullptr) {
+                                    activeProvider = "CUDA";
+                                    std::cerr << "[OnnxBeatDetector] CUDA EP enabled with 8GB memory limit" << std::endl;
+                                } else {
+                                    std::cerr << "[OnnxBeatDetector] CUDA session append failed: "
+                                              << ortApi.GetErrorMessage(status) << std::endl;
+                                    ortApi.ReleaseStatus(status);
+                                }
+                            } else {
+                                std::cerr << "[OnnxBeatDetector] CUDA options update failed: "
+                                          << ortApi.GetErrorMessage(status) << std::endl;
+                                ortApi.ReleaseStatus(status);
+                            }
+                            ortApi.ReleaseCUDAProviderOptions(cudaOptions);
+                        } else if (status != nullptr) {
+                            std::cerr << "[OnnxBeatDetector] CUDA provider creation failed: "
+                                      << ortApi.GetErrorMessage(status) << std::endl;
+                            ortApi.ReleaseStatus(status);
+                        }
+                    } catch (const std::exception& e) {
+                        std::cerr << "[OnnxBeatDetector] CUDA exception: " << e.what() << std::endl;
+                    } catch (...) {
+                        std::cerr << "[OnnxBeatDetector] CUDA unknown exception" << std::endl;
+                    }
+                }
+
+                if (activeProvider == "CPU") {
+                    std::cerr << "[OnnxBeatDetector] GPU acceleration unavailable, using CPU" << std::endl;
+                }
             }
 
             // Load model
@@ -584,6 +685,13 @@ struct OnnxBeatDetector::Impl {
             std::vector<const char*> outputNamePtrs;
             for (const auto& name : outputNames) {
                 outputNamePtrs.push_back(name.c_str());
+            }
+
+            // Validate input count matches what we're providing
+            if (inputNamePtrs.size() != 1) {
+                lastError = "Model expects " + std::to_string(inputNamePtrs.size()) +
+                           " inputs but only single-input models are currently supported";
+                return result;
             }
 
             // Run inference
@@ -959,8 +1067,12 @@ std::string OnnxBeatDetector::getActiveProviderImpl() const {
 
 void OnnxBeatDetector::releaseGPUMemory() {
 #ifdef USE_ONNX
+    // Early return if impl is null
+    if (!m_impl) {
+        return;
+    }
     // Reset the session to release GPU memory
-    if (m_impl && m_impl->session) {
+    if (m_impl->session) {
         m_impl->session.reset();
         m_impl->loaded = false;
     }

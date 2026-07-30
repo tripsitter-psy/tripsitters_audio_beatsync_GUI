@@ -353,29 +353,148 @@ void FBeatsyncProcessingTask::DoWork()
     }
     else
     {
-        // Standard analysis - apply range filtering
+        // Standard analysis - apply range filtering + Respect Breaks / Dynamic Sync
         int32 BeatIndex = 0;
+        TArray<float> BassPeaks;
+        double WaveformDuration = 0.0;
+        bool bHasWaveform = false;
+
+        const bool bDynamic = (Params.DynamicSync.Mode != EDynamicSyncMode::Off);
+        const bool bDynamicEnergy = (Params.DynamicSync.Mode == EDynamicSyncMode::Energy);
+
+        // Bass energy profile is needed for Respect Breaks AND for energy-driven dynamic sync.
+        if (Params.bRespectBreaks || bDynamicEnergy)
+        {
+            // Get bass energy profile (low bass = likely atmospheric/break section)
+            void* Analyzer = FBeatsyncLoader::CreateAnalyzer();
+            if (Analyzer)
+            {
+                TArray<float> MidPeaks, HighPeaks; // dummy
+                bHasWaveform = FBeatsyncLoader::GetWaveformBands(Analyzer, Params.AudioPath, BassPeaks, MidPeaks, HighPeaks, WaveformDuration);
+                FBeatsyncLoader::DestroyAnalyzer(Analyzer);
+                UE_LOG(LogTemp, Log, TEXT("TripSitter: Loaded bass waveform for break/energy detection (%d peaks)"), BassPeaks.Num());
+            }
+        }
+
+        // Average beat interval (for the energy smoothing window).
+        double AvgBeatInterval = 0.5;
+        if (BeatGrid.Beats.Num() >= 2)
+        {
+            double Total = 0.0; int32 Count = 0;
+            for (int32 i = 1; i < BeatGrid.Beats.Num(); ++i)
+            {
+                double Interval = BeatGrid.Beats[i] - BeatGrid.Beats[i - 1];
+                if (Interval > 0.05 && Interval < 5.0) { Total += Interval; Count++; }
+            }
+            if (Count > 0) AvgBeatInterval = Total / Count;
+        }
+
+        // Smoothed local bass energy at a given time (moving average over a window
+        // of EnergySmoothingBeats beats) so a single quiet beat doesn't flip tiers.
+        auto SmoothedBassEnergy = [&](double Time) -> float
+        {
+            if (!bHasWaveform || BassPeaks.Num() == 0 || WaveformDuration <= 0.0) return 1.0f;
+            double HalfWin = 0.5 * FMath::Max(1, Params.DynamicSync.EnergySmoothingBeats) * AvgBeatInterval;
+            int32 I0 = FMath::Clamp(static_cast<int32>(((Time - HalfWin) / WaveformDuration) * BassPeaks.Num()), 0, BassPeaks.Num() - 1);
+            int32 I1 = FMath::Clamp(static_cast<int32>(((Time + HalfWin) / WaveformDuration) * BassPeaks.Num()), 0, BassPeaks.Num() - 1);
+            float Sum = 0.0f; int32 N = 0;
+            for (int32 k = I0; k <= I1; ++k) { Sum += BassPeaks[k]; N++; }
+            return N > 0 ? (Sum / N) : BassPeaks[I0];
+        };
+
+        // Allowed divisors for random-block mode.
+        TArray<int32> AllowedDivisors;
+        if (Params.DynamicSync.bAllowDiv1) AllowedDivisors.Add(1);
+        if (Params.DynamicSync.bAllowDiv2) AllowedDivisors.Add(2);
+        if (Params.DynamicSync.bAllowDiv4) AllowedDivisors.Add(4);
+        if (Params.DynamicSync.bAllowDiv8) AllowedDivisors.Add(8);
+        if (AllowedDivisors.Num() == 0) AllowedDivisors.Add(1);
+
+        // Dynamic-sync running state: keep a beat when (RegimeBeatCounter % CurrentDivisor)==0.
+        // The counter resets at each "regime" change (energy tier change or block boundary)
+        // so every new section starts on a kept beat.
+        int32 CurrentDivisor = FMath::Max(1, BeatDivisor);
+        int32 RegimeBeatCounter = 0;
+        int32 BlockBeatsRemaining = 0;
+        FRandomStream BlockRng(static_cast<int32>(Params.DynamicSync.BlockSeed));
+
         for (int32 i = 0; i < BeatGrid.Beats.Num(); ++i)
         {
             double BeatTime = BeatGrid.Beats[i];
 
             // Skip beats outside selection range
-            if (BeatTime < SelectionStart)
+            if (BeatTime < SelectionStart) continue;
+            if (BeatTime > SelectionEnd) break;
+
+            bool bKeep = false;
+
+            if (bDynamic)
             {
-                continue;
+                // Determine the divisor for this beat's regime.
+                if (Params.DynamicSync.Mode == EDynamicSyncMode::Energy)
+                {
+                    float E = SmoothedBassEnergy(BeatTime);
+                    int32 DesiredDiv;
+                    if (E >= Params.DynamicSync.EnergyHighThreshold)      DesiredDiv = FMath::Max(1, Params.DynamicSync.EnergyHighDivisor);
+                    else if (E >= Params.DynamicSync.EnergyLowThreshold)  DesiredDiv = FMath::Max(1, Params.DynamicSync.EnergyMidDivisor);
+                    else                                                  DesiredDiv = FMath::Max(1, Params.DynamicSync.EnergyLowDivisor);
+
+                    if (DesiredDiv != CurrentDivisor)
+                    {
+                        CurrentDivisor = DesiredDiv;   // tier change -> new regime
+                        RegimeBeatCounter = 0;
+                    }
+                }
+                else // RandomBlocks
+                {
+                    if (BlockBeatsRemaining <= 0)
+                    {
+                        int32 MinB = FMath::Max(1, FMath::Min(Params.DynamicSync.BlockMinBeats, Params.DynamicSync.BlockMaxBeats));
+                        int32 MaxB = FMath::Max(MinB, Params.DynamicSync.BlockMaxBeats);
+                        BlockBeatsRemaining = BlockRng.RandRange(MinB, MaxB);
+                        CurrentDivisor = AllowedDivisors[BlockRng.RandRange(0, AllowedDivisors.Num() - 1)];
+                        RegimeBeatCounter = 0;
+                    }
+                }
+
+                bKeep = (RegimeBeatCounter % CurrentDivisor) == 0;
+                RegimeBeatCounter++;
+                if (Params.DynamicSync.Mode == EDynamicSyncMode::RandomBlocks) BlockBeatsRemaining--;
             }
-            if (BeatTime > SelectionEnd)
+            else
             {
-                break; // All remaining beats are past the selection
+                bool bKeepBeat = true;
+
+                // Psy-aware break filtering (legacy binary thinning).
+                if (Params.bRespectBreaks && bHasWaveform && BassPeaks.Num() > 0 && WaveformDuration > 0.0)
+                {
+                    int32 PeakIndex = FMath::Clamp(static_cast<int32>((BeatTime / WaveformDuration) * BassPeaks.Num()), 0, BassPeaks.Num() - 1);
+                    float LocalBassEnergy = BassPeaks[PeakIndex];
+                    if (LocalBassEnergy < Params.BreakEnergyThreshold)
+                    {
+                        if ((BeatIndex % 4) != 0)
+                        {
+                            bKeepBeat = false;
+                            UE_LOG(LogTemp, Verbose, TEXT("TripSitter: Removed beat at %.2fs (bass energy %.3f < threshold %.3f)"), BeatTime, LocalBassEnergy, Params.BreakEnergyThreshold);
+                        }
+                    }
+                }
+
+                bKeep = bKeepBeat && (BeatIndex % BeatDivisor) == 0;
             }
 
-            // Apply beat divisor (every beat, every 2nd, etc.)
-            if ((BeatIndex % BeatDivisor) == 0)
+            if (bKeep)
             {
                 // Offset beat time relative to selection start for the output video
                 FilteredBeats.Add(BeatTime - SelectionStart);
             }
             BeatIndex++;
+        }
+
+        if (bDynamic)
+        {
+            UE_LOG(LogTemp, Log, TEXT("TripSitter: Dynamic sync mode=%d -> %d beats kept"),
+                static_cast<int32>(Params.DynamicSync.Mode), FilteredBeats.Num());
         }
     }
 
@@ -415,9 +534,6 @@ void FBeatsyncProcessingTask::DoWork()
         return;
     }
 
-    // Output resolution and framerate (1080x1920 = vertical 9:16 for Reels/TikTok/Shorts)
-    FBeatsyncLoader::SetOutputSettings(Writer, Params.OutputWidth, Params.OutputHeight, Params.OutputFps);
-
     // Speed ramps: classify cuts by energy band so calm sections get slow-mo melts
     if (Params.bSpeedRamps && FilteredBeats.Num() > 0)
     {
@@ -437,6 +553,20 @@ void FBeatsyncProcessingTask::DoWork()
     // Set up cancel flag for video processing (allows backend to check for cancellation)
     // Pass address of atomic int - backend will check this periodically during long operations
     FBeatsyncLoader::SetCancelFlag(Writer, reinterpret_cast<const int*>(&BackendCancelFlag));
+
+    // Set output resolution BEFORE any normalize/cut so the whole pipeline uses it.
+    // The Vertical checkbox rotates a landscape resolution to portrait; picking a
+    // vertical resolution outright already gives portrait dimensions.
+    int32 OutWidth = Params.OutputWidth;
+    int32 OutHeight = Params.OutputHeight;
+    if (Params.bVerticalOutput && OutWidth > OutHeight)
+    {
+        Swap(OutWidth, OutHeight);
+    }
+    FBeatsyncLoader::SetOutputSettings(Writer, OutWidth, OutHeight, Params.OutputFps);
+    UE_LOG(LogTemp, Log, TEXT("TripSitter: Output %dx%d @ %d fps (%s)"),
+        OutWidth, OutHeight, Params.OutputFps,
+        OutHeight > OutWidth ? TEXT("vertical") : TEXT("landscape"));
 
     // Set up progress callback for video processing
     // Note: SharedCancelFlag is a shared member that reflects runtime cancellation state
@@ -503,11 +633,24 @@ void FBeatsyncProcessingTask::DoWork()
         if (FBeatsyncLoader::NormalizeVideos(Writer, Params.VideoPaths, NormalizedVideos))
         {
             UE_LOG(LogTemp, Warning, TEXT("TripSitter: DIAG - NormalizeVideos returned TRUE, NormalizedVideos.Num()=%d"), NormalizedVideos.Num());
-            if (NormalizedVideos.Num() == Params.VideoPaths.Num())
+            if (NormalizedVideos.Num() > 0)
             {
+                // The backend skips any unreadable/corrupt sources, so the
+                // normalized count may be smaller than the input count. That is
+                // fine - use whatever normalized OK. Falling back to the original
+                // (un-normalized) list here would re-introduce the bad files and
+                // break the whole export, so only do that if NOTHING normalized.
                 VideosToProcess = NormalizedVideos;
                 bUsingNormalized = true;
-                UE_LOG(LogTemp, Warning, TEXT("TripSitter: Using %d normalized videos"), NormalizedVideos.Num());
+                if (NormalizedVideos.Num() < Params.VideoPaths.Num())
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("TripSitter: Normalization skipped %d unreadable source(s); proceeding with %d normalized videos"),
+                        Params.VideoPaths.Num() - NormalizedVideos.Num(), NormalizedVideos.Num());
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("TripSitter: Using %d normalized videos"), NormalizedVideos.Num());
+                }
                 // Log first few paths for debugging
                 for (int32 i = 0; i < FMath::Min(3, NormalizedVideos.Num()); ++i)
                 {
@@ -516,8 +659,7 @@ void FBeatsyncProcessingTask::DoWork()
             }
             else
             {
-                UE_LOG(LogTemp, Warning, TEXT("TripSitter: Normalization returned %d paths but expected %d, using original videos"),
-                    NormalizedVideos.Num(), Params.VideoPaths.Num());
+                UE_LOG(LogTemp, Warning, TEXT("TripSitter: Normalization returned 0 paths, using original videos"));
                 VideosToProcess = Params.VideoPaths;
             }
         }
@@ -579,6 +721,40 @@ void FBeatsyncProcessingTask::DoWork()
     UE_LOG(LogTemp, Warning, TEXT("TripSitter: CUT DIAGNOSTIC - bIsMultiClip=%d, VideosToProcess.Num()=%d, FilteredBeats.Num()=%d, ClipDuration=%.6f"),
         Params.bIsMultiClip ? 1 : 0, VideosToProcess.Num(), FilteredBeats.Num(), ClipDuration);
     UE_LOG(LogTemp, Warning, TEXT("TripSitter: CUT DIAGNOSTIC - TempVideoPath=%s"), *TempVideoPath);
+
+    // Configure per-clip speed ramps on the writer before cutting (applies to
+    // both the multi- and single-video paths). Disabled config is a no-op.
+    FBeatsyncLoader::SetSpeedConfig(Writer, Params.SpeedConfig);
+    if (Params.SpeedConfig.bEnabled)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("TripSitter: Speed ramps ENABLED (mode=%d, affected=%.2f, seed=%u, smoothing=%d)"),
+            Params.SpeedConfig.SelectionMode, Params.SpeedConfig.AffectedFraction,
+            Params.SpeedConfig.Seed, Params.SpeedConfig.Smoothing);
+    }
+
+    // Neural slow-mo interpolation (smoothing == 2) needs the RIFE ONNX model.
+    // Resolve models/rife.onnx next to the executable (ThirdParty fallback).
+    if (Params.SpeedConfig.bEnabled && Params.SpeedConfig.Smoothing == 2)
+    {
+        FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
+        FString RifePath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("rife.onnx"));
+        if (!FPaths::FileExists(RifePath))
+        {
+            FString Alt = FPaths::Combine(ExeDir, TEXT(".."), TEXT(".."), TEXT("Source"), TEXT("Programs"),
+                                          TEXT("TripSitter"), TEXT("ThirdParty"), TEXT("beatsync"), TEXT("models"), TEXT("rife.onnx"));
+            Alt = FPaths::ConvertRelativePathToFull(Alt);
+            if (FPaths::FileExists(Alt)) RifePath = Alt;
+        }
+        if (FPaths::FileExists(RifePath))
+        {
+            FBeatsyncLoader::SetInterpolationModel(Writer, RifePath);
+            UE_LOG(LogTemp, Warning, TEXT("TripSitter: RIFE interpolation model: %s"), *RifePath);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("TripSitter: RIFE model not found (models/rife.onnx); slow-mo will fall back to minterpolate"));
+        }
+    }
 
     if (Params.bIsMultiClip && VideosToProcess.Num() > 1)
     {

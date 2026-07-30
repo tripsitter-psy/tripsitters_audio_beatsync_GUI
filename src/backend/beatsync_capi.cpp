@@ -596,40 +596,6 @@ BEATSYNC_API void bs_free_bands(int* bands) {
     }
 }
 
-BEATSYNC_API void bs_video_set_speed_ramp_config(void* writer, const bs_speed_ramp_config_t* config) {
-    TRACE_FUNC();
-    if (!writer) {
-        return;
-    }
-    auto* w = static_cast<BeatSync::VideoWriter*>(writer);
-
-    BeatSync::SpeedRampConfig cfg;
-    if (config) {
-        cfg.enabled = config->enabled != 0;
-        cfg.bandSpeed[0] = config->calm_speed;
-        cfg.bandSpeed[1] = config->normal_speed;
-        cfg.bandSpeed[2] = config->frantic_speed;
-        if (config->interp_mode) {
-            cfg.interpMode = config->interp_mode;
-        }
-        if (config->beat_bands && config->band_count > 0) {
-            cfg.beatBands.assign(config->beat_bands, config->beat_bands + config->band_count);
-        }
-        if (config->rife_model_path) {
-            cfg.rifeModelPath = config->rife_model_path;
-        }
-    }
-    w->setSpeedRampConfig(cfg);
-}
-
-BEATSYNC_API void bs_video_set_output_settings(void* writer, int width, int height, int fps) {
-    TRACE_FUNC();
-    if (!writer || width <= 0 || height <= 0 || fps <= 0) {
-        return;
-    }
-    static_cast<BeatSync::VideoWriter*>(writer)->setOutputSettings(width, height, fps);
-}
-
 // ==================== VideoWriter API ====================
 
 BEATSYNC_API void* bs_create_video_writer() {
@@ -698,6 +664,12 @@ BEATSYNC_API void bs_video_set_cancel_flag(void* writer, const int* cancel_flag)
     if (!writer) return;
     auto* w = static_cast<BeatSync::VideoWriter*>(writer);
     w->setCancelFlag(cancel_flag);
+}
+
+BEATSYNC_API void bs_video_set_output_settings(void* writer, int width, int height, int fps) {
+    if (!writer || width <= 0 || height <= 0 || fps <= 0) return;
+    auto* w = static_cast<BeatSync::VideoWriter*>(writer);
+    w->setOutputSettings(width, height, fps);
 }
 
 BEATSYNC_API int bs_video_is_cancelled(void* writer) {
@@ -1011,6 +983,18 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
         size_t beatVideoIdx = 0;  // Cycling index for beat-synced sections
         const double MIN_SEGMENT_DURATION = 0.1;
 
+        // Per-clip speed ramps: precompute a deterministic multiplier per beat
+        // index. Only normal beat-cut clips (not gap fills) are retimed. The
+        // source-footage guard is applied per-clip below.
+        BeatSync::SpeedRampConfig speedCfg = w->getSpeedConfig();
+        std::vector<double> clipSpeeds =
+            BeatSync::VideoWriter::computeClipSpeeds(beatCount, speedCfg);
+        if (logFile && speedCfg.enabled) {
+            fprintf(logFile, "\n=== SPEED RAMPS enabled (mode=%d, affected=%.2f, seed=%u) ===\n",
+                    speedCfg.selectionMode, speedCfg.affectedFraction, speedCfg.seed);
+            fflush(logFile);
+        }
+
         // Check for intro gap (before first beat)
         if (beatTimes[0] > longGapThreshold) {
             fillGapWithFullVideos(0.0, beatTimes[0], "INTRO");
@@ -1090,20 +1074,33 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
                     fflush(logFile);
                 }
 
-                // Speed ramps: play this slot's footage slower/faster per its energy band
-                const BeatSync::SpeedRampConfig& ramp = w->getSpeedRampConfig();
-                double rampSpeed = 1.0;
-                if (ramp.enabled) {
-                    int band = (i < ramp.beatBands.size()) ? ramp.beatBands[i] : 1;
-                    if (band < 0 || band > 2) band = 1;
-                    rampSpeed = ramp.bandSpeed[band];
+                // Per-clip speed ramp for this beat clip (gap fills are never
+                // retimed). Output stays `duration` (the beat slot); a speed
+                // multiplier only changes how much source is consumed.
+                double clipSpeed = (speedCfg.enabled && i < clipSpeeds.size()) ? clipSpeeds[i] : 1.0;
+                if (std::fabs(clipSpeed - 1.0) > 1e-6 && clipSpeed > 1.0 && cachedDuration > 0.0) {
+                    // Source-footage guard: a speed-up needs `duration * speed`
+                    // of source. Clamp toward 1.0 (or skip) when not available.
+                    double needed = duration * clipSpeed;
+                    double available = cachedDuration - sourceStart;
+                    if (needed > available) {
+                        double maxSpeed = (duration > 0.0) ? (available / duration) : 1.0;
+                        clipSpeed = (speedCfg.guardClampToAvailable && maxSpeed > 1.001)
+                                        ? std::min(clipSpeed, maxSpeed)
+                                        : 1.0;
+                    }
                 }
-                const bool useRamp = ramp.enabled && std::fabs(rampSpeed - 1.0) > 1e-6;
 
-                const bool segOk = useRamp
-                    ? w->copySegmentRamped(videos[beatVideoIdx], sourceStart, sourceDuration,
-                                           rampSpeed, ramp.interpMode, tempFile)
-                    : w->copySegmentFast(videos[beatVideoIdx], sourceStart, sourceDuration, tempFile);
+                bool segOk;
+                if (std::fabs(clipSpeed - 1.0) > 1e-6) {
+                    // Re-encode with setpts retiming; output is the beat slot.
+                    segOk = w->extractSpeedClip(videos[beatVideoIdx], sourceStart,
+                                                duration, clipSpeed, tempFile);
+                } else {
+                    segOk = w->copySegmentFast(videos[beatVideoIdx], sourceStart,
+                                               sourceDuration, tempFile);
+                }
+
                 if (segOk) {
                     tempFiles.push_back(tempFile);
                     totalSegmentCount++;
@@ -1111,8 +1108,8 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
                     std::string errMsg = w->getLastError();
                     s_lastError = "Failed to copy video segment " + std::to_string(i) + ": " + errMsg;
                     if (logFile) {
-                        fprintf(logFile, "FAILED BeatSeg[%zu]: beatVideoIdx=%zu sourceStart=%.6f dur=%.6f err=%s\n",
-                                totalSegmentCount, beatVideoIdx, sourceStart, sourceDuration, errMsg.c_str());
+                        fprintf(logFile, "FAILED BeatSeg[%zu]: beatVideoIdx=%zu sourceStart=%.6f dur=%.6f speed=%.3f err=%s\n",
+                                totalSegmentCount, beatVideoIdx, sourceStart, sourceDuration, clipSpeed, errMsg.c_str());
                         fclose(logFile);
                     }
                     return -1;
@@ -1367,6 +1364,18 @@ BEATSYNC_API int bs_video_set_effects_config(void* writer, const bs_effects_conf
         cfg.effectStartTime = config->effectStartTime;
         cfg.effectEndTime = config->effectEndTime;
 
+        cfg.colorGradeStartTime = config->colorGradeStartTime;
+        cfg.colorGradeEndTime   = config->colorGradeEndTime;
+
+        cfg.vignetteStartTime   = config->vignetteStartTime;
+        cfg.vignetteEndTime     = config->vignetteEndTime;
+
+        cfg.beatFlashStartTime  = config->beatFlashStartTime;
+        cfg.beatFlashEndTime    = config->beatFlashEndTime;
+
+        cfg.beatZoomStartTime   = config->beatZoomStartTime;
+        cfg.beatZoomEndTime     = config->beatZoomEndTime;
+
         // Store in our map for later retrieval
         {
             std::lock_guard<std::mutex> lock(s_effectsConfigsMutex);
@@ -1380,6 +1389,78 @@ BEATSYNC_API int bs_video_set_effects_config(void* writer, const bs_effects_conf
         return 3;
     } catch (...) {
         s_lastError = "unknown error in bs_video_set_effects_config";
+        return 4;
+    }
+}
+
+BEATSYNC_API int bs_video_set_speed_config(void* writer, const bs_speed_config_t* config) {
+    if (!writer) return 1;
+    try {
+        auto* w = static_cast<BeatSync::VideoWriter*>(writer);
+
+        // nullptr → reset to default (disabled).
+        if (!config) {
+            BeatSync::SpeedRampConfig defaultCfg;  // enabled == false
+            w->setSpeedConfig(defaultCfg);
+            return 0;
+        }
+
+        BeatSync::SpeedRampConfig cfg;
+        cfg.enabled          = config->enabled != 0;
+        cfg.affectedFraction = config->affected_fraction;
+        cfg.seed             = config->seed;
+        cfg.selectionMode    = config->selection_mode;
+        cfg.everyN           = config->every_n;
+        cfg.speedUpFraction  = config->speed_up_fraction;
+        cfg.slowMin          = config->slow_min;
+        cfg.slowMax          = config->slow_max;
+        cfg.fastMin          = config->fast_min;
+        cfg.fastMax          = config->fast_max;
+        cfg.smoothing        = config->smoothing;
+        cfg.guardClampToAvailable = config->guard_clamp != 0;
+
+        // Energy-band mode (selection_mode 3)
+        if (config->beat_bands && config->band_count > 0) {
+            cfg.beatBands.assign(config->beat_bands, config->beat_bands + config->band_count);
+        }
+        for (int i = 0; i < 3; ++i) {
+            if (config->band_speed[i] > 0.0) {
+                cfg.bandSpeed[i] = config->band_speed[i];
+            }
+        }
+
+        w->setSpeedConfig(cfg);
+        return 0;
+    } catch (const std::exception& e) {
+        s_lastError = e.what();
+        return 3;
+    } catch (...) {
+        s_lastError = "unknown error in bs_video_set_speed_config";
+        return 4;
+    }
+}
+
+BEATSYNC_API int bs_video_get_speed_clamp_count(void* writer) {
+    if (!writer) return 0;
+    try {
+        auto* w = static_cast<BeatSync::VideoWriter*>(writer);
+        return static_cast<int>(w->getLastSpeedClampCount());
+    } catch (...) {
+        return 0;
+    }
+}
+
+BEATSYNC_API int bs_video_set_interpolation_model(void* writer, const char* onnxPath) {
+    if (!writer) return 1;
+    try {
+        auto* w = static_cast<BeatSync::VideoWriter*>(writer);
+        w->setInterpolationModelPath(onnxPath ? onnxPath : "");
+        return 0;
+    } catch (const std::exception& e) {
+        s_lastError = e.what();
+        return 3;
+    } catch (...) {
+        s_lastError = "unknown error in bs_video_set_interpolation_model";
         return 4;
     }
 }

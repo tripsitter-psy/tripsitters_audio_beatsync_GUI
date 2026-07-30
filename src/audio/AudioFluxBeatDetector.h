@@ -15,9 +15,19 @@ public:
     struct Config {
         int sampleRate = 22050;      // Target sample rate for analysis
         int fftSize = 2048;          // FFT window size (radix2_exp = 11)
-        int hopLength = 512;         // Hop length between frames
-        float onsetThreshold = 0.3f; // Onset detection threshold
-        float minBeatInterval = 0.25f; // Minimum time between beats (240 BPM max)
+        int hopLength = 256;         // Hop length between frames (~12ms) - tuned for EDM precision
+        float onsetThreshold = 0.2f; // Onset detection threshold - lower for prominent EDM kicks
+        float minBeatInterval = 0.2f; // Minimum time between beats (300 BPM max)
+
+        // Low-frequency focus for kick drum detection (EDM/psytrance)
+        bool lowFreqFocus = true;    // Only analyze kick drum frequencies
+        float lowFreqMin = 30.0f;    // Minimum frequency Hz (sub-bass)
+        float lowFreqMax = 200.0f;   // Maximum frequency Hz (kick fundamental + harmonics)
+
+        // Energy gating to filter out quiet sections
+        float energyGate = 0.01f;    // RMS energy gate - frames below this are ignored
+        bool fillGaps = false;       // DISABLED - trust the detection, don't interpolate missing beats
+        bool extendToEdges = false;  // DISABLED - don't create beats at track edges
     };
 
     struct Result {

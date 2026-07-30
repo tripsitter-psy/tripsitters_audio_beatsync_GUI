@@ -265,7 +265,9 @@ def main():
                 print(f"  WARNING: Could not load weights: {e}")
                 print("  Using random initialization instead.")
         else:
-            # Apply deterministic weight initialization (model already created with seed 42)
+            # Apply deterministic weight initialization
+            # Reset seed before initialization to ensure reproducibility
+            torch.manual_seed(42)
             for m in model.modules():
                 if isinstance(m, (nn.Conv1d, nn.ConvTranspose1d)):
                     nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')

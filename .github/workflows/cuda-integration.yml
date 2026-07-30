@@ -106,11 +106,13 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           if [ "${{ steps.check_gpu.outputs.has_gpu }}" = "true" ]; then
             echo "Runner had NVIDIA GPU available; CUDA steps ran." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Environment variables:**" >> $GITHUB_STEP_SUMMARY
+            echo "- \`BEATSYNC_ONNX_USE_CUDA=1\` was set to enable CUDA provider" >> $GITHUB_STEP_SUMMARY
+            echo "- Without this, tests use CPU-only inference" >> $GITHUB_STEP_SUMMARY
           else
             echo "No NVIDIA GPU detected; CUDA steps were skipped." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Note:** \`BEATSYNC_ONNX_USE_CUDA\` was not set (no GPU available on this runner)." >> $GITHUB_STEP_SUMMARY
           fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Environment variables:**" >> $GITHUB_STEP_SUMMARY
-          echo "- \`BEATSYNC_ONNX_USE_CUDA=1\` enables CUDA provider" >> $GITHUB_STEP_SUMMARY
-          echo "- Without this, tests use CPU-only inference" >> $GITHUB_STEP_SUMMARY
 

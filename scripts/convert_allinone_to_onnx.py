@@ -202,9 +202,10 @@ def main():
 
                 # Extract sliding windows using unfold
                 # k_padded: (B, num_heads, T + 2*pad, head_dim)
-                # After unfold on dim=2 with size=kernel_size*dilation, step=1:
+                # After unfold on dim=2 with size=(kernel_size-1)*dilation+1, step=1:
                 # k_windows: (B, num_heads, T, kernel_size, head_dim) after proper indexing
-                window_size = self.kernel_size * self.dilation
+                # Correct dilated window size formula: (kernel_size - 1) * dilation + 1
+                window_size = (self.kernel_size - 1) * self.dilation + 1
                 k_unfolded = k_padded.unfold(2, window_size, 1)  # (B, num_heads, T, head_dim, window_size)
                 v_unfolded = v_padded.unfold(2, window_size, 1)  # (B, num_heads, T, head_dim, window_size)
                 mask_unfolded = mask_padded.unfold(2, window_size, 1)  # (B, num_heads, T, window_size)

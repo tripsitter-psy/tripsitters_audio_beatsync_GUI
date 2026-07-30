@@ -437,6 +437,36 @@ void STripSitterMainWidget::Construct(const FArguments& InArgs)
 						.ColorAndOpacity(NeonPurple)
 					]
 
+					// Speed Ramps Section (per-clip slow-mo / speed-up)
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0, 15)
+					[
+						CreateSpeedRampsSection()
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						SNew(SSeparator)
+						.ColorAndOpacity(NeonCyan)
+					]
+
+					// Dynamic Sync Section (per-section beat divisor)
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0, 15)
+					[
+						CreateDynamicSyncSection()
+					]
+
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						SNew(SSeparator)
+						.ColorAndOpacity(NeonPurple)
+					]
+
 					// Stems Section (for effect mapping to individual drums/instruments)
 					+ SVerticalBox::Slot()
 					.AutoHeight()
@@ -1312,6 +1342,23 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 					]
 				]
 			]
+		]
+
+		// Vertical 9:16 output orientation. Lives with the resolution dropdown
+		// because it changes the output dimensions; it is not a visual effect.
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 8))
+		[
+			SNew(SCheckBox)
+			.OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
+				bVerticalOutput = (State == ECheckBoxState::Checked);
+			})
+			[
+				SNew(STextBlock)
+				.Text(FText::FromString(TEXT("Vertical 9:16 (phone)")))
+				.ColorAndOpacity(FLinearColor(0.6f, 0.9f, 1.0f))
+			]
 		];
 }
 
@@ -1448,6 +1495,481 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateEffectsSection()
 						ZoomIntensity = Value;
 					})
 				]
+			]
+		];
+}
+
+TSharedRef<SWidget> STripSitterMainWidget::CreateSpeedRampsSection()
+{
+	return SNew(SVerticalBox)
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 5))
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(TEXT("SPEED RAMPS")))
+			.Font(HeadingFont)
+			.ColorAndOpacity(NeonCyan)
+		]
+
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 2))
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(TEXT("Slow-mo / speed-up on a random subset of beat clips. Clips keep their beat slot, so cuts stay on the beat.")))
+			.ColorAndOpacity(FLinearColor(0.7f, 0.7f, 0.7f))
+			.AutoWrapText(true)
+		]
+
+		// Enable + smoothing toggles
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 8))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0, 0, 30, 0)
+			[
+				SNew(SCheckBox)
+				.IsChecked_Lambda([this] { return bEnableSpeedRamps ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
+					bEnableSpeedRamps = (State == ECheckBoxState::Checked);
+				})
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Enable Speed Ramps")))
+					.ColorAndOpacity(FLinearColor::White)
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0, 0, 30, 0)
+			[
+				SNew(SCheckBox)
+				.IsChecked_Lambda([this] { return bSpeedSmoothInterpolate ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
+					bSpeedSmoothInterpolate = (State == ECheckBoxState::Checked);
+				})
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Smooth slow-mo (optical flow)")))
+					.ColorAndOpacity(FLinearColor::White)
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			[
+				SNew(SCheckBox)
+				.IsChecked_Lambda([this] { return bSpeedUseRife ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
+					bSpeedUseRife = (State == ECheckBoxState::Checked);
+				})
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("AI interpolation (RIFE, needs model)")))
+					.ColorAndOpacity(NeonCyan)
+				]
+			]
+		]
+
+		// Affected fraction + speed-up vs slow-down mix sliders
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 8))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.FillWidth(0.5f)
+			.Padding(0, 0, 20, 0)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text_Lambda([this] {
+						return FText::FromString(FString::Printf(TEXT("Clips affected: %d%%"), FMath::RoundToInt(SpeedAffectedFraction * 100.0f)));
+					})
+					.ColorAndOpacity(FLinearColor::White)
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0, 4, 0, 0)
+				[
+					SNew(SSlider)
+					.Value_Lambda([this] { return SpeedAffectedFraction; })
+					.SliderBarColor(FLinearColor(0.3f, 0.3f, 0.3f))
+					.SliderHandleColor(NeonPurple)
+					.OnValueChanged_Lambda([this](float Value) { SpeedAffectedFraction = Value; })
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.FillWidth(0.5f)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text_Lambda([this] {
+						return FText::FromString(FString::Printf(TEXT("Speed-up vs slow-mo: %d%% fast"), FMath::RoundToInt(SpeedUpFraction * 100.0f)));
+					})
+					.ColorAndOpacity(FLinearColor::White)
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0, 4, 0, 0)
+				[
+					SNew(SSlider)
+					.Value_Lambda([this] { return SpeedUpFraction; })
+					.SliderBarColor(FLinearColor(0.3f, 0.3f, 0.3f))
+					.SliderHandleColor(NeonCyan)
+					.OnValueChanged_Lambda([this](float Value) { SpeedUpFraction = Value; })
+				]
+			]
+		]
+
+		// Slow amount + fast amount + seed spin boxes
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 8))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0, 0, 20, 0)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Slow-mo amount (x)")))
+					.ColorAndOpacity(FLinearColor::White)
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0, 4, 0, 0)
+				[
+					SNew(SSpinBox<float>)
+					.MinValue(0.5f).MaxValue(1.0f)
+					.MinSliderValue(0.5f).MaxSliderValue(1.0f)
+					.Delta(0.05f)
+					.Value_Lambda([this] { return SpeedSlowAmount; })
+					.OnValueChanged_Lambda([this](float Value) { SpeedSlowAmount = Value; })
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0, 0, 20, 0)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Speed-up amount (x)")))
+					.ColorAndOpacity(FLinearColor::White)
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0, 4, 0, 0)
+				[
+					SNew(SSpinBox<float>)
+					.MinValue(1.0f).MaxValue(2.0f)
+					.MinSliderValue(1.0f).MaxSliderValue(2.0f)
+					.Delta(0.05f)
+					.Value_Lambda([this] { return SpeedFastAmount; })
+					.OnValueChanged_Lambda([this](float Value) { SpeedFastAmount = Value; })
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Seed")))
+					.ColorAndOpacity(FLinearColor::White)
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0, 4, 0, 0)
+				[
+					SNew(SSpinBox<int32>)
+					.MinValue(0).MaxValue(99999)
+					.Value_Lambda([this] { return SpeedSeed; })
+					.OnValueChanged_Lambda([this](int32 Value) { SpeedSeed = Value; })
+				]
+			]
+		];
+}
+
+TSharedRef<SWidget> STripSitterMainWidget::CreateDynamicSyncSection()
+{
+	return SNew(SVerticalBox)
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 5))
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(TEXT("DYNAMIC SYNC")))
+			.Font(HeadingFont)
+			.ColorAndOpacity(NeonCyan)
+		]
+
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 2))
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(TEXT("Vary the cut rate across the track. Energy mode cuts denser in high-energy sections; Random Blocks assigns each block a random rate. Overrides the global Beat Rate.")))
+			.ColorAndOpacity(FLinearColor(0.7f, 0.7f, 0.7f))
+			.AutoWrapText(true)
+		]
+
+		// Enable + mode toggles
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 8))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0, 0, 30, 0)
+			[
+				SNew(SCheckBox)
+				.IsChecked_Lambda([this] { return bEnableDynamicSync ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
+					bEnableDynamicSync = (State == ECheckBoxState::Checked);
+				})
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Enable Dynamic Sync")))
+					.ColorAndOpacity(FLinearColor::White)
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			[
+				SNew(SCheckBox)
+				.IsChecked_Lambda([this] { return bDynamicRandomBlocks ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
+					bDynamicRandomBlocks = (State == ECheckBoxState::Checked);
+				})
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Random Blocks (off = Energy-driven)")))
+					.ColorAndOpacity(FLinearColor::White)
+				]
+			]
+		]
+
+		// Energy mode: thresholds
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 8, 0, 0))
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(TEXT("Energy mode")))
+			.ColorAndOpacity(NeonPurple)
+		]
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 4))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.FillWidth(0.5f)
+			.Padding(0, 0, 20, 0)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text_Lambda([this] {
+						return FText::FromString(FString::Printf(TEXT("High-energy threshold: %.2f"), DynEnergyHighThreshold));
+					})
+					.ColorAndOpacity(FLinearColor::White)
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0, 4, 0, 0)
+				[
+					SNew(SSlider)
+					.Value_Lambda([this] { return DynEnergyHighThreshold; })
+					.SliderBarColor(FLinearColor(0.3f, 0.3f, 0.3f))
+					.SliderHandleColor(NeonCyan)
+					.OnValueChanged_Lambda([this](float Value) { DynEnergyHighThreshold = Value; })
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.FillWidth(0.5f)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text_Lambda([this] {
+						return FText::FromString(FString::Printf(TEXT("Low-energy threshold: %.2f"), DynEnergyLowThreshold));
+					})
+					.ColorAndOpacity(FLinearColor::White)
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0, 4, 0, 0)
+				[
+					SNew(SSlider)
+					.Value_Lambda([this] { return DynEnergyLowThreshold; })
+					.SliderBarColor(FLinearColor(0.3f, 0.3f, 0.3f))
+					.SliderHandleColor(NeonPurple)
+					.OnValueChanged_Lambda([this](float Value) { DynEnergyLowThreshold = Value; })
+				]
+			]
+		]
+
+		// Energy mode: divisor tiers + smoothing
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 4))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 16, 0)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()[ SNew(STextBlock).Text(FText::FromString(TEXT("High /"))).ColorAndOpacity(FLinearColor::White) ]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
+				[
+					SNew(SSpinBox<int32>).MinValue(1).MaxValue(16)
+					.Value_Lambda([this] { return DynEnergyHighDivisor; })
+					.OnValueChanged_Lambda([this](int32 V) { DynEnergyHighDivisor = V; })
+				]
+			]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 16, 0)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()[ SNew(STextBlock).Text(FText::FromString(TEXT("Mid /"))).ColorAndOpacity(FLinearColor::White) ]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
+				[
+					SNew(SSpinBox<int32>).MinValue(1).MaxValue(16)
+					.Value_Lambda([this] { return DynEnergyMidDivisor; })
+					.OnValueChanged_Lambda([this](int32 V) { DynEnergyMidDivisor = V; })
+				]
+			]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 16, 0)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()[ SNew(STextBlock).Text(FText::FromString(TEXT("Low /"))).ColorAndOpacity(FLinearColor::White) ]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
+				[
+					SNew(SSpinBox<int32>).MinValue(1).MaxValue(16)
+					.Value_Lambda([this] { return DynEnergyLowDivisor; })
+					.OnValueChanged_Lambda([this](int32 V) { DynEnergyLowDivisor = V; })
+				]
+			]
+			+ SHorizontalBox::Slot().AutoWidth()
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()[ SNew(STextBlock).Text(FText::FromString(TEXT("Smoothing (beats)"))).ColorAndOpacity(FLinearColor::White) ]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
+				[
+					SNew(SSpinBox<int32>).MinValue(1).MaxValue(32)
+					.Value_Lambda([this] { return DynEnergySmoothingBeats; })
+					.OnValueChanged_Lambda([this](int32 V) { DynEnergySmoothingBeats = V; })
+				]
+			]
+		]
+
+		// Random blocks: length, seed, allowed divisors
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 8, 0, 0))
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(TEXT("Random Blocks mode")))
+			.ColorAndOpacity(NeonPurple)
+		]
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 4))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 16, 0)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()[ SNew(STextBlock).Text(FText::FromString(TEXT("Block min (beats)"))).ColorAndOpacity(FLinearColor::White) ]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
+				[
+					SNew(SSpinBox<int32>).MinValue(1).MaxValue(128)
+					.Value_Lambda([this] { return DynBlockMinBeats; })
+					.OnValueChanged_Lambda([this](int32 V) { DynBlockMinBeats = V; })
+				]
+			]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 16, 0)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()[ SNew(STextBlock).Text(FText::FromString(TEXT("Block max (beats)"))).ColorAndOpacity(FLinearColor::White) ]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
+				[
+					SNew(SSpinBox<int32>).MinValue(1).MaxValue(128)
+					.Value_Lambda([this] { return DynBlockMaxBeats; })
+					.OnValueChanged_Lambda([this](int32 V) { DynBlockMaxBeats = V; })
+				]
+			]
+			+ SHorizontalBox::Slot().AutoWidth()
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()[ SNew(STextBlock).Text(FText::FromString(TEXT("Seed"))).ColorAndOpacity(FLinearColor::White) ]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
+				[
+					SNew(SSpinBox<int32>).MinValue(0).MaxValue(99999)
+					.Value_Lambda([this] { return DynBlockSeed; })
+					.OnValueChanged_Lambda([this](int32 V) { DynBlockSeed = V; })
+				]
+			]
+		]
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(FMargin(0, 4))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 12, 0)
+			[
+				SNew(STextBlock).Text(FText::FromString(TEXT("Allowed rates:"))).ColorAndOpacity(FLinearColor::White)
+			]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 16, 0)
+			[
+				SNew(SCheckBox)
+				.IsChecked_Lambda([this] { return bDynAllowDiv1 ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) { bDynAllowDiv1 = (State == ECheckBoxState::Checked); })
+				[ SNew(STextBlock).Text(FText::FromString(TEXT("Every beat"))).ColorAndOpacity(FLinearColor::White) ]
+			]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 16, 0)
+			[
+				SNew(SCheckBox)
+				.IsChecked_Lambda([this] { return bDynAllowDiv2 ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) { bDynAllowDiv2 = (State == ECheckBoxState::Checked); })
+				[ SNew(STextBlock).Text(FText::FromString(TEXT("/2"))).ColorAndOpacity(FLinearColor::White) ]
+			]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 16, 0)
+			[
+				SNew(SCheckBox)
+				.IsChecked_Lambda([this] { return bDynAllowDiv4 ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) { bDynAllowDiv4 = (State == ECheckBoxState::Checked); })
+				[ SNew(STextBlock).Text(FText::FromString(TEXT("/4"))).ColorAndOpacity(FLinearColor::White) ]
+			]
+			+ SHorizontalBox::Slot().AutoWidth()
+			[
+				SNew(SCheckBox)
+				.IsChecked_Lambda([this] { return bDynAllowDiv8 ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) { bDynAllowDiv8 = (State == ECheckBoxState::Checked); })
+				[ SNew(STextBlock).Text(FText::FromString(TEXT("/8"))).ColorAndOpacity(FLinearColor::White) ]
 			]
 		];
 }
@@ -2730,6 +3252,7 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 		case EFPS::FPS30: Params.OutputFps = 30; break;
 		case EFPS::FPS60: Params.OutputFps = 60; break;
 	}
+	Params.bVerticalOutput = bVerticalOutput;
 
 	// Get selection range for audio trimming
 	if (WaveformViewer.IsValid() && WaveformViewer->GetDuration() > 0)
@@ -2757,6 +3280,38 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	// Use enum values directly (conversion to string happens in BeatsyncLoader)
 	Params.EffectsConfig.ColorPreset = ColorPreset;
 	Params.EffectsConfig.TransitionType = TransitionType;
+
+	// Per-clip speed ramps
+	Params.SpeedConfig.bEnabled = bEnableSpeedRamps;
+	Params.SpeedConfig.AffectedFraction = SpeedAffectedFraction;
+	Params.SpeedConfig.Seed = static_cast<uint32>(FMath::Max(0, SpeedSeed));
+	Params.SpeedConfig.SelectionMode = 0; // random
+	Params.SpeedConfig.SpeedUpFraction = SpeedUpFraction;
+	Params.SpeedConfig.SlowMin = SpeedSlowAmount;
+	Params.SpeedConfig.SlowMax = SpeedSlowAmount;
+	Params.SpeedConfig.FastMin = SpeedFastAmount;
+	Params.SpeedConfig.FastMax = SpeedFastAmount;
+	// Smoothing: 0 = duplicate frames, 1 = minterpolate, 2 = RIFE (AI). RIFE wins.
+	Params.SpeedConfig.Smoothing = bSpeedUseRife ? 2 : (bSpeedSmoothInterpolate ? 1 : 0);
+	Params.SpeedConfig.bGuardClampToAvailable = true;
+
+	// Dynamic sync (per-section beat divisor)
+	Params.DynamicSync.Mode = bEnableDynamicSync
+		? (bDynamicRandomBlocks ? EDynamicSyncMode::RandomBlocks : EDynamicSyncMode::Energy)
+		: EDynamicSyncMode::Off;
+	Params.DynamicSync.EnergyHighThreshold = DynEnergyHighThreshold;
+	Params.DynamicSync.EnergyLowThreshold = DynEnergyLowThreshold;
+	Params.DynamicSync.EnergyHighDivisor = DynEnergyHighDivisor;
+	Params.DynamicSync.EnergyMidDivisor = DynEnergyMidDivisor;
+	Params.DynamicSync.EnergyLowDivisor = DynEnergyLowDivisor;
+	Params.DynamicSync.EnergySmoothingBeats = DynEnergySmoothingBeats;
+	Params.DynamicSync.BlockMinBeats = DynBlockMinBeats;
+	Params.DynamicSync.BlockMaxBeats = DynBlockMaxBeats;
+	Params.DynamicSync.BlockSeed = static_cast<uint32>(FMath::Max(0, DynBlockSeed));
+	Params.DynamicSync.bAllowDiv1 = bDynAllowDiv1;
+	Params.DynamicSync.bAllowDiv2 = bDynAllowDiv2;
+	Params.DynamicSync.bAllowDiv4 = bDynAllowDiv4;
+	Params.DynamicSync.bAllowDiv8 = bDynAllowDiv8;
 
 	// Get effect region from waveform viewer (if any effect regions are defined)
 	// Use the first effect region that matches enabled effects, or the whole selection range

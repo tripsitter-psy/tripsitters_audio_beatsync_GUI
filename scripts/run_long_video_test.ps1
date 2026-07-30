@@ -19,7 +19,8 @@ Write-Host "Starting long video test: $Audio -> $OutputVideo (duration $Duration
 # Generate audio if missing
 if (-not (Test-Path $Audio)) {
     Write-Host "Audio file missing: $Audio. Generating..."
-    python tools/generate_long_test_wav.py $Audio $DurationSeconds
+    # Use call operator with proper argument handling for paths with spaces
+    & python "tools/generate_long_test_wav.py" "$Audio" $DurationSeconds
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: Failed to generate audio file (exit code $LASTEXITCODE)" -ForegroundColor Red
         exit 1
@@ -79,16 +80,31 @@ foreach ($argList in $cmdVariants) {
 
     $tempOut = [System.IO.Path]::GetTempFileName()
     $tempErr = [System.IO.Path]::GetTempFileName()
+    $timeoutSeconds = 1800  # 30-minute timeout for long video processing
     try {
-        # Use Start-Process with ArgumentList array for proper escaping of paths with special characters
-        $proc = Start-Process -FilePath $exe -ArgumentList $argList -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempOut -RedirectStandardError $tempErr
-        $exitCode = $proc.ExitCode
+        # Use Start-Process without -Wait to enable timeout handling
+        $proc = Start-Process -FilePath $exe -ArgumentList $argList -NoNewWindow -PassThru -RedirectStandardOutput $tempOut -RedirectStandardError $tempErr
+
+        # Wait for process with timeout
+        $finished = $proc.WaitForExit($timeoutSeconds * 1000)
+        if (-not $finished) {
+            Write-Host "ERROR: Process timed out after $timeoutSeconds seconds, killing..." -ForegroundColor Red
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            $exitCode = 124  # Standard timeout exit code
+        } else {
+            $exitCode = $proc.ExitCode
+        }
     } catch {
         if ($null -ne $proc) {
-            $code = $proc.ExitCode
-            if ($null -ne $code) {
-                $exitCode = $code
-            } else {
+            # Try to get exit code if process exists
+            try {
+                if ($proc.HasExited) {
+                    $exitCode = $proc.ExitCode
+                } else {
+                    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+                    $exitCode = 1
+                }
+            } catch {
                 $exitCode = 1
             }
         } else {

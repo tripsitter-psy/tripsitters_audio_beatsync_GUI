@@ -158,12 +158,42 @@ private:
 	bool bEnableBeatZoom = false;
 	bool bEnableColorGrade = false;
 	bool bEnableTransitions = false;
+	// Output orientation: false = landscape (1920x1080), true = vertical/portrait (1080x1920) for phones
+	bool bVerticalOutput = false;
 	float FlashIntensity = 0.5f;
 	float ZoomIntensity = 0.1f;
 	float VignetteStrength = 0.3f;
 	float TransitionDuration = 0.5f;
 	EColorPreset ColorPreset = EColorPreset::Warm;
 	ETransitionType TransitionType = ETransitionType::Fade;
+
+	// Per-clip speed ramps (slow-mo / speed-up). Affected clips keep their
+	// beat-slot length; the multiplier only changes how much source is sampled.
+	bool bEnableSpeedRamps = false;
+	float SpeedAffectedFraction = 0.25f;  // 0..1 portion of clips affected
+	float SpeedUpFraction = 0.5f;         // of affected, portion that speed up vs slow down
+	float SpeedSlowAmount = 0.5f;         // slow-mo multiplier (0.5 = half speed)
+	float SpeedFastAmount = 2.0f;         // speed-up multiplier (2.0 = double speed)
+	bool bSpeedSmoothInterpolate = false; // minterpolate optical-flow smoothing
+	bool bSpeedUseRife = false;           // AI neural interpolation (RIFE); overrides minterpolate
+	int32 SpeedSeed = 1;                  // reproducible randomization
+
+	// Dynamic sync: per-section beat divisor that varies across the track.
+	bool bEnableDynamicSync = false;
+	bool bDynamicRandomBlocks = false;    // false = energy-driven, true = random blocks
+	float DynEnergyHighThreshold = 0.50f; // energy >= -> densest tier
+	float DynEnergyLowThreshold = 0.22f;  // energy < -> sparsest tier
+	int32 DynEnergyHighDivisor = 1;       // high-energy divisor (every beat)
+	int32 DynEnergyMidDivisor = 2;
+	int32 DynEnergyLowDivisor = 4;        // low-energy divisor (sparse)
+	int32 DynEnergySmoothingBeats = 4;    // moving-average window (beats)
+	int32 DynBlockMinBeats = 8;           // random block length range
+	int32 DynBlockMaxBeats = 16;
+	int32 DynBlockSeed = 1;
+	bool bDynAllowDiv1 = true;            // divisors a random block may pick
+	bool bDynAllowDiv2 = true;
+	bool bDynAllowDiv4 = true;
+	bool bDynAllowDiv8 = false;
 
 	// Stem configurations (Kick, Snare, HiHat, Synth)
 	TStaticArray<FStemConfig, STEM_COUNT> StemConfigs;
@@ -235,6 +265,8 @@ private:
 	TSharedRef<SWidget> CreateWaveformSection();
 	TSharedRef<SWidget> CreateAnalysisSection();
 	TSharedRef<SWidget> CreateEffectsSection();
+	TSharedRef<SWidget> CreateSpeedRampsSection();
+	TSharedRef<SWidget> CreateDynamicSyncSection();
 	TSharedRef<SWidget> CreateTransitionsSection();
 	TSharedRef<SWidget> CreateControlSection();
 	TSharedRef<SWidget> CreateStemsSection();

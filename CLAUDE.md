@@ -1,13 +1,13 @@
 # Claude Code Instructions for BeatSyncEditor
 
 > **Path Convention**: All user-specific paths use `%USERPROFILE%` (for documentation/display) or `$env:USERPROFILE` (for PowerShell commands) instead of hardcoded usernames.
-> Shared/infrastructure paths (such as the Unreal Engine source location, e.g., C:\UE5_Source\UnrealEngine) may remain hardcoded for clarity. Only user-specific locations (home, Documents, OneDrive, etc.) are replaced with environment variables. Exempt paths: UE source, vcpkg root, build output directories.
+> Shared/infrastructure paths (such as the Unreal Engine source location, e.g., D:\UnrealEngine) may remain hardcoded for clarity. Only user-specific locations (home, Documents, OneDrive, etc.) are replaced with environment variables. Exempt paths: UE source, vcpkg root, build output directories.
 
 ## Critical Build Instructions
 
 The GUI is implemented in Unreal Engine (TripSitter standalone app). The C++ backend provides the core audio/video processing with ONNX Runtime for AI-powered beat detection.
 
-**Unreal Engine**: Source-built at `C:\UE5_Source\UnrealEngine` (NOT Epic Games Launcher install).
+**Unreal Engine**: Source-built at `D:\UnrealEngine` (NOT Epic Games Launcher install).
 
 > **Platforms**: Windows and Linux are both supported for the backend, CLI and GUI.
 > Everything below describes the Windows toolchain (vcpkg + MSVC). For Linux see
@@ -72,13 +72,13 @@ cmake --build build --config Release
 
 ```powershell
 # Copy source files to engine
-Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'D:\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
 
 # Build
-& "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+& "D:\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 ```
 
-**Output**: `C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe`
+**Output**: `D:\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe`
 
 ## Project Architecture
 
@@ -438,7 +438,7 @@ python scripts/convert_demucs_to_onnx.py \
 
 ## Required DLLs for TripSitter.exe
 
-**CRITICAL**: TripSitter.exe requires all these DLLs in the same directory (`C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\`). Missing or mismatched DLLs will cause silent failures or crashes.
+**CRITICAL**: TripSitter.exe requires all these DLLs in the same directory (`D:\UnrealEngine\Engine\Binaries\Win64\`). Missing or mismatched DLLs will cause silent failures or crashes.
 
 ### Complete DLL List
 
@@ -506,18 +506,18 @@ Use the deployment script which verifies DLL sizes and copies in correct order:
 
 ```powershell
 # Step 1: ONNX Runtime and dependencies (from build)
-Copy-Item 'build\Release\beatsync_backend_shared.dll' 'C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\' -Force
-Copy-Item 'build\Release\onnxruntime.dll' 'C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\' -Force
-Copy-Item 'build\Release\abseil_dll.dll' 'C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\' -Force
-Copy-Item 'build\Release\libprotobuf*.dll' 'C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\' -Force
-Copy-Item 'build\Release\re2.dll' 'C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\' -Force
+Copy-Item 'build\Release\beatsync_backend_shared.dll' 'D:\UnrealEngine\Engine\Binaries\Win64\' -Force
+Copy-Item 'build\Release\onnxruntime.dll' 'D:\UnrealEngine\Engine\Binaries\Win64\' -Force
+Copy-Item 'build\Release\abseil_dll.dll' 'D:\UnrealEngine\Engine\Binaries\Win64\' -Force
+Copy-Item 'build\Release\libprotobuf*.dll' 'D:\UnrealEngine\Engine\Binaries\Win64\' -Force
+Copy-Item 'build\Release\re2.dll' 'D:\UnrealEngine\Engine\Binaries\Win64\' -Force
 
 # Step 2: ONNX GPU providers
-Copy-Item 'build\vcpkg_installed\x64-windows\bin\onnxruntime_providers_*.dll' 'C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\' -Force
+Copy-Item 'build\vcpkg_installed\x64-windows\bin\onnxruntime_providers_*.dll' 'D:\UnrealEngine\Engine\Binaries\Win64\' -Force
 
 # Step 3: FFmpeg from ThirdParty (MUST be last - these are ~106MB not ~13MB!)
-Copy-Item 'unreal-prototype\ThirdParty\beatsync\lib\x64\av*.dll' 'C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\' -Force
-Copy-Item 'unreal-prototype\ThirdParty\beatsync\lib\x64\sw*.dll' 'C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\' -Force
+Copy-Item 'unreal-prototype\ThirdParty\beatsync\lib\x64\av*.dll' 'D:\UnrealEngine\Engine\Binaries\Win64\' -Force
+Copy-Item 'unreal-prototype\ThirdParty\beatsync\lib\x64\sw*.dll' 'D:\UnrealEngine\Engine\Binaries\Win64\' -Force
 ```
 
 ### DLL Size Verification
@@ -526,7 +526,7 @@ If TripSitter crashes on startup or waveform doesn't load, verify FFmpeg DLL siz
 
 ```powershell
 # avcodec-62.dll should be ~106MB, NOT ~13MB
-(Get-Item 'C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\avcodec-62.dll').Length / 1MB
+(Get-Item 'D:\UnrealEngine\Engine\Binaries\Win64\avcodec-62.dll').Length / 1MB
 ```
 
 If it shows ~13MB, the wrong FFmpeg DLLs were copied. Re-run the deployment script or copy ThirdParty FFmpeg DLLs again.
@@ -588,10 +588,10 @@ cmake --build build --config Release --target beatsync_backend_shared
 
 **Verification**: CMake output should show `AudioFlux found: C:/audioFlux/include, C:/audioFlux/build/windowBuild/Release/audioflux.lib - enabling spectral analysis`
 
-**DLLs required**: `audioflux.dll` and `libfftw3f-3.dll` must be in `C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\`
+**DLLs required**: `audioflux.dll` and `libfftw3f-3.dll` must be in `D:\UnrealEngine\Engine\Binaries\Win64\`
 
 ### UE Plugin won't compile after source changes
-The UE Editor compiles from `C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\`, not from this repo. Copy files from `unreal-prototype/Source/TripSitter/` to the engine Programs folder.
+The UE Editor compiles from `D:\UnrealEngine\Engine\Source\Programs\TripSitter\`, not from this repo. Copy files from `unreal-prototype/Source/TripSitter/` to the engine Programs folder.
 
 ### "FAsyncTask uses undefined class" error
 The `FBeatsyncProcessingTask` class must be fully defined (not forward declared) when used with `FAsyncTask<T>`. Ensure `#include "BeatsyncProcessingTask.h"` is in STripSitterMainWidget.h.
@@ -787,7 +787,7 @@ install(DIRECTORY "${CMAKE_SOURCE_DIR}/models" DESTINATION "${UE_BIN_DIR}")
 **Correct build process**:
 
 1. Build TripSitter.exe via: `Build.bat TripSitter Win64 Development`
-2. The executable is at: `C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe`
+2. The executable is at: `D:\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe`
 3. CMakeLists.txt installs this Program target with required Engine runtime files
 
 **Installer layout** (Program target structure):
@@ -871,7 +871,7 @@ If rcedit is not available, the build will continue but the app will have the de
 Before running the release script, ensure:
 
 - [ ] vcpkg submodule initialized (`git submodule update --init --recursive`)
-- [ ] UE5 Source build at `C:\UE5_Source\UnrealEngine`
+- [ ] UE5 Source build at `D:\UnrealEngine`
 - [ ] Pre-packaged UE runtime folder at `%USERPROFILE%\Desktop\TripSitterBuild\Windows\` (see below)
 - [ ] AudioFlux installed at `C:\audioFlux` (optional, for Flux mode)
 - [ ] NSIS installed and in PATH (for installer creation)
@@ -881,9 +881,9 @@ Before running the release script, ensure:
 
 The `TripSitterBuild\Windows\` folder contains UE5 runtime DLLs and Slate content required by TripSitter.exe. This folder is **not** created by `build_release.ps1` - it must be prepared manually once:
 
-1. **Copy UE5 runtime DLLs** from `C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\` to `%USERPROFILE%\Desktop\TripSitterBuild\Windows\Engine\Binaries\Win64\`
+1. **Copy UE5 runtime DLLs** from `D:\UnrealEngine\Engine\Binaries\Win64\` to `%USERPROFILE%\Desktop\TripSitterBuild\Windows\Engine\Binaries\Win64\`
    - Required: Core UE DLLs (`*.dll` excluding debug/editor-only)
-2. **Copy Slate content** from `C:\UE5_Source\UnrealEngine\Engine\Content\Slate\` to `%USERPROFILE%\Desktop\TripSitterBuild\Windows\Engine\Content\Slate\`
+2. **Copy Slate content** from `D:\UnrealEngine\Engine\Content\Slate\` to `%USERPROFILE%\Desktop\TripSitterBuild\Windows\Engine\Content\Slate\`
    - Required folders: `Common`, `Fonts`, `Cursor`, `Old`
 
 Alternatively, run `scripts/deploy_tripsitter.ps1` which handles DLL deployment to UE5 Binaries, then manually copy the Engine folder structure to the TripSitterBuild location.
@@ -918,16 +918,16 @@ unreal-prototype/ThirdParty/beatsync/lib/x64/beatsync_backend_shared.dll
 Copy-Item 'build\Release\beatsync_backend_shared.dll' 'unreal-prototype\ThirdParty\beatsync\lib\x64\' -Force
 
 # Deploy to UE (includes AudioFlux DLLs)
-Copy-Item 'build\Release\beatsync_backend_shared.dll' 'C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\' -Force
-Copy-Item 'C:\audioFlux\build\windowBuild\Release\audioflux.dll' 'C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\' -Force
-Copy-Item 'C:\audioFlux\python\audioflux\lib\libfftw3f-3.dll' 'C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\' -Force
+Copy-Item 'build\Release\beatsync_backend_shared.dll' 'D:\UnrealEngine\Engine\Binaries\Win64\' -Force
+Copy-Item 'C:\audioFlux\build\windowBuild\Release\audioflux.dll' 'D:\UnrealEngine\Engine\Binaries\Win64\' -Force
+Copy-Item 'C:\audioFlux\python\audioflux\lib\libfftw3f-3.dll' 'D:\UnrealEngine\Engine\Binaries\Win64\' -Force
 
 # Build TripSitter UE
-Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'C:\UE5_Source\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
-& "C:\UE5_Source\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
+Copy-Item -Path 'unreal-prototype\Source\TripSitter\Private\*' -Destination 'D:\UnrealEngine\Engine\Source\Programs\TripSitter\Private\' -Recurse -Force
+& "D:\UnrealEngine\Engine\Build\BatchFiles\Build.bat" TripSitter Win64 Development
 
 # TripSitter executable location
-C:\UE5_Source\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe
+D:\UnrealEngine\Engine\Binaries\Win64\TripSitter.exe
 
 # AudioFlux installation
 C:\audioFlux  # Set via -DAUDIOFLUX_ROOT during CMake configure

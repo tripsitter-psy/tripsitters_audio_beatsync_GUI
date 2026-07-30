@@ -25,6 +25,7 @@ using bs_progress_cb = void (*)(double, void*);
 using bs_video_set_progress_callback_t = void (*)(void*, bs_progress_cb, void*);
 using bs_video_set_cancel_flag_t = void (*)(void*, const int*);
 using bs_video_is_cancelled_t = int (*)(void*);
+using bs_video_set_output_settings_t = void (*)(void*, int, int, int);
 using bs_video_cut_at_beats_t = int (*)(void*, const char*, const double*, size_t, const char*, double);
 using bs_video_cut_at_beats_multi_t = int (*)(void*, const char**, size_t, const double*, size_t, const char*, double);
 using bs_video_concatenate_t = int (*)(const char**, size_t, const char*);
@@ -64,7 +65,29 @@ struct bs_effects_config_t {
     double effectEndTime;
 };
 
+// Speed ramp config structure matching C API (bs_speed_config_t)
+struct bs_speed_config_t {
+    int enabled;
+    float affected_fraction;
+    unsigned int seed;
+    int selection_mode;
+    int every_n;
+    float speed_up_fraction;
+    float slow_min;
+    float slow_max;
+    float fast_min;
+    float fast_max;
+    int smoothing;
+    int guard_clamp;
+    const int* beat_bands;   // selection_mode 3: energy band per clip
+    size_t band_count;
+    double band_speed[3];    // speed for calm / normal / frantic
+};
+
 using bs_video_set_effects_config_t = void (*)(void*, const bs_effects_config_t*);
+using bs_video_set_speed_config_t = int (*)(void*, const bs_speed_config_t*);
+using bs_video_get_speed_clamp_count_t = int (*)(void*);
+using bs_video_set_interpolation_model_t = int (*)(void*, const char*);
 using bs_video_apply_effects_t = int (*)(void*, const char*, const char*, const double*, size_t);
 using bs_video_extract_frame_t = int (*)(const char*, double, unsigned char**, int*, int*);
 using bs_free_frame_data_t = void (*)(unsigned char*);
@@ -96,7 +119,6 @@ using bs_dynamic_sync_classify_beats_t = int (*)(const char*, const double*, siz
 using bs_free_beats_t = void (*)(double*);
 using bs_free_bands_t = void (*)(int*);
 using bs_video_set_speed_ramp_config_t = void (*)(void*, const bs_speed_ramp_config_t*);
-using bs_video_set_output_settings_t = void (*)(void*, int, int, int);
 
 // AI analyzer C API types
 struct bs_ai_config_t {
@@ -154,6 +176,7 @@ struct FBeatsyncApi
     bs_video_set_progress_callback_t video_set_progress_callback = nullptr;
     bs_video_set_cancel_flag_t video_set_cancel_flag = nullptr;
     bs_video_is_cancelled_t video_is_cancelled = nullptr;
+    bs_video_set_output_settings_t video_set_output_settings = nullptr;
     bs_video_cut_at_beats_t video_cut_at_beats = nullptr;
     bs_video_cut_at_beats_multi_t video_cut_at_beats_multi = nullptr;
     bs_video_concatenate_t video_concatenate = nullptr;
@@ -169,8 +192,9 @@ struct FBeatsyncApi
     bs_dynamic_sync_classify_beats_t dynamic_sync_classify_beats = nullptr;
     bs_free_beats_t free_beats = nullptr;
     bs_free_bands_t free_bands = nullptr;
-    bs_video_set_speed_ramp_config_t video_set_speed_ramp_config = nullptr;
-    bs_video_set_output_settings_t video_set_output_settings = nullptr;
+    bs_video_set_speed_config_t video_set_speed_config = nullptr;
+    bs_video_get_speed_clamp_count_t video_get_speed_clamp_count = nullptr;
+    bs_video_set_interpolation_model_t video_set_interpolation_model = nullptr;
     bs_video_apply_effects_t video_apply_effects = nullptr;
     bs_video_extract_frame_t video_extract_frame = nullptr;
     bs_free_frame_data_t free_frame_data = nullptr;
@@ -295,6 +319,7 @@ bool FBeatsyncLoader::Initialize()
     GApi.video_set_progress_callback = (bs_video_set_progress_callback_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_progress_callback"));
     GApi.video_set_cancel_flag = (bs_video_set_cancel_flag_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_cancel_flag"));
     GApi.video_is_cancelled = (bs_video_is_cancelled_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_is_cancelled"));
+    GApi.video_set_output_settings = (bs_video_set_output_settings_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_output_settings"));
     GApi.video_cut_at_beats = (bs_video_cut_at_beats_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_cut_at_beats"));
     GApi.video_cut_at_beats_multi = (bs_video_cut_at_beats_multi_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_cut_at_beats_multi"));
     GApi.video_concatenate = (bs_video_concatenate_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_concatenate"));
@@ -310,8 +335,9 @@ bool FBeatsyncLoader::Initialize()
     GApi.dynamic_sync_classify_beats = (bs_dynamic_sync_classify_beats_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_dynamic_sync_classify_beats"));
     GApi.free_beats = (bs_free_beats_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_beats"));
     GApi.free_bands = (bs_free_bands_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_bands"));
-    GApi.video_set_speed_ramp_config = (bs_video_set_speed_ramp_config_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_speed_ramp_config"));
-    GApi.video_set_output_settings = (bs_video_set_output_settings_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_output_settings"));
+    GApi.video_set_speed_config = (bs_video_set_speed_config_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_speed_config"));
+    GApi.video_get_speed_clamp_count = (bs_video_get_speed_clamp_count_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_get_speed_clamp_count"));
+    GApi.video_set_interpolation_model = (bs_video_set_interpolation_model_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_interpolation_model"));
     GApi.video_apply_effects = (bs_video_apply_effects_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_apply_effects"));
     GApi.video_extract_frame = (bs_video_extract_frame_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_extract_frame"));
     GApi.free_frame_data = (bs_free_frame_data_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_frame_data"));
@@ -856,30 +882,86 @@ bool FBeatsyncLoader::DynamicSyncClassifyBeats(const FString& AudioPath, const T
 void FBeatsyncLoader::SetSpeedRampConfig(void* Handle, bool bEnabled, double CalmSpeed, double NormalSpeed,
                                          double FranticSpeed, const FString& InterpMode, const TArray<int32>& BeatBands)
 {
-    if (!GApi.video_set_speed_ramp_config || !Handle) return;
+    if (!GApi.video_set_speed_config || !Handle) return;
 
-    // RIFE model ships next to the executable, same as the beat/stem models
-    FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
-    FString RifeModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("rife_v4.15.onnx"));
-
-    FTCHARToUTF8 ModeUtf8(*InterpMode);
-    FTCHARToUTF8 RifeUtf8(*RifeModelPath);
-    bs_speed_ramp_config_t CConfig = {};
+    // Energy-band ramps drive the backend's selection_mode 3: the band decides the
+    // speed per clip, so no randomization parameters apply.
+    bs_speed_config_t CConfig = {};
     CConfig.enabled = bEnabled ? 1 : 0;
-    CConfig.calm_speed = CalmSpeed;
-    CConfig.normal_speed = NormalSpeed;
-    CConfig.frantic_speed = FranticSpeed;
-    CConfig.interp_mode = ModeUtf8.Get();
+    CConfig.selection_mode = 3;
+    CConfig.every_n = 1;
+    CConfig.guard_clamp = 1;
     CConfig.beat_bands = BeatBands.Num() > 0 ? BeatBands.GetData() : nullptr;
     CConfig.band_count = BeatBands.Num();
-    CConfig.rife_model_path = FPaths::FileExists(RifeModelPath) ? RifeUtf8.Get() : nullptr;
-    GApi.video_set_speed_ramp_config(Handle, &CConfig);
+    CConfig.band_speed[0] = CalmSpeed;
+    CConfig.band_speed[1] = NormalSpeed;
+    CConfig.band_speed[2] = FranticSpeed;
+
+    // Map the UI's interpolation choice onto the backend smoothing levels.
+    if (InterpMode == TEXT("rife"))      CConfig.smoothing = 2;
+    else if (InterpMode == TEXT("none")) CConfig.smoothing = 0;
+    else                                 CConfig.smoothing = 1;  // blend / mci
+
+    GApi.video_set_speed_config(Handle, &CConfig);
+
+    // RIFE needs a model; it ships next to the executable like the beat/stem models.
+    if (CConfig.smoothing == 2)
+    {
+        FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
+        FString ModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("rife_v4.15.onnx"));
+        if (!FPaths::FileExists(ModelPath))
+        {
+            ModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("rife.onnx"));
+        }
+        if (FPaths::FileExists(ModelPath))
+        {
+            SetInterpolationModel(Handle, ModelPath);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("RIFE selected but no model found next to the executable; falling back to minterpolate"));
+        }
+    }
 }
 
 void FBeatsyncLoader::SetOutputSettings(void* Handle, int32 Width, int32 Height, int32 Fps)
 {
     if (!GApi.video_set_output_settings || !Handle) return;
     GApi.video_set_output_settings(Handle, Width, Height, Fps);
+}
+
+void FBeatsyncLoader::SetSpeedConfig(void* Handle, const FSpeedRampConfig& Config)
+{
+    if (!GApi.video_set_speed_config || !Handle) return;
+
+    bs_speed_config_t CConfig = {};
+    CConfig.enabled           = Config.bEnabled ? 1 : 0;
+    CConfig.affected_fraction = Config.AffectedFraction;
+    CConfig.seed              = Config.Seed;
+    CConfig.selection_mode    = Config.SelectionMode;
+    CConfig.every_n           = FMath::Max(1, Config.EveryN);
+    CConfig.speed_up_fraction = Config.SpeedUpFraction;
+    CConfig.slow_min          = Config.SlowMin;
+    CConfig.slow_max          = Config.SlowMax;
+    CConfig.fast_min          = Config.FastMin;
+    CConfig.fast_max          = Config.FastMax;
+    CConfig.smoothing         = Config.Smoothing;
+    CConfig.guard_clamp       = Config.bGuardClampToAvailable ? 1 : 0;
+
+    GApi.video_set_speed_config(Handle, &CConfig);
+}
+
+int32 FBeatsyncLoader::GetSpeedClampCount(void* Handle)
+{
+    if (!GApi.video_get_speed_clamp_count || !Handle) return 0;
+    return GApi.video_get_speed_clamp_count(Handle);
+}
+
+void FBeatsyncLoader::SetInterpolationModel(void* Handle, const FString& OnnxPath)
+{
+    if (!GApi.video_set_interpolation_model || !Handle) return;
+    FTCHARToUTF8 PathUtf8(*OnnxPath);
+    GApi.video_set_interpolation_model(Handle, PathUtf8.Get());
 }
 
 bool FBeatsyncLoader::ApplyEffects(void* Handle, const FString& InputVideo, const FString& OutputVideo,

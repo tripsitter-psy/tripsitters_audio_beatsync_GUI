@@ -1,5 +1,6 @@
 #include "VideoWriter.h"
 #include "TransitionLibrary.h"
+#include "OnnxFrameInterpolator.h"
 #include <iostream>
 #include <sstream>
 #include <iomanip>
@@ -13,10 +14,13 @@
 #include <filesystem>
 #include <fstream>
 #include <atomic>
-#include "RifeInterpolator.h"
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <random>
+#include <algorithm>
+#include <cmath>
+#include <fstream>
 
 // libavformat for audio stream probing
 extern "C" {
@@ -409,6 +413,15 @@ bool VideoWriter::cutAtBeats(const std::string& inputVideo,
         segments.push_back(seg);
     }
 
+    // Per-clip speed ramps: assign a deterministic multiplier to each segment.
+    // The source-footage guard is applied per-clip inside extractSegments.
+    if (m_speed.enabled && !segments.empty()) {
+        std::vector<double> speeds = computeClipSpeeds(segments.size(), m_speed);
+        for (size_t i = 0; i < segments.size(); ++i) {
+            segments[i].speed = speeds[i];
+        }
+    }
+
     return extractSegments(inputVideo, segments, outputVideo);
 }
 
@@ -432,20 +445,47 @@ bool VideoWriter::extractSegments(const std::string& inputVideo,
         return false;
     }
 
+    // Per-clip speed ramp setup: if any segment requests a speed != 1.0, probe
+    // the source length once so the source-footage guard can clamp speed-ups
+    // that would overrun the end of the video.
+    m_speedClampCount.store(0);
+    bool anySpeed = false;
+    for (const auto& s : segments) {
+        if (std::abs(s.speed - 1.0) > 1e-6) { anySpeed = true; break; }
+    }
+    double sourceLen = 0.0;
+    if (anySpeed) {
+        VideoProcessor proc;
+        if (proc.open(inputVideo)) {
+            sourceLen = proc.getInfo().duration;
+            proc.close();
+        }
+    }
+
+    // Use OS temp directory for intermediate segment files to avoid write-permission
+    // issues when the executable runs from a protected folder or read-only install.
+    std::string tempDir = getTempDir();
+    if (tempDir.empty()) {
+        m_lastError = "Could not resolve temporary directory";
+        return false;
+    }
+    std::filesystem::create_directories(tempDir);
+
     // Pre-allocate temp file names (must be in order for concatenation)
     std::vector<std::string> tempFiles(segments.size());
     for (size_t i = 0; i < segments.size(); ++i) {
         std::ostringstream tempFile;
-        tempFile << "beatsync_segment_" << std::setw(5) << std::setfill('0') << i << ".mp4";
+        tempFile << tempDir << "beatsync_segment_" << std::setw(5) << std::setfill('0') << i << ".mp4";
         tempFiles[i] = tempFile.str();
     }
 
-    std::cout << "Extracting " << segments.size() << " segments...\n";
+    std::cout << "Extracting " << segments.size() << " segments to " << tempDir << "...\n";
 
     // Parallel segment extraction with thread pool
     // Use up to 4 concurrent FFmpeg processes (balances I/O and GPU encoder utilization)
     const size_t maxConcurrent = std::min(static_cast<size_t>(4),
                                           static_cast<size_t>(std::thread::hardware_concurrency()));
+    const size_t workerCount = maxConcurrent == 0 ? 1 : maxConcurrent;
 
     std::atomic<size_t> nextSegment{0};
     std::atomic<size_t> completedSegments{0};
@@ -472,10 +512,38 @@ bool VideoWriter::extractSegments(const std::string& inputVideo,
             double duration = seg.endTime - seg.startTime;
             const std::string& outFile = tempFiles[i];
 
-            // Try fast copy, then precise copy as fallback
-            bool success = copySegmentFast(inputVideo, seg.startTime, duration, outFile);
-            if (!success) {
-                success = copySegmentPrecise(inputVideo, seg.startTime, duration, outFile);
+            if (m_progressCallback) {
+                reportProgress(i / (double)segments.size() * 0.9);
+            }
+
+            // Per-clip speed ramp: a clip with speed != 1.0 must re-encode
+            // (stream copy cannot retime), so skip the fast path. The output
+            // clip stays `duration` long; source consumed = duration * speed.
+            double clipSpeed = seg.speed;
+            if (std::abs(clipSpeed - 1.0) > 1e-6) {
+                // Source-footage guard (speed-up only; slow-mo consumes less).
+                if (clipSpeed > 1.0 && sourceLen > 0.0) {
+                    double needed = duration * clipSpeed;
+                    double available = sourceLen - seg.startTime;
+                    if (needed > available) {
+                        m_speedClampCount.fetch_add(1);
+                        double maxSpeed = (duration > 0.0) ? (available / duration) : 1.0;
+                        clipSpeed = (m_speed.guardClampToAvailable && maxSpeed > 1.001)
+                                        ? std::min(clipSpeed, maxSpeed)
+                                        : 1.0;
+                    }
+                }
+            }
+
+            bool success;
+            if (std::abs(clipSpeed - 1.0) > 1e-6) {
+                success = extractSpeedClip(inputVideo, seg.startTime, duration, clipSpeed, outFile);
+            } else {
+                // Try fast copy, then precise copy as fallback
+                success = copySegmentFast(inputVideo, seg.startTime, duration, outFile);
+                if (!success) {
+                    success = copySegmentPrecise(inputVideo, seg.startTime, duration, outFile);
+                }
             }
 
             if (!success) {
@@ -502,8 +570,8 @@ bool VideoWriter::extractSegments(const std::string& inputVideo,
 
     // Launch worker threads
     std::vector<std::thread> workers;
-    workers.reserve(maxConcurrent);
-    for (size_t t = 0; t < maxConcurrent; ++t) {
+    workers.reserve(workerCount);
+    for (size_t t = 0; t < workerCount; ++t) {
         workers.emplace_back(processSegments);
     }
 
@@ -647,7 +715,7 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
     // and pixel format to prevent freezing from mixed source formats
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\"";
+    cmd << "\"" << ffmpegPath << "\" -nostdin";
 
     // GPU acceleration: Use CUDA hardware decoding if available
     // IMPORTANT: Periodically force CPU mode to release GPU memory and prevent CUDA crashes
@@ -786,282 +854,12 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
     return true;
 }
 
-namespace {
-
-// Minimal binary PPM (P6, maxval 255) I/O for the RIFE frame pipeline.
-// ffmpeg reads/writes the format natively, so no image library is needed.
-bool readPpm(const std::string& path, std::vector<uint8_t>& rgb, int& width, int& height) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) return false;
-    std::string magic;
-    int maxval = 0;
-    f >> magic >> width >> height >> maxval;
-    if (magic != "P6" || maxval != 255 || width <= 0 || height <= 0) return false;
-    f.get();  // single whitespace after header
-    rgb.resize(static_cast<size_t>(width) * height * 3);
-    f.read(reinterpret_cast<char*>(rgb.data()), rgb.size());
-    return static_cast<size_t>(f.gcount()) == rgb.size();
-}
-
-bool writePpm(const std::string& path, const std::vector<uint8_t>& rgb, int width, int height) {
-    std::ofstream f(path, std::ios::binary);
-    if (!f) return false;
-    f << "P6\n" << width << " " << height << "\n255\n";
-    f.write(reinterpret_cast<const char*>(rgb.data()), rgb.size());
-    return f.good();
-}
-
-} // namespace
-
-bool VideoWriter::copySegmentRifeSlow(const std::string& inputVideo,
-                                      double sourceStart,
-                                      double slotDuration,
-                                      const std::string& outputVideo) {
-    // Frame doubling covers exactly 0.5x; other speeds fall back before we get here
-    const double sourceSpan = slotDuration * 0.5;
-
-    if (!m_rife) {
-        m_rife = std::make_unique<RifeInterpolator>();
-        std::string modelPath = m_speedRamp.rifeModelPath.empty()
-            ? std::string("models/rife_v4.15.onnx") : m_speedRamp.rifeModelPath;
-        if (!m_rife->loadModel(modelPath)) {
-            m_lastError = "RIFE model load failed: " + m_rife->getLastError();
-            return false;
-        }
-    }
-    if (!m_rife->isLoaded()) {
-        m_lastError = "RIFE interpolator unavailable";
-        return false;
-    }
-
-    namespace fs = std::filesystem;
-    static std::atomic<uint64_t> s_rifeDirCounter{0};
-    const std::string frameDir = getTempDir() + "beatsync_rife_" +
-        std::to_string(s_rifeDirCounter.fetch_add(1)) + "/";
-    std::error_code ec;
-    fs::create_directories(frameDir, ec);
-    if (ec) {
-        m_lastError = "Could not create RIFE frame directory: " + frameDir;
-        return false;
-    }
-    // Ensure temp frames are removed on every exit path
-    struct DirCleanup {
-        std::string dir;
-        ~DirCleanup() { std::error_code e; std::filesystem::remove_all(dir, e); }
-    } cleanup{frameDir};
-
-    std::string ffmpegPath = getFFmpegPath();
-
-    // Stage 1: decode source frames at output fps (scaled/padded like every other segment)
-    {
-        std::ostringstream cmd;
-        cmd << "\"" << ffmpegPath << "\"";
-        cmd << std::fixed << std::setprecision(6);
-        cmd << " -i \"" << inputVideo << "\" -ss " << sourceStart << " -t " << sourceSpan;
-        cmd << std::defaultfloat;
-        cmd << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
-            << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
-            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\""
-            << " -y \"" << frameDir << "in_%05d.ppm\" 2>&1";
-        std::string output;
-        FILE* pipe = popen_compat(cmd.str().c_str(), "r");
-        if (!pipe) {
-            m_lastError = "Failed to run FFmpeg for RIFE frame extraction";
-            return false;
-        }
-        char buffer[512];
-        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) output += buffer;
-        if (pclose_compat(pipe) != 0) {
-            m_lastError = "FFmpeg RIFE frame extraction failed";
-            appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentRifeSlow::extract", cmd.str(), 1, output, "");
-            return false;
-        }
-    }
-
-    // Count extracted frames
-    int frameCount = 0;
-    while (fs::exists(frameDir + "in_" + [](int n){ char b[16]; snprintf(b, sizeof(b), "%05d", n); return std::string(b); }(frameCount + 1) + ".ppm")) {
-        frameCount++;
-    }
-    if (frameCount < 2) {
-        m_lastError = "RIFE: not enough source frames extracted (" + std::to_string(frameCount) + ")";
-        return false;
-    }
-
-    // Stage 2: interleave originals with GPU-synthesized midpoints (2N-1 frames)
-    auto inName = [&](int n) { char b[32]; snprintf(b, sizeof(b), "in_%05d.ppm", n); return frameDir + b; };
-    auto outName = [&](int n) { char b[32]; snprintf(b, sizeof(b), "out_%05d.ppm", n); return frameDir + b; };
-
-    std::vector<uint8_t> prev, next, mid;
-    int w = 0, h = 0;
-    if (!readPpm(inName(1), prev, w, h)) {
-        m_lastError = "RIFE: failed to read extracted frame";
-        return false;
-    }
-    fs::rename(inName(1), outName(1), ec);
-    int outIdx = 1;
-    for (int i = 2; i <= frameCount; ++i) {
-        if (m_cancelFlag && *m_cancelFlag != 0) {
-            m_lastError = "Cancelled by user";
-            return false;
-        }
-        int w2 = 0, h2 = 0;
-        if (!readPpm(inName(i), next, w2, h2) || w2 != w || h2 != h) {
-            m_lastError = "RIFE: failed to read extracted frame";
-            return false;
-        }
-        if (!m_rife->interpolate(prev.data(), next.data(), w, h, 0.5f, mid)) {
-            m_lastError = "RIFE inference failed: " + m_rife->getLastError();
-            return false;
-        }
-        if (!writePpm(outName(++outIdx), mid, w, h)) {
-            m_lastError = "RIFE: failed to write interpolated frame";
-            return false;
-        }
-        fs::rename(inName(i), outName(++outIdx), ec);
-        prev.swap(next);
-    }
-
-    // Stage 3: encode the doubled sequence, with source audio retimed to match
-    {
-        std::ostringstream cmd;
-        cmd << "\"" << ffmpegPath << "\"";
-        cmd << " -framerate " << m_outputFps << " -i \"" << frameDir << "out_%05d.ppm\"";
-        cmd << std::fixed << std::setprecision(6);
-        cmd << " -ss " << sourceStart << " -t " << sourceSpan << " -i \"" << inputVideo << "\"";
-        cmd << " -map 0:v -map \"1:a?\" -af \"atempo=0.5\"";
-        cmd << " -t " << slotDuration;
-        cmd << std::defaultfloat;
-        cmd << " " << getEncoderArgs("ultrafast");
-        cmd << " -c:a aac -b:a 192k -ar 44100"
-            << " -video_track_timescale 90000"
-            << " -avoid_negative_ts make_zero"
-            << " -y \"" << outputVideo << "\" 2>&1";
-        std::string output;
-        FILE* pipe = popen_compat(cmd.str().c_str(), "r");
-        if (!pipe) {
-            m_lastError = "Failed to run FFmpeg for RIFE encode";
-            return false;
-        }
-        char buffer[512];
-        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) output += buffer;
-        if (pclose_compat(pipe) != 0) {
-            m_lastError = "FFmpeg RIFE encode failed";
-            appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentRifeSlow::encode", cmd.str(), 1, output, "");
-            return false;
-        }
-    }
-
-    return true;
-}
-
-void VideoWriter::setSpeedRampConfig(const SpeedRampConfig& config) {
-    m_speedRamp = config;
-    for (double& s : m_speedRamp.bandSpeed) {
-        s = std::clamp(s, 0.5, 2.0);  // atempo's single-stage range; keeps ramps tasteful too
-    }
-}
-
-const SpeedRampConfig& VideoWriter::getSpeedRampConfig() const {
-    return m_speedRamp;
-}
-
-bool VideoWriter::copySegmentRamped(const std::string& inputVideo,
-                                    double sourceStart,
-                                    double slotDuration,
-                                    double speedFactor,
-                                    const std::string& interpMode,
-                                    const std::string& outputVideo) {
-    speedFactor = std::clamp(speedFactor, 0.5, 2.0);
-    if (sourceStart < 0.001) {
-        sourceStart = 0.0;
-    }
-
-    std::string mode = interpMode;
-    if (mode == "rife") {
-        // AI interpolation covers the 0.5x frame-doubling case; anything else
-        // (and any RIFE failure) falls back to minterpolate blend
-        if (std::fabs(speedFactor - 0.5) < 0.01 &&
-            copySegmentRifeSlow(inputVideo, sourceStart, slotDuration, outputVideo)) {
-            return true;
-        }
-        std::cerr << "[BeatSync] RIFE unavailable for this segment ("
-                  << m_lastError << "), using blend" << std::endl;
-        mode = "blend";
-    }
-    const double sourceSpan = slotDuration * speedFactor;
-
-    std::string ffmpegPath = getFFmpegPath();
-    std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\"";
-
-    // Software decode: minterpolate runs on the CPU, so frames must stay in
-    // system memory. Encoding still uses the GPU encoder when available.
-    cmd << std::fixed << std::setprecision(6);
-    cmd << " -i \"" << inputVideo << "\""
-        << " -ss " << sourceStart
-        << " -t " << sourceSpan;
-    cmd << std::defaultfloat;
-
-    std::ostringstream vf;
-    vf << "scale=" << m_outputWidth << ":" << m_outputHeight
-       << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
-       << ":(ow-iw)/2:(oh-ih)/2,setsar=1"
-       << ",setpts=PTS/" << speedFactor;
-    if (mode == "mci") {
-        vf << ",minterpolate=fps=" << m_outputFps << ":mi_mode=mci:mc_mode=aobmc:vsbmc=1";
-    } else if (mode == "blend") {
-        vf << ",minterpolate=fps=" << m_outputFps << ":mi_mode=blend";
-    } else {
-        vf << ",fps=" << m_outputFps;
-    }
-
-    cmd << " -vf \"" << vf.str() << "\"";
-    // Retime audio to match; replaced by the music track later but keeps streams consistent
-    cmd << " -af \"atempo=" << speedFactor << "\"";
-    cmd << " " << getEncoderArgs("ultrafast");
-    cmd << " -c:a aac -b:a 192k -ar 44100"
-        << " -video_track_timescale 90000"
-        << " -avoid_negative_ts make_zero"
-        << " -y \"" << outputVideo << "\"";
-
-    std::string ffmpegOutput;
-    int exitCode;
-#ifdef _WIN32
-    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput, m_cancelFlag);
-    if (exitCode == -2) {
-        m_lastError = "Cancelled by user";
-        return false;
-    }
-#else
-    std::string fullCmd = cmd.str() + " 2>&1";
-    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
-    if (!pipe) {
-        m_lastError = "Failed to execute FFmpeg for ramped segment";
-        appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentRamped::popen_failed", fullCmd, -1, "",
-                        "start=" + std::to_string(sourceStart) + ", slot=" + std::to_string(slotDuration));
-        return false;
-    }
-    char buffer[512];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        ffmpegOutput += buffer;
-    }
-    exitCode = pclose_compat(pipe);
-#endif
-
-    if (exitCode != 0) {
-        m_lastError = "FFmpeg ramped segment extraction failed";
-        appendFfmpegLog("beatsync_ffmpeg_extract.log", "copySegmentRamped::ffmpeg_failed", cmd.str(), exitCode,
-                        ffmpegOutput, "speed=" + std::to_string(speedFactor) + ", interp=" + mode);
-        return false;
-    }
-    return true;
-}
-
 bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
                                      double startTime,
                                      double duration,
-                                     const std::string& outputVideo) {
+                                     const std::string& outputVideo,
+                                     double speed,
+                                     int smoothing) {
     // Clamp very small start times to zero - values like 2e-05 (0.00002s) are essentially zero
     // and can cause FFmpeg errors with scientific notation even with std::fixed in some cases
     if (startTime < 0.001) {
@@ -1074,7 +872,7 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
     // FIX: Normalize ALL clips to same resolution, frame rate, and pixel format
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\"";
+    cmd << "\"" << ffmpegPath << "\" -nostdin";
 
     // GPU acceleration: Use CUDA hardware decoding if available
     // IMPORTANT: Periodically force CPU mode to release GPU memory and prevent CUDA crashes
@@ -1092,6 +890,34 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
         }
     }
 
+    // Per-clip speed ramp: setpts retimes the video so that `duration` seconds
+    // of OUTPUT are produced while FFmpeg consumes `duration * speed` of source.
+    // The output `-t duration` (below) caps the slot, so the source amount is
+    // governed automatically. speed is clamped so a single atempo keeps audio
+    // length consistent for concatenation. See SpeedRampConfig.
+    bool applySpeed = (speed > 0.0 && std::abs(speed - 1.0) > 1e-6);
+    double clampedSpeed = speed;
+    if (applySpeed) {
+        clampedSpeed = std::max(static_cast<double>(SpeedRampConfig::kMinSpeed),
+                                std::min(static_cast<double>(SpeedRampConfig::kMaxSpeed), clampedSpeed));
+    }
+    const double ptsFactor = applySpeed ? (1.0 / clampedSpeed) : 1.0;
+
+    // Build the video-retime + framerate suffix appended to the filter chain.
+    // - dup-frame smoothing: setpts then plain fps (may judder on slow-mo).
+    // - minterpolate smoothing: motion-compensated frame interpolation to fps.
+    std::ostringstream retimeFps;
+    retimeFps << std::fixed << std::setprecision(6);
+    if (applySpeed) {
+        retimeFps << ",setpts=" << ptsFactor << "*(PTS-STARTPTS)";
+    }
+    if (applySpeed && smoothing == 1) {
+        retimeFps << ",minterpolate=fps=" << m_outputFps << ":mi_mode=mci:me_mode=bidir:vsbmc=1";
+    } else {
+        retimeFps << ",fps=" << m_outputFps;
+    }
+    const std::string retimeFpsStr = retimeFps.str();
+
     // Use fixed-point notation for time values - FFmpeg doesn't accept scientific notation (e.g., 2e-05)
     cmd << std::fixed << std::setprecision(6);
     cmd << " -i \"" << inputVideo << "\""
@@ -1106,12 +932,20 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
         cmd << " -vf \"scale_cuda=" << m_outputWidth << ":" << m_outputHeight
             << ":force_original_aspect_ratio=decrease,hwdownload,format=nv12"
             << ",pad=" << m_outputWidth << ":" << m_outputHeight
-            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1" << retimeFpsStr << "\"";
     } else {
         // CPU filter chain (original behavior)
         cmd << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
             << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
-            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1" << retimeFpsStr << "\"";
+    }
+
+    // Retime audio to match the new video length so this segment file stays
+    // internally A/V-consistent for concatenation. atempo is valid for the
+    // clamped [0.5, 2.0] speed range. (The final master audio is muxed later.)
+    if (applySpeed) {
+        cmd << " -af \"atempo=" << std::fixed << std::setprecision(6) << clampedSpeed << "\"";
+        cmd << std::defaultfloat;
     }
 
     // Always use best available encoder (GPU preferred)
@@ -1205,9 +1039,7 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
     }
 
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\"";
-
-    // Check GPU availability for hardware-accelerated normalization
+    cmd << "\"" << ffmpegPath << "\" -nostdin";
     bool cudaAvail = hasCudaHwaccel();
     bool scaleCudaAvail = hasScaleCudaFilter();
     bool nvencAvail = probeEncoder("h264_nvenc");
@@ -1348,6 +1180,7 @@ bool VideoWriter::normalizeVideos(const std::vector<std::string>& inputVideos,
     }
 
     int index = 0;
+    int skippedCount = 0;
 
     for (const auto& video : inputVideos) {
         std::cout << "[BeatSync] Processing video " << index << ": " << video << "\n";
@@ -1381,12 +1214,20 @@ bool VideoWriter::normalizeVideos(const std::vector<std::string>& inputVideos,
         std::cout << "[BeatSync] Output path: " << normalizedPath << "\n";
 
         if (!normalizeVideo(video, normalizedPath)) {
-            // Clean up any already-created normalized files
-            for (const auto& path : normalizedPaths) {
-                std::remove(path.c_str());
+            // A single unreadable/corrupt source (e.g. truncated MP4 with a
+            // missing moov atom, or a malformed VLC partial recording) must not
+            // abort the entire export. Skip it and keep going with the rest.
+            ++skippedCount;
+            std::cerr << "[BeatSync] WARNING: skipping video that failed to normalize: "
+                      << video << " (" << m_lastError << ")\n";
+            // Best-effort: remove any partial output left behind for this clip.
+            std::remove(normalizedPath.c_str());
+
+            // Report progress for the skipped slot so the bar keeps advancing.
+            if (m_progressCallback) {
+                reportProgress(static_cast<double>(index) / inputVideos.size() * 0.1);
             }
-            normalizedPaths.clear();
-            return false;
+            continue;
         }
 
         normalizedPaths.push_back(normalizedPath);
@@ -1395,6 +1236,18 @@ bool VideoWriter::normalizeVideos(const std::vector<std::string>& inputVideos,
         if (m_progressCallback) {
             reportProgress(static_cast<double>(index) / inputVideos.size() * 0.1);  // 10% for normalization
         }
+    }
+
+    if (skippedCount > 0) {
+        std::cout << "[BeatSync] normalizeVideos skipped " << skippedCount
+                  << " unreadable source(s); " << normalizedPaths.size() << " normalized OK\n";
+    }
+
+    // Only a hard failure if EVERY input was unusable.
+    if (normalizedPaths.empty()) {
+        m_lastError = "All " + std::to_string(inputVideos.size()) +
+                      " source videos failed to normalize (corrupt or unreadable inputs)";
+        return false;
     }
 
     return true;
@@ -1535,7 +1388,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 
                     // Build ffmpeg command with all inputs
                     std::ostringstream cmd;
-                    cmd << "\"" << ffmpegPath << "\"";
+                    cmd << "\"" << ffmpegPath << "\" -nostdin";
                     for (const auto &v : inputVideos) {
                         cmd << " -i \"" << v << "\"";
                     }
@@ -1665,7 +1518,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
     }
 
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\" -fflags +genpts+igndts -f concat -safe 0 -i \"" << listFile
+    cmd << "\"" << ffmpegPath << "\" -nostdin -fflags +genpts+igndts -f concat -safe 0 -i \"" << listFile
         << "\" -c copy -video_track_timescale 90000 -y \"" << outputVideo << "\"";
 
     // Execute FFmpeg hidden (no console flash on Windows)
@@ -1733,7 +1586,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
         // Attempt a safe re-encode fallback (slower but normalizes timestamps)
         // Use GPU acceleration if available for faster re-encoding
         std::ostringstream reencodeCmd;
-        reencodeCmd << "\"" << ffmpegPath << "\"";
+        reencodeCmd << "\"" << ffmpegPath << "\" -nostdin";
 
         // Add CUDA hardware acceleration for decoding if available
         if (hasCudaHwaccel()) {
@@ -1801,6 +1654,7 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
 
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
+    cmd << "\"" << ffmpegPath << "\" -nostdin";
 
     // Combine video from first input with audio from second input
     // -c:v copy = stream copy video (fast, no re-encode)
@@ -1810,7 +1664,7 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
     bool clipAudio = (audioEnd > 0.0 && audioEnd > audioStart + 1e-3);
     double clipDur = clipAudio ? (audioEnd - audioStart) : 0.0;
 
-    cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideo << "\"";
+    cmd << " -i \"" << inputVideo << "\"";
     if (clipAudio) {
         // Use fixed-point notation - FFmpeg doesn't accept scientific notation
         cmd << std::fixed << std::setprecision(6) << " -ss " << clipStart << " -t " << clipDur << std::defaultfloat;
@@ -2152,6 +2006,288 @@ void VideoWriter::setEffectsConfig(const EffectsConfig& config) {
     m_effects = config;
 }
 
+void VideoWriter::setSpeedConfig(const SpeedRampConfig& config) {
+    m_speed = config;
+    m_speedClampCount.store(0);
+}
+
+std::vector<double> VideoWriter::computeClipSpeeds(size_t clipCount, const SpeedRampConfig& config) {
+    std::vector<double> speeds(clipCount, 1.0);
+    if (!config.enabled || clipCount == 0) {
+        return speeds;
+    }
+
+    // Clamp configuration into valid ranges.
+    auto clampSpeed = [](float v) {
+        return std::max(SpeedRampConfig::kMinSpeed, std::min(SpeedRampConfig::kMaxSpeed, v));
+    };
+    const double slowLo = clampSpeed(std::min(config.slowMin, config.slowMax));
+    const double slowHi = clampSpeed(std::max(config.slowMin, config.slowMax));
+    const double fastLo = clampSpeed(std::min(config.fastMin, config.fastMax));
+    const double fastHi = clampSpeed(std::max(config.fastMin, config.fastMax));
+    const float affected = std::max(0.0f, std::min(1.0f, config.affectedFraction));
+    const float upFrac = std::max(0.0f, std::min(1.0f, config.speedUpFraction));
+    const int everyN = std::max(1, config.everyN);
+
+    // Single deterministic RNG seeded by config.seed → reproducible edits.
+    std::mt19937 rng(config.seed);
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+
+    // Energy-band mode: speed comes straight from the clip's band, no randomness,
+    // so calm sections melt and drops stay at full rate.
+    if (config.selectionMode == 3 && !config.beatBands.empty()) {
+        for (size_t i = 0; i < clipCount; ++i) {
+            const int band = (i < config.beatBands.size()) ? config.beatBands[i] : 1;
+            const double s = config.bandSpeed[(band >= 0 && band <= 2) ? band : 1];
+            speeds[i] = clampSpeed(static_cast<float>(s));
+        }
+        return speeds;
+    }
+
+    // Decide which clip indices are affected.
+    std::vector<size_t> selected;
+    if (config.selectionMode == 1 || config.selectionMode == 2) {
+        // Deterministic every-Nth selection (mode 2 is treated the same here;
+        // beat-divisor nuance can be layered in by the caller via everyN).
+        for (size_t i = 0; i < clipCount; ++i) {
+            if ((i % static_cast<size_t>(everyN)) == 0) {
+                selected.push_back(i);
+            }
+        }
+    } else {
+        // Random selection of round(affected * clipCount) distinct clips.
+        size_t target = static_cast<size_t>(std::llround(affected * static_cast<double>(clipCount)));
+        target = std::min(target, clipCount);
+        std::vector<size_t> pool(clipCount);
+        for (size_t i = 0; i < clipCount; ++i) pool[i] = i;
+        std::shuffle(pool.begin(), pool.end(), rng);
+        selected.assign(pool.begin(), pool.begin() + target);
+    }
+
+    // Assign direction + amount to each selected clip.
+    for (size_t idx : selected) {
+        const bool speedUp = (unit(rng) < upFrac);
+        double s;
+        if (speedUp) {
+            s = (fastHi > fastLo) ? (fastLo + unit(rng) * (fastHi - fastLo)) : fastLo;
+        } else {
+            s = (slowHi > slowLo) ? (slowLo + unit(rng) * (slowHi - slowLo)) : slowLo;
+        }
+        speeds[idx] = clampSpeed(static_cast<float>(s));
+    }
+
+    return speeds;
+}
+
+bool VideoWriter::extractSpeedClip(const std::string& inputVideo,
+                                   double sourceStart,
+                                   double outputDuration,
+                                   double speed,
+                                   const std::string& outputVideo) {
+    // Neural interpolation (RIFE) for smooth slow-mo. Only meaningful for
+    // slow-mo (speed < 1.0); a speed-up discards frames so dup/minterpolate is
+    // fine. Fall back to minterpolate if the model/pipeline is unavailable.
+    if (m_speed.smoothing == 2 && speed < 1.0) {
+        if (extractSpeedClipInterpolated(inputVideo, sourceStart, outputDuration, speed, outputVideo)) {
+            return true;
+        }
+        std::cout << "[RIFE] Interpolation unavailable (" << getLastError()
+                  << "); falling back to minterpolate for this clip\n";
+        return copySegmentPrecise(inputVideo, sourceStart, outputDuration, outputVideo, speed, 1);
+    }
+
+    // Speed clips always re-encode (stream copy cannot retime). Honor the
+    // configured smoothing mode (0 dup / 1 minterpolate). copySegmentPrecise
+    // handles speed == 1.0 too.
+    int smoothing = (m_speed.smoothing == 2) ? 1 : m_speed.smoothing;
+    return copySegmentPrecise(inputVideo, sourceStart, outputDuration,
+                              outputVideo, speed, smoothing);
+}
+
+void VideoWriter::setInterpolationModelPath(const std::string& path) {
+    std::lock_guard<std::mutex> lock(m_interpMutex);
+    if (path != m_interpModelPath) {
+        m_interpModelPath = path;
+        m_interpolator.reset();
+        m_interpLoadAttempted = false;
+    }
+}
+
+bool VideoWriter::ensureInterpolator() {
+    std::lock_guard<std::mutex> lock(m_interpMutex);
+    if (m_interpolator && m_interpolator->isLoaded()) return true;
+    if (m_interpLoadAttempted) return m_interpolator && m_interpolator->isLoaded();
+
+    m_interpLoadAttempted = true;
+    if (!OnnxFrameInterpolator::isAvailable()) {
+        m_lastError = "ONNX Runtime not compiled in (no RIFE)";
+        return false;
+    }
+    if (m_interpModelPath.empty()) {
+        m_lastError = "No RIFE model path set";
+        return false;
+    }
+    if (!std::filesystem::exists(m_interpModelPath)) {
+        m_lastError = "RIFE model not found: " + m_interpModelPath;
+        return false;
+    }
+    m_interpolator = std::make_unique<OnnxFrameInterpolator>();
+    if (!m_interpolator->loadModel(m_interpModelPath, /*useGPU=*/true)) {
+        m_lastError = "RIFE model load failed: " + m_interpolator->getLastError();
+        m_interpolator.reset();
+        return false;
+    }
+    std::cout << "[RIFE] Model loaded: " << m_interpModelPath << "\n";
+    return true;
+}
+
+bool VideoWriter::extractSpeedClipInterpolated(const std::string& inputVideo,
+                                               double sourceStart,
+                                               double outputDuration,
+                                               double speed,
+                                               const std::string& outputVideo) {
+    if (!ensureInterpolator()) {
+        return false;  // m_lastError set by ensureInterpolator
+    }
+    if (sourceStart < 0.001) sourceStart = 0.0;
+
+    // Probe source frame rate (to know how many real frames we have to work with).
+    double srcFps = 0.0;
+    {
+        VideoProcessor proc;
+        if (proc.open(inputVideo)) {
+            srcFps = proc.getInfo().fps;
+            proc.close();
+        }
+    }
+    if (srcFps <= 0.0) srcFps = m_outputFps > 0 ? m_outputFps : 30;
+
+    const int W = m_outputWidth;
+    const int H = m_outputHeight;
+    const double windowDur = outputDuration * speed;  // source seconds consumed
+    if (W <= 0 || H <= 0 || windowDur <= 0.0) {
+        m_lastError = "Invalid interpolation parameters";
+        return false;
+    }
+
+    std::string tempDir = getTempDir();
+    if (tempDir.empty()) { m_lastError = "No temp dir for interpolation"; return false; }
+
+    // Unique temp basenames (this runs across worker threads).
+    std::ostringstream tag;
+    tag << "rife_" << std::this_thread::get_id() << "_"
+        << std::chrono::steady_clock::now().time_since_epoch().count();
+    std::string srcRaw = tempDir + tag.str() + "_src.rgb";
+    std::string outRaw = tempDir + tag.str() + "_out.rgb";
+
+    struct RawCleanup {
+        std::vector<std::string> files;
+        ~RawCleanup() { for (auto& f : files) std::remove(f.c_str()); }
+    } cleanup{{srcRaw, outRaw}};
+
+    // Stage 1: decode the source window to raw RGB24 frames at output WxH and
+    // the source frame rate (scaled+padded to match the rest of the pipeline).
+    const std::string ffmpegPath = getFFmpegPath();
+    {
+        std::ostringstream cmd;
+        cmd << "\"" << ffmpegPath << "\" -nostdin";
+        cmd << std::fixed << std::setprecision(6);
+        cmd << " -ss " << sourceStart << " -t " << windowDur;
+        cmd << std::defaultfloat;
+        cmd << " -i \"" << inputVideo << "\"";
+        cmd << " -vf \"scale=" << W << ":" << H
+            << ":force_original_aspect_ratio=decrease,pad=" << W << ":" << H
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << srcFps << ",format=rgb24\"";
+        cmd << " -f rawvideo -y \"" << srcRaw << "\"";
+
+        std::string out; int rc;
+#ifdef _WIN32
+        rc = runHiddenCommand(cmd.str(), out, m_cancelFlag);
+#else
+        FILE* p = popen_compat((cmd.str() + " 2>&1").c_str(), "r");
+        rc = p ? pclose_compat(p) : -1;
+#endif
+        if (rc != 0) { m_lastError = "RIFE: source frame extraction failed"; return false; }
+    }
+
+    const size_t frameBytes = static_cast<size_t>(W) * H * 3;
+    // Read all source frames into memory (beat clips are short).
+    std::vector<std::vector<uint8_t>> srcFrames;
+    {
+        std::ifstream in(srcRaw, std::ios::binary);
+        if (!in) { m_lastError = "RIFE: could not read extracted frames"; return false; }
+        std::vector<uint8_t> buf(frameBytes);
+        while (in.read(reinterpret_cast<char*>(buf.data()), frameBytes)) {
+            srcFrames.push_back(buf);
+        }
+    }
+    const int Ns = static_cast<int>(srcFrames.size());
+    if (Ns == 0) { m_lastError = "RIFE: no source frames decoded"; return false; }
+    if (Ns == 1) {
+        // Single source frame: nothing to interpolate between. Let the caller
+        // fall back to the (dup-frame) precise path.
+        m_lastError = "RIFE: only one source frame in window";
+        return false;
+    }
+
+    // Stage 2: synthesize the output frame sequence at the output fps. Output
+    // frame k maps to source position s = k*(Ns-1)/(No-1); interpolate between
+    // the bracketing source frames at the fractional timestep.
+    const int No = std::max(2, static_cast<int>(std::lround(outputDuration * m_outputFps)));
+    std::ofstream outFile(outRaw, std::ios::binary);
+    if (!outFile) { m_lastError = "RIFE: could not open output frame file"; return false; }
+
+    std::vector<uint8_t> interp;
+    for (int k = 0; k < No; ++k) {
+        if (isCancelled()) { m_lastError = "Cancelled"; return false; }
+        double s = (No > 1) ? (static_cast<double>(k) * (Ns - 1) / (No - 1)) : 0.0;
+        int i0 = static_cast<int>(std::floor(s));
+        i0 = std::min(i0, Ns - 1);
+        double frac = s - i0;
+
+        if (frac < 1e-3 || i0 + 1 >= Ns) {
+            const auto& f = srcFrames[std::min(i0, Ns - 1)];
+            outFile.write(reinterpret_cast<const char*>(f.data()), frameBytes);
+        } else {
+            if (!m_interpolator->interpolate(srcFrames[i0].data(), srcFrames[i0 + 1].data(),
+                                             W, H, static_cast<float>(frac), interp)) {
+                m_lastError = "RIFE: inference failed: " + m_interpolator->getLastError();
+                return false;
+            }
+            outFile.write(reinterpret_cast<const char*>(interp.data()), frameBytes);
+        }
+    }
+    outFile.close();
+
+    // Stage 3: encode the synthesized frames at the output fps into the slot
+    // clip (silent AAC track keeps segment streams consistent for concat; the
+    // master audio is muxed over the whole timeline later).
+    {
+        std::ostringstream cmd;
+        cmd << "\"" << ffmpegPath << "\" -nostdin";
+        cmd << " -f rawvideo -pix_fmt rgb24 -s " << W << "x" << H
+            << " -r " << m_outputFps << " -i \"" << outRaw << "\"";
+        cmd << " -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100";
+        cmd << " -vf format=yuv420p";
+        cmd << " " << getEncoderArgs("ultrafast");
+        cmd << " -c:a aac -b:a 192k -ar 44100 -shortest";
+        cmd << " -video_track_timescale 90000";
+        cmd << std::fixed << std::setprecision(6) << " -t " << outputDuration << std::defaultfloat;
+        cmd << " -y \"" << outputVideo << "\"";
+
+        std::string out; int rc;
+#ifdef _WIN32
+        rc = runHiddenCommand(cmd.str(), out, m_cancelFlag);
+#else
+        FILE* p = popen_compat((cmd.str() + " 2>&1").c_str(), "r");
+        rc = p ? pclose_compat(p) : -1;
+#endif
+        if (rc != 0) { m_lastError = "RIFE: output encode failed"; return false; }
+    }
+
+    return true;
+}
+
 std::string VideoWriter::getColorGradeFilter(const std::string& preset) const {
     if (preset == "warm") {
         return "colorbalance=rs=0.1:gs=0.05:bs=-0.05";
@@ -2168,22 +2304,62 @@ std::string VideoWriter::getColorGradeFilter(const std::string& preset) const {
 std::string VideoWriter::buildEffectsFilterChain() const {
     std::vector<std::string> filters;
 
+    // Helper: resolve effective [start, end] for a given per-effect range.
+    // If the per-effect end is <= 0, fall back to the global effectStartTime/effectEndTime.
+    auto resolveRange = [&](double perStart, double perEnd,
+                             double& outStart, double& outEnd) {
+        if (perEnd <= 0.0) {
+            // Default value — use the global fallback
+            outStart = m_effects.effectStartTime;
+            outEnd   = m_effects.effectEndTime;
+        } else {
+            outStart = perStart;
+            outEnd   = perEnd;
+        }
+    };
+
+    // Helper: build a FFmpeg enable expression string for a time range.
+    // Returns empty string when the range covers the whole video (no gating needed).
+    auto buildEnableExpr = [&](double start, double end) -> std::string {
+        bool hasStart = (start > 0.0);
+        bool hasEnd   = (end > 0.0);
+        if (!hasStart && !hasEnd) return "";  // Whole video — no enable clause
+
+        std::ostringstream expr;
+        expr << std::fixed << std::setprecision(6);
+        if (hasStart && hasEnd) {
+            expr << ":enable='between(t," << start << "," << end << ")'";
+        } else if (hasStart) {
+            expr << ":enable='gte(t," << start << ")'";
+        } else {
+            // hasEnd only
+            expr << ":enable='lte(t," << end << ")'";
+        }
+        return expr.str();
+    };
+
     // Color grading
     if (m_effects.enableColorGrade && m_effects.colorPreset != "none") {
         std::string colorFilter = getColorGradeFilter(m_effects.colorPreset);
         if (!colorFilter.empty()) {
+            double cStart, cEnd;
+            resolveRange(m_effects.colorGradeStartTime, m_effects.colorGradeEndTime, cStart, cEnd);
+            colorFilter += buildEnableExpr(cStart, cEnd);
             filters.push_back(colorFilter);
         }
     }
 
     // Vignette
     if (m_effects.enableVignette) {
+        double vStart, vEnd;
+        resolveRange(m_effects.vignetteStartTime, m_effects.vignetteEndTime, vStart, vEnd);
         std::ostringstream vig;
         vig << "vignette=PI/" << (4.0 / m_effects.vignetteStrength);
+        vig << buildEnableExpr(vStart, vEnd);
         filters.push_back(vig.str());
     }
 
-    // Blur
+    // Blur (no per-effect range — blur has no independent range field)
     if (m_effects.enableBlur) {
         std::ostringstream blur;
         blur << "gblur=sigma=" << m_effects.blurStrength;
@@ -2252,10 +2428,27 @@ std::string VideoWriter::buildGlTransitionFilterComplex(size_t numInputs, const 
 bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string& outputVideo) {
     std::string filterChain = buildEffectsFilterChain();
 
-    // Filter beat times by divisor (using original beat index) and region
-    std::vector<double> filteredBeats;
+    // Resolve per-effect time ranges.
+    // Rule: if an effect's own end <= 0, fall back to the global effectStartTime/effectEndTime.
+    auto resolveEffectRange = [&](double perStart, double perEnd,
+                                   double& outStart, double& outEnd) {
+        if (perEnd <= 0.0) {
+            outStart = m_effects.effectStartTime;
+            outEnd   = m_effects.effectEndTime;
+        } else {
+            outStart = perStart;
+            outEnd   = perEnd;
+        }
+    };
+
+    double flashStart, flashEnd, zoomStart, zoomEnd;
+    resolveEffectRange(m_effects.beatFlashStartTime, m_effects.beatFlashEndTime, flashStart, flashEnd);
+    resolveEffectRange(m_effects.beatZoomStartTime,  m_effects.beatZoomEndTime,  zoomStart,  zoomEnd);
+
+    // Filter beat times by divisor (using original beat index) and per-effect region.
+    // Two separate lists: flashBeats gates the flash filter, zoomBeats gates the zoom filter.
     bool hasOriginalIndices = (m_effects.originalBeatIndices.size() == m_effects.beatTimesInOutput.size());
-    
+
     // Debug: Pre-filtering log
     FILE* preLog = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
     if (preLog) {
@@ -2263,10 +2456,15 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         fprintf(preLog, "hasOriginalIndices=%d, beatTimesInOutput.size=%zu, originalBeatIndices.size=%zu\n",
                 hasOriginalIndices ? 1 : 0, m_effects.beatTimesInOutput.size(), m_effects.originalBeatIndices.size());
         fprintf(preLog, "effectBeatDivisor=%d\n", m_effects.effectBeatDivisor);
+        fprintf(preLog, "flashRange=[%.3f, %.3f], zoomRange=[%.3f, %.3f]\n",
+                flashStart, flashEnd, zoomStart, zoomEnd);
     }
-    
-    int skippedByDivisor = 0, skippedByRegion = 0, included = 0;
-    
+
+    std::vector<double> flashBeats;
+    std::vector<double> zoomBeats;
+
+    int skippedByDivisor = 0;
+
     for (size_t i = 0; i < m_effects.beatTimesInOutput.size(); ++i) {
         // Apply beat divisor using ORIGINAL beat index (not filtered array index)
         // This ensures "every 2nd beat" actually means every 2nd musical beat
@@ -2275,32 +2473,39 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
             if ((origIdx % m_effects.effectBeatDivisor) != 0) {
                 skippedByDivisor++;
                 if (preLog && i < 10) {
-                    fprintf(preLog, "  Beat %zu: origIdx=%zu, %zu%%%d=%zu -> SKIP\n", 
+                    fprintf(preLog, "  Beat %zu: origIdx=%zu, %zu%%%d=%zu -> SKIP\n",
                             i, origIdx, origIdx, m_effects.effectBeatDivisor, origIdx % m_effects.effectBeatDivisor);
                 }
                 continue;
             } else if (preLog && i < 20) {
-                fprintf(preLog, "  Beat %zu: origIdx=%zu, %zu%%%d=%zu -> PASS divisor\n", 
+                fprintf(preLog, "  Beat %zu: origIdx=%zu, %zu%%%d=%zu -> PASS divisor\n",
                         i, origIdx, origIdx, m_effects.effectBeatDivisor, origIdx % m_effects.effectBeatDivisor);
             }
         }
         double bt = m_effects.beatTimesInOutput[i];
-        // Apply effect region filter
-        if (m_effects.effectStartTime > 0 && bt < m_effects.effectStartTime) {
-            skippedByRegion++;
-            continue;
+
+        // Flash: include beat only if it falls within the flash range
+        if (m_effects.enableBeatFlash) {
+            bool afterStart = (flashStart <= 0.0) || (bt >= flashStart);
+            bool beforeEnd  = (flashEnd  <= 0.0) || (bt <= flashEnd);
+            if (afterStart && beforeEnd) {
+                flashBeats.push_back(bt);
+            }
         }
-        if (m_effects.effectEndTime > 0 && bt > m_effects.effectEndTime) {
-            skippedByRegion++;
-            continue;
+
+        // Zoom: include beat only if it falls within the zoom range
+        if (m_effects.enableBeatZoom) {
+            bool afterStart = (zoomStart <= 0.0) || (bt >= zoomStart);
+            bool beforeEnd  = (zoomEnd  <= 0.0) || (bt <= zoomEnd);
+            if (afterStart && beforeEnd) {
+                zoomBeats.push_back(bt);
+            }
         }
-        included++;
-        filteredBeats.push_back(bt);
     }
-    
+
     if (preLog) {
-        fprintf(preLog, "Result: skippedByDivisor=%d, skippedByRegion=%d, included=%d\n", 
-                skippedByDivisor, skippedByRegion, included);
+        fprintf(preLog, "Result: skippedByDivisor=%d, flashBeats=%zu, zoomBeats=%zu\n",
+                skippedByDivisor, flashBeats.size(), zoomBeats.size());
         fclose(preLog);
     }
 
@@ -2309,26 +2514,23 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         FILE* debugLog = fopen((getTempDir() + "beatsync_ffmpeg_concat.log").c_str(), "a");
         if (debugLog) {
             fprintf(debugLog, "\n--- Effects Debug ---\n");
-            fprintf(debugLog, "Original beats: %zu, After filter: %zu (divisor=%d, region=%.2f-%.2f, hasOrigIdx=%d)\n", 
-                    m_effects.beatTimesInOutput.size(), filteredBeats.size(),
-                    m_effects.effectBeatDivisor, m_effects.effectStartTime, m_effects.effectEndTime,
-                    hasOriginalIndices ? 1 : 0);
-            
+            fprintf(debugLog, "Original beats: %zu, flashBeats: %zu (range=%.2f-%.2f), zoomBeats: %zu (range=%.2f-%.2f)\n",
+                    m_effects.beatTimesInOutput.size(),
+                    flashBeats.size(), flashStart, flashEnd,
+                    zoomBeats.size(), zoomStart, zoomEnd);
+
             // Log original indices for first 20 beats
             fprintf(debugLog, "Original indices (first 20): ");
             for (size_t i = 0; i < m_effects.originalBeatIndices.size() && i < 20; ++i) {
                 fprintf(debugLog, "%zu ", m_effects.originalBeatIndices[i]);
             }
             fprintf(debugLog, "\n");
-            
-            fprintf(debugLog, "Filtered beat times:\n");
-            for (size_t i = 0; i < filteredBeats.size() && i < 20; ++i) {
-                fprintf(debugLog, "  Beat %zu: %.3f sec\n", i, filteredBeats[i]);
+
+            fprintf(debugLog, "Flash beat times (first 20):\n");
+            for (size_t i = 0; i < flashBeats.size() && i < 20; ++i) {
+                fprintf(debugLog, "  Beat %zu: %.3f sec\n", i, flashBeats[i]);
             }
-            if (filteredBeats.size() > 20) {
-                fprintf(debugLog, "  ... and %zu more\n", filteredBeats.size() - 20);
-            }
-            fprintf(debugLog, "BPM: %.2f, enableBeatFlash: %d (intensity=%.2f), enableBeatZoom: %d (intensity=%.2f)\n", 
+            fprintf(debugLog, "BPM: %.2f, enableBeatFlash: %d (intensity=%.2f), enableBeatZoom: %d (intensity=%.2f)\n",
                     m_effects.bpm, m_effects.enableBeatFlash, m_effects.flashIntensity,
                     m_effects.enableBeatZoom, m_effects.zoomIntensity);
             fclose(debugLog);
@@ -2340,7 +2542,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         // Simple copy
         std::string ffmpegPath = getFFmpegPath();
         std::ostringstream cmd;
-        cmd << "\"" << ffmpegPath << "\" -i \"" << inputVideo << "\""
+        cmd << "\"" << ffmpegPath << "\" -nostdin -i \"" << inputVideo << "\""
             << " -c copy -y \"" << outputVideo << "\"";
 
         std::string ffmpegOutput;
@@ -2366,9 +2568,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
     // Apply effects with re-encoding
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\"";
-
-    // Check GPU capabilities for optimal pipeline selection
+    cmd << "\"" << ffmpegPath << "\" -nostdin";
     bool cudaAvailable = hasCudaHwaccel();
     bool scaleCudaAvailable = hasScaleCudaFilter();
     bool nvencAvailable = probeEncoder("h264_nvenc");
@@ -2380,8 +2580,8 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
     // - Use NVENC for encoding to leverage GPU
 
     bool useGpuPipeline = cudaAvailable && scaleCudaAvailable && nvencAvailable;
-    bool hasZoomEffect = m_effects.enableBeatZoom && !filteredBeats.empty();
-    bool hasFlashEffect = m_effects.enableBeatFlash && !filteredBeats.empty();
+    bool hasZoomEffect = m_effects.enableBeatZoom && !zoomBeats.empty();
+    bool hasFlashEffect = m_effects.enableBeatFlash && !flashBeats.empty();
 
     // Log GPU pipeline decision
     {
@@ -2433,16 +2633,16 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         double intensity = std::max(0.1, std::min(1.0, m_effects.flashIntensity));
 
         // Split beats into chunks, each handled by a separate eq filter
-        for (size_t chunk = 0; chunk * BEATS_PER_FILTER < filteredBeats.size(); ++chunk) {
+        for (size_t chunk = 0; chunk * BEATS_PER_FILTER < flashBeats.size(); ++chunk) {
             size_t startIdx = chunk * BEATS_PER_FILTER;
-            size_t endIdx = std::min(startIdx + BEATS_PER_FILTER, filteredBeats.size());
+            size_t endIdx = std::min(startIdx + BEATS_PER_FILTER, flashBeats.size());
 
             // Build enable expression for this chunk using between()
             std::ostringstream enableExpr;
             enableExpr << std::fixed << std::setprecision(6);
             for (size_t i = startIdx; i < endIdx; ++i) {
                 if (i > startIdx) enableExpr << "+";
-                double bt = filteredBeats[i];
+                double bt = flashBeats[i];
                 enableExpr << "between(t," << bt << "," << (bt + flashDuration) << ")";
             }
 
@@ -2493,7 +2693,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         prevOutput = priorFilterOutput;
 
         // Calculate total number of chunks upfront so we know which is the last
-        size_t totalChunks = (filteredBeats.size() + BEATS_PER_FILTER - 1) / BEATS_PER_FILTER;
+        size_t totalChunks = (zoomBeats.size() + BEATS_PER_FILTER - 1) / BEATS_PER_FILTER;
 
         // Determine if we can use GPU zoom filters
         // We can use GPU zoom if:
@@ -2513,9 +2713,9 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         }
 
         // Split beats into chunks
-        for (size_t chunk = 0; chunk * BEATS_PER_FILTER < filteredBeats.size(); ++chunk) {
+        for (size_t chunk = 0; chunk * BEATS_PER_FILTER < zoomBeats.size(); ++chunk) {
             size_t startIdx = chunk * BEATS_PER_FILTER;
-            size_t endIdx = std::min(startIdx + BEATS_PER_FILTER, filteredBeats.size());
+            size_t endIdx = std::min(startIdx + BEATS_PER_FILTER, zoomBeats.size());
             bool isLastChunk = (chunk == totalChunks - 1);
 
             // Build enable expression for this chunk
@@ -2523,7 +2723,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
             enableExpr << std::fixed << std::setprecision(6);
             for (size_t i = startIdx; i < endIdx; ++i) {
                 if (i > startIdx) enableExpr << "+";
-                double bt = filteredBeats[i];
+                double bt = zoomBeats[i];
                 enableExpr << "between(t," << bt << "," << (bt + zoomDuration) << ")";
             }
 

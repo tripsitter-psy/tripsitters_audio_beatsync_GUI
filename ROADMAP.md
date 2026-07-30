@@ -130,6 +130,43 @@ Intelligent transition placement based on beat structure.
 
 ---
 
+### 3.3 Configurable Per-Clip Speed Ramps
+**Priority: Medium** | **Complexity: Medium**
+
+Randomized/authored slow-mo and speed-up on a configurable subset of beat-cut
+clips. Speed is applied per segment during extraction (`setpts` on video only),
+so it slots into the existing independent-per-clip pipeline rather than the
+effects filtergraph. Audio (the master timeline) is never touched.
+
+**Core constraint:** affected clips KEEP their beat-slot duration — speed only
+changes how much *source* footage is sampled into the slot, so cuts still land
+on the beat. This preserves the beat-sync premise; it is not a global output
+speed knob (that would desync the edit and is explicitly not wanted).
+
+**Author-facing config (the "super configurable" surface):**
+- [ ] % of clips affected (with a seed for reproducible randomization)
+- [ ] Selection mode: random / every Nth clip / by section label (intro/drop) / by beat divisor
+- [ ] Direction mix: % of affected clips that speed up (>1x) vs slow down (<1x)
+- [ ] Speed amount: fixed multiplier OR randomized min–max range (separate ranges per up/down bucket optional)
+- [ ] Smoothness: duplicated frames (fast) vs `minterpolate` optical-flow slow-mo (smooth, slower render)
+- [ ] Source-footage guard: clamp or skip when slow-mo needs more source than available (surfaced, not silent)
+
+**Implementation notes:**
+- Per-clip speed decision lives in the cut stage (`extractSegments` / segment
+  loop), where each clip is already its own FFmpeg op into a temp file.
+- New fields go on the effects/cut config struct → C API (`bs_effects_config_t`
+  or a new `bs_speed_config_t`) → `BeatsyncLoader` → frontend controls.
+- All FFmpeg-CLI in the portable backend — no UE dependency, ports cleanly to
+  Apple Silicon and the future ImGui frontend.
+
+**Files to modify:**
+- `src/video/VideoWriter.cpp` - per-segment `setpts` in `extractSegments`
+- `src/backend/beatsync_capi.h/.cpp` - config fields + setter
+- `unreal-prototype/.../BeatsyncLoader.cpp` - bindings
+- Frontend (UE now / ImGui later) - author controls
+
+---
+
 ## Phase 4: Audio-Reactive Effects
 
 ### 4.1 FFT-Driven Visual Effects

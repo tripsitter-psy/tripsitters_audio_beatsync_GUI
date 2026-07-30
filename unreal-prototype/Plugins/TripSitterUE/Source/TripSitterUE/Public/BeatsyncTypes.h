@@ -80,9 +80,35 @@ struct FEffectsConfig
     float ZoomIntensity = 0.5f;
 
     /** Beat divisor for effects (must be >= 1 to prevent division by zero).
-     *  Value of 1 = every beat, 2 = every other beat, etc. */
+     *  Value of 1 = every beat, 2 = every other beat, etc.
+     *  Use GetEffectBeatDivisor() to get a validated value. */
     int32 EffectBeatDivisor = 1;
+
+    /** Returns EffectBeatDivisor clamped to >= 1 to prevent division by zero. */
+    int32 GetEffectBeatDivisor() const { return FMath::Max(1, EffectBeatDivisor); }
 
     double EffectStartTime = 0.0;   // Start time for effects (0 = from beginning)
     double EffectEndTime = -1.0;    // End time for effects (-1 = to end)
+};
+
+// AI configuration for ONNX neural network analysis
+struct FAIConfig
+{
+    FString BeatModelPath;
+    FString StemModelPath;
+    bool bEnableStemSeparation = false;
+    bool bEnableDrumsForBeats = true;
+    bool bEnableGPU = true;
+    int32 GPUDeviceId = 0;
+    float BeatThreshold = 0.66f;
+    float DownbeatThreshold = 0.66f;
+};
+
+// AI analysis result
+struct FAIResult
+{
+    TArray<double> Beats;
+    TArray<double> Downbeats;
+    double BPM = 0.0;
+    double Duration = 0.0;
 };

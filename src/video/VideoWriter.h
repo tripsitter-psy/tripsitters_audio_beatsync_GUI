@@ -7,6 +7,9 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <atomic>
+#include <cstdint>
+#include <memory>
 
 // Forward declarations
 struct AVFormatContext;
@@ -14,9 +17,10 @@ struct AVCodecContext;
 struct SwsContext;
 class VideoWriterTestAccess;  // Test access helper
 
-namespace BeatSync { class RifeInterpolator; }
 
 namespace BeatSync {
+
+class OnnxFrameInterpolator;  // Neural frame interpolation (RIFE), optional
 
 /**
  * @brief Information about a detected video encoder
@@ -67,9 +71,23 @@ struct EffectsConfig {
     
     int effectBeatDivisor = 1;            // Effect on every Nth beat (1=every, 2=every other, 4=every 4th)
     
-    // Effect region (for applying effects to a subset of the video)
+    // Global effect region (fallback when per-effect ranges are at defaults)
     double effectStartTime = 0.0;         // Start time for effects (0 = from beginning)
     double effectEndTime = -1.0;          // End time for effects (-1 = to end)
+
+    // Per-effect time ranges.
+    // When start==0.0 AND end<= 0.0, the global effectStartTime/effectEndTime is used instead.
+    double colorGradeStartTime = 0.0;
+    double colorGradeEndTime   = -1.0;
+
+    double vignetteStartTime   = 0.0;
+    double vignetteEndTime     = -1.0;
+
+    double beatFlashStartTime  = 0.0;
+    double beatFlashEndTime    = -1.0;
+
+    double beatZoomStartTime   = 0.0;
+    double beatZoomEndTime     = -1.0;
     
     double bpm = 120.0;                   // For beat-synced effects (fallback)
     double firstBeatOffset = 0.0;         // Time of first beat (for proper sync)
@@ -78,18 +96,47 @@ struct EffectsConfig {
 };
 
 /**
- * @brief Configuration for per-clip speed ramps (dynamic-sync aware)
+ * @brief Configuration for per-clip speed ramps (slow-mo / speed-up)
  *
- * Speed ramps stretch or compress clip playback per energy band: calm sections
- * get slow-mo "melts", high-energy sections can slam. Slowed footage loses
- * motion samples, so frames are rebuilt with FFmpeg's minterpolate filter.
+ * Speed ramps preserve beat-sync: each affected clip keeps its fixed OUTPUT
+ * beat-slot duration. The multiplier only changes how much SOURCE footage is
+ * sampled into that slot (source consumed = slotDuration * speed), via setpts.
+ * A multiplier < 1.0 is slow-motion, > 1.0 is speed-up. Audio (the master
+ * timeline) is never retimed by this feature.
  */
 struct SpeedRampConfig {
     bool enabled = false;
-    double bandSpeed[3] = {0.5, 1.0, 1.0};  // Playback speed per band: calm, normal, frantic
-    std::string interpMode = "blend";        // "rife" (AI, GPU), "mci" (motion-compensated), "blend" (fast), "none"
-    std::vector<int> beatBands;              // Band per beat index (from DynamicSync::classifyBeats)
-    std::string rifeModelPath;               // RIFE ONNX model for interpMode "rife" (empty = models/rife_v4.15.onnx)
+
+    // Selection: which beat clips get a speed ramp.
+    float affectedFraction = 0.25f;  // 0..1 portion of eligible clips affected
+    uint32_t seed = 0;               // reproducible randomization
+    int selectionMode = 0;           // 0=random, 1=every Nth clip, 2=every Nth via beat divisor, 3=energy band
+    int everyN = 4;                  // used by selectionMode 1/2
+
+    // selectionMode 3 (energy band): speed is taken from bandSpeed[band] using the
+    // per-clip bands produced by DynamicSync::classifyBeats, so calm sections melt
+    // and drops stay at full rate. Falls back to mode 0 when beatBands is empty.
+    std::vector<int> beatBands;             // Band per clip: 0=calm, 1=normal, 2=frantic
+    double bandSpeed[3] = {0.5, 1.0, 1.0};  // Playback speed per band
+
+    // Direction + amount. Multipliers are clamped to [0.5, 2.0] so a single
+    // atempo can keep per-clip audio length consistent for concatenation.
+    float speedUpFraction = 0.5f;    // of affected clips, portion that speed up (>1x) vs slow down
+    float slowMin = 0.5f;            // slow-mo range (<1.0); set min==max for a fixed amount
+    float slowMax = 0.5f;
+    float fastMin = 2.0f;            // speed-up range (>1.0)
+    float fastMax = 2.0f;
+
+    // Smoothness of the retimed video.
+    int smoothing = 0;               // 0=duplicate frames (fast), 1=minterpolate optical flow (smoother)
+
+    // Source-footage guard: clamp the multiplier toward 1.0 (or skip the ramp)
+    // when a speed-up would need more source than is available from the clip's
+    // start. When false, the ramp is skipped rather than clamped.
+    bool guardClampToAvailable = true;
+
+    static constexpr float kMinSpeed = 0.5f;
+    static constexpr float kMaxSpeed = 2.0f;
 };
 
 /**
@@ -99,6 +146,7 @@ struct VideoSegment {
     double startTime;  // Start time in seconds
     double endTime;    // End time in seconds
     std::string label; // Optional label for this segment
+    double speed = 1.0; // Per-clip speed multiplier (1.0 = unchanged). See SpeedRampConfig.
 };
 
 /**
@@ -163,13 +211,14 @@ public:
     void setProgressCallback(std::function<void(double)> callback);
 
     /**
-     * @brief Set atomic cancel flag pointer for async cancellation
-     * @param flag Pointer to an int set non-zero to request cancellation (nullptr to clear)
+     * @brief Set cancel flag pointer for cooperative cancellation
+     * @param flag Pointer to flag (owned by caller). If *flag becomes non-zero, processing aborts.
      */
     void setCancelFlag(const int* flag);
 
     /**
-     * @brief Check if cancellation was requested via the cancel flag
+     * @brief Check if cancellation was requested
+     * @return true if cancel flag is set and non-zero
      */
     bool isCancelled() const;
 
@@ -180,36 +229,6 @@ public:
                         double startTime,
                         double duration,
                         const std::string& outputVideo);
-
-    /**
-     * @brief Set speed ramp configuration (consulted by bs_video_cut_at_beats_multi)
-     */
-    void setSpeedRampConfig(const SpeedRampConfig& config);
-
-    /**
-     * @brief Get current speed ramp configuration
-     */
-    const SpeedRampConfig& getSpeedRampConfig() const;
-
-    /**
-     * @brief Extract a segment played back at a different speed, filling a fixed output slot
-     * @param inputVideo Source clip
-     * @param sourceStart Start position in the source (seconds)
-     * @param slotDuration Duration the segment occupies in the output timeline (seconds)
-     * @param speedFactor Playback speed: <1 slow-mo (melt), >1 speed-up (slam). Clamped to [0.5, 2.0]
-     * @param interpMode Frame rebuild mode for stretched footage: "mci", "blend", or "none"
-     * @param outputVideo Output segment path
-     *
-     * Consumes slotDuration * speedFactor seconds of source footage and re-times it
-     * to exactly slotDuration, so beat alignment is preserved. Audio is retimed with
-     * atempo to stay in sync (it is normally replaced by the music track later).
-     */
-    bool copySegmentRamped(const std::string& inputVideo,
-                           double sourceStart,
-                           double slotDuration,
-                           double speedFactor,
-                           const std::string& interpMode,
-                           const std::string& outputVideo);
 
     /**
      * @brief Concatenate multiple video files
@@ -245,6 +264,65 @@ public:
      * @param config Effects configuration
      */
     void setEffectsConfig(const EffectsConfig& config);
+
+    /**
+     * @brief Set per-clip speed ramp configuration
+     * @param config Speed ramp configuration
+     */
+    void setSpeedConfig(const SpeedRampConfig& config);
+
+    /**
+     * @brief Get the active speed ramp configuration
+     */
+    const SpeedRampConfig& getSpeedConfig() const { return m_speed; }
+
+    /**
+     * @brief Compute a deterministic per-clip speed multiplier for each clip.
+     *
+     * Returns a vector of size clipCount. Clips not selected for a ramp get 1.0.
+     * Selection and amounts are reproducible for a given config.seed. The
+     * source-footage guard is NOT applied here (it needs per-clip source
+     * availability) — apply it at extraction time.
+     *
+     * @param clipCount Number of beat clips
+     * @param config Speed ramp configuration
+     * @return Per-clip multipliers (1.0 = unchanged)
+     */
+    static std::vector<double> computeClipSpeeds(size_t clipCount, const SpeedRampConfig& config);
+
+    /**
+     * @brief Extract a single clip applying a per-clip speed multiplier (re-encodes).
+     *
+     * The output clip is always outputDuration seconds long (the beat slot);
+     * source consumed = outputDuration * speed. speed < 1.0 is slow-motion,
+     * > 1.0 is speed-up. speed == 1.0 behaves like a precise (re-encoded) copy.
+     * Honors the active SpeedRampConfig.smoothing mode.
+     *
+     * @param inputVideo Source video path
+     * @param sourceStart Start position in source (seconds)
+     * @param outputDuration Output (beat-slot) duration (seconds)
+     * @param speed Per-clip speed multiplier (clamped to [0.5, 2.0])
+     * @param outputVideo Output clip path
+     * @return true if successful
+     */
+    bool extractSpeedClip(const std::string& inputVideo,
+                          double sourceStart,
+                          double outputDuration,
+                          double speed,
+                          const std::string& outputVideo);
+
+    /**
+     * @brief Set the path to the RIFE ONNX model used for neural slow-mo
+     * interpolation (SpeedRampConfig.smoothing == 2). If unset or the model
+     * fails to load, interpolation falls back to minterpolate.
+     */
+    void setInterpolationModelPath(const std::string& path);
+
+    /**
+     * @brief Number of clips whose speed ramp was clamped/skipped by the
+     * source-footage guard during the most recent extraction batch.
+     */
+    size_t getLastSpeedClampCount() const { return m_speedClampCount.load(); }
 
     /**
      * @brief Apply effects to concatenated video
@@ -283,9 +361,8 @@ private:
 
     std::string m_lastError;
     std::function<void(double)> m_progressCallback;
+    const int* m_cancelFlag = nullptr;  // External cancel flag (owned by caller)
 
-    // Cancellation flag (owned by caller; set non-zero to cancel in-flight FFmpeg work)
-    const int* m_cancelFlag = nullptr;
 
     // Output settings (defaults)
     int m_outputWidth = 1920;
@@ -295,20 +372,17 @@ private:
     // Effects configuration
     EffectsConfig m_effects;
 
-    // Speed ramp configuration (consulted by the multi-cut C API path)
-    SpeedRampConfig m_speedRamp;
+    // Per-clip speed ramp configuration
+    SpeedRampConfig m_speed;
 
-    // Lazily-created RIFE interpolator for interpMode "rife"
-    std::unique_ptr<RifeInterpolator> m_rife;
+    // Count of clips clamped/skipped by the source-footage guard in the current batch.
+    mutable std::atomic<size_t> m_speedClampCount{0};
 
-    /**
-     * @brief RIFE-based slow-mo segment: decode frames, synthesize midpoints on
-     * the GPU, re-encode. Only supports speedFactor 0.5 (frame doubling).
-     */
-    bool copySegmentRifeSlow(const std::string& inputVideo,
-                             double sourceStart,
-                             double slotDuration,
-                             const std::string& outputVideo);
+    // Neural frame interpolation (RIFE) for smooth slow-mo. Lazily loaded.
+    std::string m_interpModelPath;
+    std::unique_ptr<OnnxFrameInterpolator> m_interpolator;
+    bool m_interpLoadAttempted = false;
+    std::mutex m_interpMutex;
 
     /**
      * @brief Build FFmpeg filter chain from effects config
@@ -329,11 +403,36 @@ private:
 
     /**
      * @brief Copy video segment with re-encoding (slower, more precise)
+     *
+     * @param speed Per-clip speed multiplier (1.0 = none). When != 1.0, applies
+     *        setpts video retiming + atempo audio so the output is `duration`
+     *        seconds long while consuming `duration * speed` of source.
+     * @param smoothing 0 = duplicate frames, 1 = minterpolate optical flow.
      */
     bool copySegmentPrecise(const std::string& inputVideo,
                            double startTime,
                            double duration,
-                           const std::string& outputVideo);
+                           const std::string& outputVideo,
+                           double speed = 1.0,
+                           int smoothing = 0);
+
+    /**
+     * @brief Slow-mo speed clip rendered with neural frame interpolation (RIFE).
+     *
+     * Decodes the source window to RGB frames, synthesizes the output-rate frame
+     * sequence by interpolating between source frames at arbitrary timesteps, and
+     * encodes the result directly at the output fps (no setpts needed). Used for
+     * SpeedRampConfig.smoothing == 2. Returns false (so callers can fall back) if
+     * the model isn't available or any stage fails.
+     */
+    bool extractSpeedClipInterpolated(const std::string& inputVideo,
+                                      double sourceStart,
+                                      double outputDuration,
+                                      double speed,
+                                      const std::string& outputVideo);
+
+    /** @brief Lazily load the interpolation model. Returns true if usable. */
+    bool ensureInterpolator();
 
     /**
      * @brief Get FFmpeg executable path

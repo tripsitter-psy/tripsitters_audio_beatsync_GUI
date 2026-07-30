@@ -9,7 +9,6 @@ public class TripSitterUE : ModuleRules
         PublicDependencyModuleNames.AddRange(new string[] {
             "Core",
             "CoreUObject",
-            "Engine",
             "InputCore",
             "ApplicationCore",
             "Projects"
@@ -21,6 +20,12 @@ public class TripSitterUE : ModuleRules
             "StandaloneRenderer",
             "ImageCore"
         });
+
+        // Engine dependency only needed for Editor and Game targets, not Program
+        if (Target.Type != TargetType.Program)
+        {
+            PublicDependencyModuleNames.Add("Engine");
+        }
 
         // Editor-only dependencies
         if (Target.Type == TargetType.Editor)

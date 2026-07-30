@@ -14,6 +14,7 @@ This repository includes optional OpenTelemetry tracing support for the backend 
    - If using vcpkg toolchain, configure CMake with `-DBEATSYNC_ENABLE_TRACING=ON` and ensure you use the matching vcpkg toolchain and triplet for your platform.
 
 2. Start a local OTLP collector + Jaeger (for viewing traces):
+   - **Prerequisite**: Docker and Docker Compose must be installed and running.
    - From project root:
      - Windows (PowerShell): `tools\tracing\start-tracing-collector.ps1`
      - macOS/Linux: `sh tools/tracing/start-tracing-collector.sh`
