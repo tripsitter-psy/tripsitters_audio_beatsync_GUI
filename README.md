@@ -6,16 +6,31 @@ A C++ desktop application for automatically synchronizing video clips with music
 
 - **AI-Powered Beat Detection**: ONNX Runtime with CUDA/TensorRT GPU acceleration
 - **Spectral Flux Beat Detection**: AudioFlux-based onset detection with stem separation support
+- **Dynamic Sync**: Cut density follows the track's energy — calm sections cut sparsely, drops cut on every beat
+- **Speed Ramps**: Per-clip slow-mo in calm sections, with RIFE AI frame interpolation (ONNX, GPU) for smooth motion
 - **Video Processing**: FFmpeg-based cutting, concatenation, and effects
+- **Vertical Output**: 9:16 presets (1080x1920, 720x1280) for Reels/TikTok/Shorts alongside classic widescreen
 - **Modern GUI**: Unreal Engine 5 Slate UI (TripSitter standalone app)
 - **Waveform Visualization**: Interactive audio waveform with beat markers
 - **Effects Pipeline**: Transitions, color grading, beat-synced flash/zoom
+
+## Platform Support
+
+| Platform | Backend + CLI | GUI |
+|----------|---------------|-----|
+| Windows  | Supported     | Supported (UE 5.7 Program target) |
+| Linux    | Supported     | Supported (UE 5.7 Program target) |
+| macOS    | Untested      | Untested |
+
+Linux build instructions are in [BUILD.md](BUILD.md#linux-build-backend--cli). The Linux
+build uses system FFmpeg via pkg-config and the official ONNX Runtime GPU tarball rather
+than vcpkg.
 
 ## Architecture
 
 The project consists of two main components:
 
-1. **Backend DLL** (`beatsync_backend.dll`)
+1. **Backend shared library** (`beatsync_backend.dll` / `libbeatsync_backend_shared.so`)
    - C++ library with C API for cross-language compatibility
    - FFmpeg for audio/video processing
    - ONNX Runtime for neural network inference

@@ -9,6 +9,50 @@ The GUI is implemented in Unreal Engine (TripSitter standalone app). The C++ bac
 
 **Unreal Engine**: Source-built at `C:\UE5_Source\UnrealEngine` (NOT Epic Games Launcher install).
 
+> **Platforms**: Windows and Linux are both supported for the backend, CLI and GUI.
+> Everything below describes the Windows toolchain (vcpkg + MSVC). For Linux see
+> the [Linux Build](#linux-build-fedora-verified) section — it does not use vcpkg.
+
+### Linux Build (Fedora-verified)
+
+Backend and CLI (see BUILD.md for the full recipe including ONNX Runtime tarball fixups):
+
+```bash
+sudo dnf install cmake ninja-build gcc-c++ ffmpeg-devel libsamplerate-devel
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH=$PWD/thirdparty/onnxruntime-linux-x64-gpu-1.23.2 \
+    -DAUDIOFLUX_ROOT=$PWD/thirdparty/audioFlux
+cmake --build build && ctest --test-dir build
+```
+
+GUI (UE 5.7 source tree, e.g. `~/UE5_Source/UnrealEngine`):
+
+```bash
+# Stage sources + backend where TripSitter.Build.cs expects them
+cp -r unreal-prototype/Source/TripSitter/* $UE/Source/Programs/TripSitter/
+cp unreal-prototype/Source/TripSitter.Target.cs $UE/Source/Programs/TripSitter/
+cp build/libbeatsync_backend_shared.so $UE/Binaries/ThirdParty/Beatsync/x64/
+cp src/backend/beatsync_capi.h        $UE/Binaries/ThirdParty/include/
+# Build (skip GenerateProjectFiles.sh - it fails on an unrelated DumpSymsTarget)
+./Engine/Build/BatchFiles/Linux/Build.sh TripSitter Linux Development
+# Deploy runtime files next to the executable
+cp build/libbeatsync_backend_shared.so $UE/Binaries/Linux/
+cp models/*.onnx                       $UE/Binaries/Linux/models/
+cp unreal-prototype/Source/TripSitter/Resources/* $UE/Binaries/Linux/Resources/
+```
+
+**Output**: `$UE/Engine/Binaries/Linux/TripSitter`. Launch detached
+(`setsid nohup ./TripSitter &`) or it dies with its parent shell.
+
+**Linux notes**:
+- FFmpeg comes from the system via pkg-config (Fedora headers live in `/usr/include/ffmpeg`), not vcpkg
+- ONNX Runtime is the official GPU tarball in `thirdparty/`; its CMake config expects a `lib64`
+  symlink and an `include/onnxruntime/` directory that the tarball does not ship
+- The ONNX CUDA provider is dlopen'd with no RUNPATH, so cuBLAS/cuDNN must be reachable:
+  either install them system-wide (ldconfig) or `patchelf --set-rpath` the provider `.so`.
+  `-DBEATSYNC_CUDA_LIB_DIRS=...` bakes a DT_RPATH into the CLI and shared library.
+- File dialogs use `IDesktopPlatform`, which forwards to the `SlateFileDialogs` module on Linux
+
 ### Backend Build (with CUDA + TensorRT GPU Acceleration + AudioFlux)
 
 ```powershell
@@ -112,6 +156,18 @@ BeatSyncEditor/
 - `int bs_video_cut_at_beats_multi(void* writer, const char** inputVideos, size_t videoCount, const double* beatTimes, size_t beatCount, const char* outputVideo, double clipDuration)` - Cut multiple videos, cycling through
 - `int bs_video_concatenate(const char** inputs, size_t count, const char* outputVideo)` - Join video files
 - `int bs_video_add_audio_track(void* writer, const char* inputVideo, const char* audioFile, const char* outputVideo, int trimToShortest, double audioStart, double audioEnd)` - Mux audio into video
+- `void bs_video_set_output_settings(void* writer, int width, int height, int fps)` - Output dimensions/framerate (default 1920x1080@24; use 1080x1920 for vertical 9:16)
+
+### Dynamic Sync (energy-driven cut density)
+- `void bs_dynamic_sync_default_config(bs_dynamic_sync_config_t* out_config)` - Fill defaults (thresholds 0.35/0.70, divisors 4/2/1)
+- `int bs_dynamic_sync_filter_beats(const char* audio_path, const double* beats, size_t beat_count, const bs_dynamic_sync_config_t* config, double** out_beats, size_t* out_count)` - Keep every Nth beat per local energy band; free with `bs_free_beats`
+- `int bs_dynamic_sync_classify_beats(const char* audio_path, const double* beats, size_t beat_count, const bs_dynamic_sync_config_t* config, int** out_bands)` - Band per beat (0=calm, 1=normal, 2=frantic); free with `bs_free_bands`
+- `void bs_free_beats(double* beats)` / `void bs_free_bands(int* bands)` - Memory cleanup
+
+### Speed Ramps + Frame Interpolation
+- `void bs_video_set_speed_ramp_config(void* writer, const bs_speed_ramp_config_t* config)` - Per-band playback speeds; consulted by `bs_video_cut_at_beats_multi`
+- `interp_mode`: `"rife"` (AI via ONNX Runtime CUDA, 0.5x only), `"mci"` (motion-compensated), `"blend"` (fast), `"none"`
+- RIFE model: vs-mlrt export `rife_v4.15.onnx` in `models/`. Input is `[1,11,H,W]`: img0 RGB, img1 RGB, timestep, x/y meshgrids, and two scale constants; dimensions padded to a multiple of 32. Falls back to `blend` if the model or GPU is unavailable.
 
 ### Effects
 - `void bs_video_set_effects_config(void* writer, const bs_effects_config_t* config)` - Configure transitions, color grading, vignette, beat flash/zoom

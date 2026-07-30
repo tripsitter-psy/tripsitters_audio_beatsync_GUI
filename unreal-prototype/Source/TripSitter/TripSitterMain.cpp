@@ -49,7 +49,9 @@ int RunTripSitter(const TCHAR* CommandLine)
     }
 
     // Create main window
-    TSharedRef<SWindow> MainWindow = SNew(SWindow)
+    // Held as a TSharedPtr so the reference can be released before Slate and ICU
+    // are torn down (see cleanup below).
+    TSharedPtr<SWindow> MainWindow = SNew(SWindow)
         .Title(FText::FromString(TEXT("TripSitter Beat Sync Editor")))
         .ClientSize(FVector2D(1400, 900))
         .SupportsMaximize(true)
@@ -62,7 +64,7 @@ int RunTripSitter(const TCHAR* CommandLine)
     );
 
     // Add window and show
-    FSlateApplication::Get().AddWindow(MainWindow);
+    FSlateApplication::Get().AddWindow(MainWindow.ToSharedRef());
     MainWindow->ShowWindow();
     MainWindow->BringToFront();
 
@@ -115,6 +117,12 @@ int RunTripSitter(const TCHAR* CommandLine)
 
     // Cleanup
     FBeatsyncLoader::Shutdown();
+
+    // Release the window before the shutdown calls below. Holding it until this
+    // function returns would destruct its widgets - and their text layouts -
+    // after AppExit() has unloaded Internationalization, so ICU aborts in
+    // ubidi_close() during ~FICUTextBiDi.
+    MainWindow.Reset();
 
 #if PLATFORM_WINDOWS
     // Destroy custom window icon to prevent GDI resource leak
