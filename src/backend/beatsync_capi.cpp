@@ -1534,7 +1534,7 @@ BEATSYNC_API int bs_ai_analyze_file(void* analyzer, const char* audio_path,
         BeatSync::MusicAnalysisProgress progressWrapper = nullptr;
         if (progress_cb) {
             progressWrapper = [progress_cb, user_data](float progress, const std::string& stage, const std::string& message) {
-                return progress_cb(progress, stage.c_str(), message.c_str(), user_data) != 0;
+                return progress_cb(progress, stage.c_str(), message.c_str(), user_data) == 0;
             };
         }
 
@@ -1722,7 +1722,7 @@ BEATSYNC_API int bs_ai_analyze_samples(void* analyzer,
         BeatSync::MusicAnalysisProgress progressWrapper = nullptr;
         if (progress_cb) {
             progressWrapper = [progress_cb, user_data](float progress, const std::string& stage, const std::string& message) {
-                return progress_cb(progress, stage.c_str(), message.c_str(), user_data) != 0;
+                return progress_cb(progress, stage.c_str(), message.c_str(), user_data) == 0;
             };
         }
 
@@ -1826,7 +1826,7 @@ BEATSYNC_API int bs_ai_analyze_quick(void* analyzer, const char* audio_path,
         BeatSync::MusicAnalysisProgress progressWrapper = nullptr;
         if (progress_cb) {
             progressWrapper = [progress_cb, user_data](float progress, const std::string& stage, const std::string& message) {
-                return progress_cb(progress, stage.c_str(), message.c_str(), user_data) != 0;
+                return progress_cb(progress, stage.c_str(), message.c_str(), user_data) == 0;
             };
         }
 
@@ -2056,7 +2056,7 @@ BEATSYNC_API int bs_audioflux_analyze(const char* audio_path,
         auto progressWrapper = [progress_cb, user_data](float progress, const char* stage) -> bool {
             if (progress_cb) {
                 // Convention: nonzero return means continue, zero means cancel (matches ONNX wrapper)
-                return progress_cb(progress, stage, "", user_data) != 0;
+                return progress_cb(progress, stage, "", user_data) == 0;
             }
             return true;
         };
@@ -2165,7 +2165,7 @@ BEATSYNC_API int bs_audioflux_analyze_with_stems(const char* audio_path,
                     if (progress_cb) {
                         // Map stem progress (0-1) to overall progress (0.1-0.5)
                         float overallProgress = 0.1f + p * 0.4f;
-                        return progress_cb(overallProgress, msg.c_str(), "", user_data) != 0;
+                        return progress_cb(overallProgress, msg.c_str(), "", user_data) == 0;
                     }
                     return true;
                 };
@@ -2196,7 +2196,7 @@ BEATSYNC_API int bs_audioflux_analyze_with_stems(const char* audio_path,
         auto fluxProgress = [progress_cb, user_data](float progress, const char* stage) -> bool {
             if (progress_cb) {
                 float overallProgress = 0.55f + progress * 0.45f;
-                return progress_cb(overallProgress, stage, "", user_data) != 0;
+                return progress_cb(overallProgress, stage, "", user_data) == 0;
             }
             return true;
         };

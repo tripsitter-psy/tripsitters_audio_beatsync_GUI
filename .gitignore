@@ -60,6 +60,9 @@ Thumbs.db
 !test_assets/*.mp3
 !test_assets/*.wav
 
+# Linux third-party dependencies (ONNX Runtime tarball, audioFlux checkout)
+thirdparty/
+
 # Large binary files (not tracked in git, not LFS)
 models/*.onnx
 # Not tracked in git, not LFS. Remove this line and add to .gitattributes if you want to use Git LFS.

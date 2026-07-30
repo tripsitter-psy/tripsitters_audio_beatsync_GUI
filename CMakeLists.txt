@@ -70,6 +70,13 @@ endif()
 if(FFMPEG_ROOT)
     include_directories(${FFMPEG_ROOT}/include)
     link_directories(${FFMPEG_ROOT}/lib)
+elseif(UNIX)
+    # System FFmpeg via pkg-config (Fedora puts headers in /usr/include/ffmpeg)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(FFMPEG REQUIRED
+        libavformat libavcodec libavutil libswresample libswscale libavfilter)
+    include_directories(${FFMPEG_INCLUDE_DIRS})
+    link_directories(${FFMPEG_LIBRARY_DIRS})
 endif()
 
 # Optional AI / advanced feature flags (stubs included; wire deps when available)
@@ -290,6 +297,7 @@ if(USE_AUDIOFLUX)
     find_library(AUDIOFLUX_LIBRARY audioflux
         PATHS
             "${AUDIOFLUX_ROOT}/build/windowBuild/Release"
+            "${AUDIOFLUX_ROOT}/build/linuxBuild"
             "${AUDIOFLUX_ROOT}/lib"
             /usr/local/lib
             /usr/lib
@@ -414,6 +422,22 @@ if(USE_AUDIOFLUX AND EXISTS "${AUDIOFLUX_LIBRARY}")
                 message(WARNING "FFTW DLL not found: ${AUDIOFLUX_FFTW_DLL}")
             endif()
         endif()
+    endif()
+endif()
+
+# ONNX Runtime's CUDA execution provider (.so) is dlopen'd at runtime and ships without a
+# RUNPATH, so its CUDA dependencies (cublas, cudnn, ...) only resolve via LD_LIBRARY_PATH
+# or an old-style DT_RPATH inherited from the loading chain. When the CUDA runtime libs
+# live outside the default linker paths, pass their directories here to bake in a DT_RPATH.
+set(BEATSYNC_CUDA_LIB_DIRS "" CACHE STRING "Semicolon-separated dirs containing CUDA runtime libs (cublas, cudnn, ...) for the ONNX CUDA provider")
+if(UNIX AND NOT APPLE AND BEATSYNC_CUDA_LIB_DIRS)
+    set(_bs_cuda_rpath_flags "-Wl,--disable-new-dtags")
+    foreach(_dir IN LISTS BEATSYNC_CUDA_LIB_DIRS)
+        list(APPEND _bs_cuda_rpath_flags "-Wl,-rpath,${_dir}")
+    endforeach()
+    target_link_options(beatsync PRIVATE ${_bs_cuda_rpath_flags})
+    if(TARGET beatsync_backend_shared)
+        target_link_options(beatsync_backend_shared PRIVATE ${_bs_cuda_rpath_flags})
     endif()
 endif()
 

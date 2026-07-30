@@ -9,6 +9,7 @@
 #include "tracing/Tracing.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <numeric>
 #include <sstream>

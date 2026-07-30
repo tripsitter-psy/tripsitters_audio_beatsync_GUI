@@ -145,6 +145,17 @@ public:
     void setProgressCallback(std::function<void(double)> callback);
 
     /**
+     * @brief Set atomic cancel flag pointer for async cancellation
+     * @param flag Pointer to an int set non-zero to request cancellation (nullptr to clear)
+     */
+    void setCancelFlag(const int* flag);
+
+    /**
+     * @brief Check if cancellation was requested via the cancel flag
+     */
+    bool isCancelled() const;
+
+    /**
      * @brief Copy video segment using stream copy (fast, no re-encoding)
      */
     bool copySegmentFast(const std::string& inputVideo,
@@ -224,6 +235,9 @@ private:
 
     std::string m_lastError;
     std::function<void(double)> m_progressCallback;
+
+    // Cancellation flag (owned by caller; set non-zero to cancel in-flight FFmpeg work)
+    const int* m_cancelFlag = nullptr;
 
     // Output settings (defaults)
     int m_outputWidth = 1920;

@@ -223,6 +223,68 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmak
 cmake --build build --config Release
 ```
 
+## Linux Build (Backend + CLI)
+
+The backend library and `beatsync` CLI build natively on Linux (tested on Fedora 44, GCC 16). The Unreal Engine GUI is not ported yet.
+
+### Prerequisites
+
+```bash
+# Fedora (FFmpeg from RPM Fusion)
+sudo dnf install cmake ninja-build gcc-c++ ffmpeg-devel libsamplerate-devel
+```
+
+ONNX Runtime is not taken from the distro; download the official GPU build:
+
+```bash
+mkdir -p thirdparty && cd thirdparty
+curl -LO https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-x64-gpu-1.23.2.tgz
+tar xzf onnxruntime-linux-x64-gpu-1.23.2.tgz
+# The bundled CMake config expects these two paths to exist:
+ln -s lib onnxruntime-linux-x64-gpu-1.23.2/lib64
+mkdir -p onnxruntime-linux-x64-gpu-1.23.2/include/onnxruntime
+(cd onnxruntime-linux-x64-gpu-1.23.2/include/onnxruntime && for f in ../*.h; do ln -sf "$f" .; done)
+```
+
+Optional, for the Flux / Stems+Flux analysis modes, build AudioFlux (on Linux it uses its
+built-in FFT — no FFTW, so no GPL implications):
+
+```bash
+cd thirdparty
+git clone --depth 1 https://github.com/libaudioflux/audioFlux.git
+# Its CMakeLists hardcodes clang and "omp"; with GCC change those to the default
+# compiler and "gomp", then:
+cmake -S audioFlux/src -B audioFlux/build/linuxBuild -DCMAKE_SYSTEM_NAME=linux -DCMAKE_BUILD_TYPE=Release
+cmake --build audioFlux/build/linuxBuild -j$(nproc)
+```
+
+### Configure and Build
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH=$PWD/thirdparty/onnxruntime-linux-x64-gpu-1.23.2 \
+    -DAUDIOFLUX_ROOT=$PWD/thirdparty/audioFlux
+cmake --build build
+ctest --test-dir build
+```
+
+Outputs: `build/libbeatsync_backend_shared.so` and `build/bin/Release/beatsync`.
+
+### GPU Acceleration (CUDA)
+
+ONNX Runtime's CUDA execution provider (`libonnxruntime_providers_cuda.so`) is dlopen'd at
+runtime and ships without a RUNPATH, so cuBLAS/cuDNN/cuFFT/cuRAND must be resolvable — via
+ldconfig (system install), `LD_LIBRARY_PATH`, or by stamping a RUNPATH into the provider:
+
+```bash
+patchelf --set-rpath '$ORIGIN:/path/to/cuda/lib64' \
+    thirdparty/onnxruntime-linux-x64-gpu-1.23.2/lib/libonnxruntime_providers_cuda.so
+```
+
+Alternatively pass `-DBEATSYNC_CUDA_LIB_DIRS="/path/to/cuda/lib64;/path/to/cudnn/lib"` at
+configure time to bake a DT_RPATH into the CLI and shared library. Without any of this the
+app silently falls back to CPU (the TensorRT → CUDA → CPU chain still works).
+
 ## Performance Notes
 
 ### Compile Time
