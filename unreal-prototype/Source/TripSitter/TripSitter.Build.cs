@@ -23,9 +23,17 @@ public class TripSitter : ModuleRules
             "Slate",
             "SlateCore",
             "StandaloneRenderer",
-            "ImageWrapper",
-            "TripSitterUE" // Plugin dependency
+            "ImageWrapper"
         });
+
+        if (Target.IsInPlatformGroup(UnrealPlatformGroup.Linux))
+        {
+            PrivateDependencyModuleNames.AddRange(new string[] {
+                "UnixCommonStartup",   // CommonUnixMain entry point wrapper
+                "DesktopPlatform",     // File dialogs (routes to SlateFileDialogs on Linux)
+                "SlateFileDialogs"
+            });
+        }
 
         // Beatsync backend DLL path - conventional ThirdParty location under Engine/Binaries
         // This follows UE's standard pattern for third-party binaries and ensures proper
@@ -39,7 +47,6 @@ public class TripSitter : ModuleRules
 
         if (!Directory.Exists(BeatsyncLib))
         {
-            Log.TraceError("TripSitter: BeatsyncLib directory not found: {0}", BeatsyncLib);
             throw new BuildException("BeatsyncLib is required but not found at: " + BeatsyncLib);
         }
 
@@ -50,14 +57,12 @@ public class TripSitter : ModuleRules
         var parentDir = beatsyncLibDir.Parent;
         if (parentDir == null)
         {
-            Log.TraceError("TripSitter: Could not resolve parent directory for BeatsyncLib: {0}", BeatsyncLib);
             throw new BuildException("Could not resolve include path for BeatsyncLib at: " + BeatsyncLib);
         }
 
         var includePath = Path.Combine(parentDir.FullName, "..", "include");
         if (!Directory.Exists(includePath))
         {
-            Log.TraceError("TripSitter: Beatsync include directory not found: {0}", includePath);
             throw new BuildException("Beatsync include directory is required but not found at: " + includePath);
         }
         PublicIncludePaths.Add(includePath);
@@ -69,12 +74,10 @@ public class TripSitter : ModuleRules
 
             if (!File.Exists(libPath))
             {
-                Log.TraceError("TripSitter: Import library not found: {0}", libPath);
                 throw new BuildException("Beatsync import library is required but not found at: " + libPath);
             }
             if (!File.Exists(dllPath))
             {
-                Log.TraceError("TripSitter: DLL not found: {0}", dllPath);
                 throw new BuildException("Beatsync DLL is required but not found at: " + dllPath);
             }
 
@@ -87,7 +90,6 @@ public class TripSitter : ModuleRules
 
             if (!File.Exists(dylibPath))
             {
-                Log.TraceError("TripSitter: dylib not found: {0}", dylibPath);
                 throw new BuildException("Beatsync dylib is required but not found at: " + dylibPath);
             }
 
@@ -101,7 +103,6 @@ public class TripSitter : ModuleRules
 
             if (!File.Exists(soPath))
             {
-                Log.TraceError("TripSitter: Shared library not found: {0}", soPath);
                 throw new BuildException("Beatsync shared library is required but not found at: " + soPath);
             }
 
