@@ -22,6 +22,7 @@
 #include <fstream>
 #include <chrono>
 #include <mutex>
+#include <cstdlib>
 
 #include "utils/DebugLogger.h"
 
@@ -125,9 +126,23 @@ struct OnnxStemSeparator::Impl {
                 const OrtApi& ortApi = Ort::GetApi();
 
                 // ============================================================
-                // TensorRT Execution Provider (Best performance on RTX GPUs)
+                // TensorRT Execution Provider - opt-in only
                 // ============================================================
-                try {
+                // Demucs is large and takes variable-length audio, so TensorRT
+                // compiles a fresh engine per input shape. Each build takes
+                // minutes and the UI appears frozen while it happens, which
+                // costs far more than the inference speedup saves. CUDA is the
+                // default; set BEATSYNC_TRT_STEMSEP=1 to opt in.
+                // (The upscaler does use TensorRT: its tiles are a fixed size,
+                // so one cached engine serves every frame.)
+                const char* trtOptIn = std::getenv("BEATSYNC_TRT_STEMSEP");
+                const bool useTensorRT = trtOptIn && trtOptIn[0] == '1';
+                if (!useTensorRT) {
+                    std::cerr << "[BeatSync] StemSeparator: skipping TensorRT "
+                                 "(per-shape engine builds stall analysis); using CUDA"
+                              << std::endl;
+                }
+                if (useTensorRT) try {
                     OrtTensorRTProviderOptionsV2* trtOptions = nullptr;
                     OrtStatus* status = ortApi.CreateTensorRTProviderOptions(&trtOptions);
                     if (status == nullptr && trtOptions != nullptr) {
