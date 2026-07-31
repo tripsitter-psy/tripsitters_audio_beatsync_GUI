@@ -118,9 +118,11 @@ struct FBeatsyncProcessingParams
     int32 OutputHeight = 1080;
     int32 OutputFps = 24;
 
-    // AI-upscale source clips before cutting (models/upscale.onnx). Low-resolution
-    // sources are enlarged once each, however often they are cycled into the edit.
-    bool bUpscaleSources = false;
+    // AI-upscale source clips before cutting. Filename inside models/, empty = off.
+    // "upscale_2x.onnx" is ~4x less work per frame than "upscale.onnx" (4x) and is
+    // usually plenty when the output is 1080p. Sources are enlarged once each,
+    // however often they are cycled into the edit.
+    FString UpscaleModel;
 
     // Orientation modifier: when true, a landscape resolution above is rotated to
     // portrait (e.g. 1920x1080 -> 1080x1920) for Reels/TikTok/Shorts. Applying it

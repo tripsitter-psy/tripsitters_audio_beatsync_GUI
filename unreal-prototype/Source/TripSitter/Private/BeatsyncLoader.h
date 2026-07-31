@@ -208,7 +208,9 @@ public:
 
     // Neural source upscaling (applied during normalization). The model is
     // resolved next to the executable; pass bEnabled=false to disable.
-    static void SetUpscaleConfig(void* Handle, bool bEnabled, int32 TileSize = 512,
+    // ModelFile is a filename inside the executable's models/ directory
+    // (e.g. "upscale.onnx" for 4x, "upscale_2x.onnx" for 2x). Empty disables.
+    static void SetUpscaleConfig(void* Handle, const FString& ModelFile, int32 TileSize = 512,
                                  int32 MaxSourceEdge = 1440);
 
     /** Check if video processing was cancelled */

@@ -160,7 +160,9 @@ private:
 	// Dynamic sync + speed ramps
 	bool bDynamicSync = false;
 	bool bSpeedRamps = false;
-	bool bUpscaleSources = false;
+	// AI source upscaling: index into UpscaleOptions (0 = Off, 1 = 2x, 2 = 4x)
+	int32 UpscaleChoice = 0;
+	TArray<TSharedPtr<FString>> UpscaleOptions;
 	FString RampInterpMode = TEXT("blend");
 	TArray<TSharedPtr<FString>> InterpModeOptions;
 	EFPS FPS = EFPS::FPS30;

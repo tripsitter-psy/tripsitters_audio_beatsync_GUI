@@ -926,17 +926,19 @@ void FBeatsyncLoader::SetOutputSettings(void* Handle, int32 Width, int32 Height,
     GApi.video_set_output_settings(Handle, Width, Height, Fps);
 }
 
-void FBeatsyncLoader::SetUpscaleConfig(void* Handle, bool bEnabled, int32 TileSize, int32 MaxSourceEdge)
+void FBeatsyncLoader::SetUpscaleConfig(void* Handle, const FString& ModelFile, int32 TileSize, int32 MaxSourceEdge)
 {
     if (!GApi.video_set_upscale_config || !Handle) return;
 
-    // Model ships next to the executable, like the beat/stem/RIFE models.
+    const bool bEnabled = !ModelFile.IsEmpty();
+
+    // Models ship next to the executable, like the beat/stem/RIFE models.
     FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
-    FString ModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("upscale.onnx"));
-    const bool bHaveModel = FPaths::FileExists(ModelPath);
+    FString ModelPath = FPaths::Combine(ExeDir, TEXT("models"), ModelFile);
+    const bool bHaveModel = bEnabled && FPaths::FileExists(ModelPath);
     if (bEnabled && !bHaveModel)
     {
-        UE_LOG(LogTemp, Warning, TEXT("Upscaling requested but models/upscale.onnx is missing; sources will be used as-is"));
+        UE_LOG(LogTemp, Warning, TEXT("Upscaling requested but models/%s is missing; sources will be used as-is"), *ModelFile);
     }
 
     FTCHARToUTF8 ModelUtf8(*ModelPath);

@@ -256,6 +256,10 @@ void STripSitterMainWidget::Construct(const FArguments& InArgs)
 	ResolutionOptions.Add(MakeShared<FString>(TEXT("1080x1920 (Vertical 9:16)")));
 	ResolutionOptions.Add(MakeShared<FString>(TEXT("720x1280 (Vertical HD)")));
 
+	UpscaleOptions.Add(MakeShared<FString>(TEXT("Off")));
+	UpscaleOptions.Add(MakeShared<FString>(TEXT("AI 2x (fast)")));
+	UpscaleOptions.Add(MakeShared<FString>(TEXT("AI 4x (quality)")));
+
 	InterpModeOptions.Add(MakeShared<FString>(TEXT("rife")));
 	InterpModeOptions.Add(MakeShared<FString>(TEXT("blend")));
 	InterpModeOptions.Add(MakeShared<FString>(TEXT("mci")));
@@ -1234,18 +1238,36 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 			]
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(0, 0, 8, 0)
+			[
+				SNew(STextBlock)
+				.Text(FText::FromString(TEXT("AI Upscale:")))
+				.ColorAndOpacity(FLinearColor::White)
+				.ToolTipText(FText::FromString(TEXT("AI-upscale low-resolution source clips before cutting. 2x is around four times less work per frame than 4x and is usually plenty for 1080p output; 4x gives more detail and suits 4K.")))
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
 			.Padding(0, 0, 20, 0)
 			.VAlign(VAlign_Center)
 			[
-				SNew(SCheckBox)
-				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
-					bUpscaleSources = (State == ECheckBoxState::Checked);
+				SNew(SComboBox<TSharedPtr<FString>>)
+				.OptionsSource(&UpscaleOptions)
+				.OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+					return SNew(STextBlock).Text(FText::FromString(*Item));
 				})
-				.ToolTipText(FText::FromString(TEXT("AI-upscale low-resolution source clips before cutting (models/upscale.onnx). Adds processing time up front but sharpens the whole edit.")))
+				.OnSelectionChanged_Lambda([this](TSharedPtr<FString> Item, ESelectInfo::Type) {
+					int32 Index = UpscaleOptions.Find(Item);
+					if (Index != INDEX_NONE) {
+						UpscaleChoice = Index;
+					}
+				})
 				[
 					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("AI Upscale Sources")))
-					.ColorAndOpacity(FLinearColor::White)
+					.Text_Lambda([this]() {
+						return FText::FromString(UpscaleOptions.IsValidIndex(UpscaleChoice)
+							? *UpscaleOptions[UpscaleChoice] : TEXT("Off"));
+					})
 				]
 			]
 			+ SHorizontalBox::Slot()
@@ -3252,7 +3274,12 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	Params.bDynamicSync = bDynamicSync;
 	Params.bSpeedRamps = bSpeedRamps;
 	Params.RampInterpMode = RampInterpMode;
-	Params.bUpscaleSources = bUpscaleSources;
+	switch (UpscaleChoice)
+	{
+		case 1:  Params.UpscaleModel = TEXT("upscale_2x.onnx"); break;
+		case 2:  Params.UpscaleModel = TEXT("upscale.onnx");    break;
+		default: Params.UpscaleModel.Empty();                   break;
+	}
 
 	switch (Resolution)
 	{
