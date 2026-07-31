@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <iostream>
+#include <filesystem>
 
 #ifdef USE_ONNX
 #include <onnxruntime_cxx_api.h>
@@ -75,6 +76,57 @@ bool OnnxUpscaler::loadModel(const std::string& modelPath, bool useGPU, int gpuD
         std::string activeProvider = "CPU";
         if (useGPU) {
             const OrtApi& ortApi = Ort::GetApi();
+
+            // TensorRT first: unlike the interpolator (variable clip sizes), the
+            // upscaler always runs fixed-size tiles, so a handful of engines cover
+            // every frame of every clip. Engines are cached on disk, so only the
+            // first run pays the build cost.
+            try {
+                OrtTensorRTProviderOptionsV2* trtOptions = nullptr;
+                OrtStatus* status = ortApi.CreateTensorRTProviderOptions(&trtOptions);
+                if (status == nullptr && trtOptions != nullptr) {
+                    const std::string cacheDir =
+                        (std::filesystem::temp_directory_path() / "beatsync_trt_cache").string();
+                    std::error_code ec;
+                    std::filesystem::create_directories(cacheDir, ec);
+
+                    char deviceIdStr[16];
+                    snprintf(deviceIdStr, sizeof(deviceIdStr), "%d", gpuDeviceId);
+                    const char* keys[] = {
+                        "device_id",
+                        "trt_fp16_enable",          // Ada tensor cores; SR is tolerant of fp16
+                        "trt_engine_cache_enable",
+                        "trt_engine_cache_path",
+                        "trt_timing_cache_enable"
+                    };
+                    const char* values[] = {deviceIdStr, "1", "1", cacheDir.c_str(), "1"};
+                    status = ortApi.UpdateTensorRTProviderOptions(trtOptions, keys, values, 5);
+                    if (status == nullptr) {
+                        status = ortApi.SessionOptionsAppendExecutionProvider_TensorRT_V2(
+                            static_cast<OrtSessionOptions*>(*m_impl->sessionOptions), trtOptions);
+                        if (status == nullptr) {
+                            activeProvider = "TensorRT";
+                            std::cerr << "[BeatSync] Upscaler: TensorRT execution provider enabled "
+                                      << "(engine cache: " << cacheDir << ")" << std::endl;
+                        } else {
+                            const char* msg = ortApi.GetErrorMessage(status);
+                            std::cerr << "[BeatSync] Upscaler: TensorRT unavailable ("
+                                      << (msg ? msg : "?") << "), falling back to CUDA" << std::endl;
+                            ortApi.ReleaseStatus(status);
+                        }
+                    } else {
+                        ortApi.ReleaseStatus(status);
+                    }
+                    ortApi.ReleaseTensorRTProviderOptions(trtOptions);
+                } else if (status != nullptr) {
+                    ortApi.ReleaseStatus(status);
+                }
+            } catch (...) {
+                std::cerr << "[BeatSync] Upscaler: TensorRT provider exception" << std::endl;
+            }
+
+            // CUDA is appended regardless: it handles any subgraph TensorRT
+            // declines and is the fallback when TensorRT is not installed.
             try {
                 OrtCUDAProviderOptionsV2* cudaOptions = nullptr;
                 OrtStatus* status = ortApi.CreateCUDAProviderOptions(&cudaOptions);
@@ -88,7 +140,7 @@ bool OnnxUpscaler::loadModel(const std::string& modelPath, bool useGPU, int gpuD
                         status = ortApi.SessionOptionsAppendExecutionProvider_CUDA_V2(
                             static_cast<OrtSessionOptions*>(*m_impl->sessionOptions), cudaOptions);
                         if (status == nullptr) {
-                            activeProvider = "CUDA";
+                            if (activeProvider != "TensorRT") activeProvider = "CUDA";
                             std::cerr << "[BeatSync] Upscaler: CUDA execution provider enabled" << std::endl;
                         } else {
                             const char* msg = ortApi.GetErrorMessage(status);
@@ -146,9 +198,7 @@ bool OnnxUpscaler::loadModel(const std::string& modelPath, bool useGPU, int gpuD
             m_impl->session.reset();
             return false;
         }
-        const size_t outPixels = probeOut.size() / 3;
-        const int outEdge = static_cast<int>(std::lround(std::sqrt(static_cast<double>(outPixels))));
-        m_impl->scale = std::max(1, outEdge / probe);
+        // upscale() set m_impl->scale from the probe tile's actual dimensions
         m_impl->tileSize = kDefaultTile;
 
         if (m_impl->scale < 2) {
@@ -238,8 +288,11 @@ bool OnnxUpscaler::upscale(const uint8_t* rgb, int width, int height,
                 const float* out = outputs[0].GetTensorData<float>();
                 const size_t outPlane = static_cast<size_t>(ow) * oh;
 
-                // During the probe pass we only need the output dimensions.
+                // Probe pass: derive the scale from this tile's own input/output
+                // sizes. Deriving it from the caller's frame size instead would be
+                // wrong, because tiling may have trimmed the frame to a smaller tile.
                 if (scale == 1) {
+                    m_impl->scale = (tw > 0) ? (ow / tw) : 0;
                     outRgb.assign(outPlane * 3, 0);
                     return true;
                 }
