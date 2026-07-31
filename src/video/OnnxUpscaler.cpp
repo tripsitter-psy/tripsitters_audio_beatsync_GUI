@@ -4,6 +4,7 @@
 #include <cstring>
 #include <iostream>
 #include <filesystem>
+#include <cstdlib>
 
 #ifdef USE_ONNX
 #include <onnxruntime_cxx_api.h>
@@ -85,10 +86,23 @@ bool OnnxUpscaler::loadModel(const std::string& modelPath, bool useGPU, int gpuD
                 OrtTensorRTProviderOptionsV2* trtOptions = nullptr;
                 OrtStatus* status = ortApi.CreateTensorRTProviderOptions(&trtOptions);
                 if (status == nullptr && trtOptions != nullptr) {
-                    const std::string cacheDir =
-                        (std::filesystem::temp_directory_path() / "beatsync_trt_cache").string();
+                    // Engines are tied to this GPU and TensorRT version and take
+                    // ~25s to build, so cache them somewhere that survives a
+                    // reboot rather than in the temp directory.
+                    std::string cacheDir;
+                    if (const char* xdg = std::getenv("XDG_CACHE_HOME")) {
+                        cacheDir = std::string(xdg) + "/beatsync/trt";
+                    } else if (const char* home = std::getenv("HOME")) {
+                        cacheDir = std::string(home) + "/.cache/beatsync/trt";
+                    } else {
+                        cacheDir = (std::filesystem::temp_directory_path() / "beatsync_trt_cache").string();
+                    }
                     std::error_code ec;
                     std::filesystem::create_directories(cacheDir, ec);
+                    if (ec) {
+                        cacheDir = (std::filesystem::temp_directory_path() / "beatsync_trt_cache").string();
+                        std::filesystem::create_directories(cacheDir, ec);
+                    }
 
                     char deviceIdStr[16];
                     snprintf(deviceIdStr, sizeof(deviceIdStr), "%d", gpuDeviceId);
