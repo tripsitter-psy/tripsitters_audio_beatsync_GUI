@@ -184,6 +184,7 @@ if(USE_ONNX)
             src/audio/OnnxStemSeparator.cpp
             src/audio/OnnxMusicAnalyzer.cpp
             src/video/OnnxFrameInterpolator.cpp
+            src/video/OnnxUpscaler.cpp
         )
         add_definitions(-DUSE_ONNX)
 

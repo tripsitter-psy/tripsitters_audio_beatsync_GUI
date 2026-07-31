@@ -206,6 +206,11 @@ public:
      *  Must be called before cut/normalize operations. */
     static void SetOutputSettings(void* Handle, int Width, int Height, int Fps);
 
+    // Neural source upscaling (applied during normalization). The model is
+    // resolved next to the executable; pass bEnabled=false to disable.
+    static void SetUpscaleConfig(void* Handle, bool bEnabled, int32 TileSize = 512,
+                                 int32 MaxSourceEdge = 1440);
+
     /** Check if video processing was cancelled */
     static bool IsCancelled(void* Handle);
 

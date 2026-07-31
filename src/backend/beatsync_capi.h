@@ -246,6 +246,24 @@ typedef struct {
     double band_speed[3];      // playback speed for calm / normal / frantic
 } bs_speed_config_t;
 
+// ---------------------------------------------------------------------------
+// Neural source upscaling (ESRGAN family, ONNX)
+// ---------------------------------------------------------------------------
+// Applied during pre-normalization so each source clip is enlarged once before
+// cutting, rather than upscaling the whole finished render. The model runs at
+// its own scale factor; the normalize pass then scales to the output size.
+// Skipped automatically when a source is already >= max_source_edge.
+typedef struct {
+    int   enabled;           // 0 = off
+    const char* model_path;  // ONNX model (NULL = models/upscale.onnx)
+    int   tile_size;         // source pixels per inference tile (0 = default 512)
+    int   max_source_edge;   // skip sources whose longest edge is >= this (0 = default 1440)
+} bs_upscale_config_t;
+
+// Set neural upscaling configuration. Pass NULL to disable.
+// Returns 0 on success, non-zero on error.
+BEATSYNC_API int bs_video_set_upscale_config(void* writer, const bs_upscale_config_t* config);
+
 // Set per-clip speed ramp configuration on video writer.
 // Pass nullptr to reset/disable speed ramps.
 // Returns 0 on success, non-zero on error.

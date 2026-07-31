@@ -1234,6 +1234,22 @@ TSharedRef<SWidget> STripSitterMainWidget::CreateAnalysisSection()
 			]
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
+			.Padding(0, 0, 20, 0)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SCheckBox)
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
+					bUpscaleSources = (State == ECheckBoxState::Checked);
+				})
+				.ToolTipText(FText::FromString(TEXT("AI-upscale low-resolution source clips before cutting (models/upscale.onnx). Adds processing time up front but sharpens the whole edit.")))
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("AI Upscale Sources")))
+					.ColorAndOpacity(FLinearColor::White)
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
 			.VAlign(VAlign_Center)
 			.Padding(0, 0, 8, 0)
 			[
@@ -3236,6 +3252,7 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	Params.bDynamicSync = bDynamicSync;
 	Params.bSpeedRamps = bSpeedRamps;
 	Params.RampInterpMode = RampInterpMode;
+	Params.bUpscaleSources = bUpscaleSources;
 
 	switch (Resolution)
 	{

@@ -148,6 +148,7 @@ private:
 	// Dynamic sync + speed ramps
 	bool bDynamicSync = false;
 	bool bSpeedRamps = false;
+	bool bUpscaleSources = false;
 	FString RampInterpMode = TEXT("blend");
 	TArray<TSharedPtr<FString>> InterpModeOptions;
 	EFPS FPS = EFPS::FPS30;

@@ -85,7 +85,15 @@ struct bs_speed_config_t {
 };
 
 using bs_video_set_effects_config_t = void (*)(void*, const bs_effects_config_t*);
+struct bs_upscale_config_t {
+    int enabled;
+    const char* model_path;
+    int tile_size;
+    int max_source_edge;
+};
+
 using bs_video_set_speed_config_t = int (*)(void*, const bs_speed_config_t*);
+using bs_video_set_upscale_config_t = int (*)(void*, const bs_upscale_config_t*);
 using bs_video_get_speed_clamp_count_t = int (*)(void*);
 using bs_video_set_interpolation_model_t = int (*)(void*, const char*);
 using bs_video_apply_effects_t = int (*)(void*, const char*, const char*, const double*, size_t);
@@ -107,7 +115,6 @@ using bs_dynamic_sync_filter_beats_t = int (*)(const char*, const double*, size_
 using bs_dynamic_sync_classify_beats_t = int (*)(const char*, const double*, size_t, const bs_dynamic_sync_config_t*, int**);
 using bs_free_beats_t = void (*)(double*);
 using bs_free_bands_t = void (*)(int*);
-using bs_video_set_speed_ramp_config_t = void (*)(void*, const bs_speed_ramp_config_t*);
 
 // AI analyzer C API types
 struct bs_ai_config_t {
@@ -182,6 +189,7 @@ struct FBeatsyncApi
     bs_free_beats_t free_beats = nullptr;
     bs_free_bands_t free_bands = nullptr;
     bs_video_set_speed_config_t video_set_speed_config = nullptr;
+    bs_video_set_upscale_config_t video_set_upscale_config = nullptr;
     bs_video_get_speed_clamp_count_t video_get_speed_clamp_count = nullptr;
     bs_video_set_interpolation_model_t video_set_interpolation_model = nullptr;
     bs_video_apply_effects_t video_apply_effects = nullptr;
@@ -325,6 +333,7 @@ bool FBeatsyncLoader::Initialize()
     GApi.free_beats = (bs_free_beats_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_beats"));
     GApi.free_bands = (bs_free_bands_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_free_bands"));
     GApi.video_set_speed_config = (bs_video_set_speed_config_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_speed_config"));
+    GApi.video_set_upscale_config = (bs_video_set_upscale_config_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_upscale_config"));
     GApi.video_get_speed_clamp_count = (bs_video_get_speed_clamp_count_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_get_speed_clamp_count"));
     GApi.video_set_interpolation_model = (bs_video_set_interpolation_model_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_interpolation_model"));
     GApi.video_apply_effects = (bs_video_apply_effects_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_apply_effects"));
@@ -915,6 +924,28 @@ void FBeatsyncLoader::SetOutputSettings(void* Handle, int32 Width, int32 Height,
 {
     if (!GApi.video_set_output_settings || !Handle) return;
     GApi.video_set_output_settings(Handle, Width, Height, Fps);
+}
+
+void FBeatsyncLoader::SetUpscaleConfig(void* Handle, bool bEnabled, int32 TileSize, int32 MaxSourceEdge)
+{
+    if (!GApi.video_set_upscale_config || !Handle) return;
+
+    // Model ships next to the executable, like the beat/stem/RIFE models.
+    FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
+    FString ModelPath = FPaths::Combine(ExeDir, TEXT("models"), TEXT("upscale.onnx"));
+    const bool bHaveModel = FPaths::FileExists(ModelPath);
+    if (bEnabled && !bHaveModel)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Upscaling requested but models/upscale.onnx is missing; sources will be used as-is"));
+    }
+
+    FTCHARToUTF8 ModelUtf8(*ModelPath);
+    bs_upscale_config_t CConfig = {};
+    CConfig.enabled = (bEnabled && bHaveModel) ? 1 : 0;
+    CConfig.model_path = bHaveModel ? ModelUtf8.Get() : nullptr;
+    CConfig.tile_size = TileSize;
+    CConfig.max_source_edge = MaxSourceEdge;
+    GApi.video_set_upscale_config(Handle, &CConfig);
 }
 
 void FBeatsyncLoader::SetSpeedConfig(void* Handle, const FSpeedRampConfig& Config)

@@ -626,8 +626,13 @@ void FBeatsyncProcessingTask::DoWork()
 
     if (Params.bIsMultiClip && Params.VideoPaths.Num() > 1)
     {
-        ReportProgress(0.22f, TEXT("Normalizing videos..."));
+        ReportProgress(0.22f, Params.bUpscaleSources ? TEXT("Upscaling and normalizing videos...")
+                                                     : TEXT("Normalizing videos..."));
         UE_LOG(LogTemp, Log, TEXT("TripSitter: Normalizing %d source videos"), Params.VideoPaths.Num());
+
+        // Neural upscaling happens inside normalization, so each source clip is
+        // enlarged once regardless of how often it is cycled into the edit.
+        FBeatsyncLoader::SetUpscaleConfig(Writer, Params.bUpscaleSources);
 
         UE_LOG(LogTemp, Warning, TEXT("TripSitter: DIAG - About to call NormalizeVideos with %d videos"), Params.VideoPaths.Num());
         if (FBeatsyncLoader::NormalizeVideos(Writer, Params.VideoPaths, NormalizedVideos))

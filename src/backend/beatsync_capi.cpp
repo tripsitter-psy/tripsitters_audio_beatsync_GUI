@@ -1393,6 +1393,30 @@ BEATSYNC_API int bs_video_set_effects_config(void* writer, const bs_effects_conf
     }
 }
 
+BEATSYNC_API int bs_video_set_upscale_config(void* writer, const bs_upscale_config_t* config) {
+    TRACE_FUNC();
+    if (!writer) return 1;
+    try {
+        auto* w = static_cast<BeatSync::VideoWriter*>(writer);
+
+        BeatSync::UpscaleConfig cfg;  // disabled by default
+        if (config) {
+            cfg.enabled = config->enabled != 0;
+            if (config->model_path) cfg.modelPath = config->model_path;
+            if (config->tile_size > 0) cfg.tileSize = config->tile_size;
+            if (config->max_source_edge > 0) cfg.maxSourceEdge = config->max_source_edge;
+        }
+        w->setUpscaleConfig(cfg);
+        return 0;
+    } catch (const std::exception& e) {
+        s_lastError = e.what();
+        return 3;
+    } catch (...) {
+        s_lastError = "unknown error in bs_video_set_upscale_config";
+        return 4;
+    }
+}
+
 BEATSYNC_API int bs_video_set_speed_config(void* writer, const bs_speed_config_t* config) {
     if (!writer) return 1;
     try {

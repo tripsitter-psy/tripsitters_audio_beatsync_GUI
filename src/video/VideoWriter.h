@@ -21,6 +21,7 @@ class VideoWriterTestAccess;  // Test access helper
 namespace BeatSync {
 
 class OnnxFrameInterpolator;  // Neural frame interpolation (RIFE), optional
+class OnnxUpscaler;           // Neural super-resolution (ESRGAN family), optional
 
 /**
  * @brief Information about a detected video encoder
@@ -137,6 +138,21 @@ struct SpeedRampConfig {
 
     static constexpr float kMinSpeed = 0.5f;
     static constexpr float kMaxSpeed = 2.0f;
+};
+
+/**
+ * @brief Configuration for neural source upscaling
+ *
+ * Applied during pre-normalization, so low-resolution source clips are enlarged
+ * once before cutting rather than upscaling the whole finished render. The model
+ * runs at its native scale factor and the normalize pass then brings frames to
+ * the configured output resolution.
+ */
+struct UpscaleConfig {
+    bool enabled = false;
+    std::string modelPath;    // ESRGAN-family ONNX (empty = models/upscale.onnx)
+    int tileSize = 512;       // Source pixels per inference tile; lower = less VRAM
+    int maxSourceEdge = 1440; // Skip upscaling when the source is already this large
 };
 
 /**
@@ -355,6 +371,22 @@ public:
     bool normalizeVideos(const std::vector<std::string>& inputVideos,
                          std::vector<std::string>& normalizedPaths);
 
+    /**
+     * @brief Set neural source-upscaling configuration (applied during normalization)
+     */
+    void setUpscaleConfig(const UpscaleConfig& config);
+
+    /** @brief Get current upscaling configuration */
+    const UpscaleConfig& getUpscaleConfig() const { return m_upscale; }
+
+    /**
+     * @brief Upscale a video with the configured ONNX model
+     * @return true on success; false (with getLastError set) if the model is
+     *         unavailable or any stage fails, in which case callers should use
+     *         the original source unchanged.
+     */
+    bool upscaleVideo(const std::string& inputVideo, const std::string& outputVideo);
+
 private:
     // Allow test access to private methods
     friend class ::VideoWriterTestAccess;
@@ -383,6 +415,15 @@ private:
     std::unique_ptr<OnnxFrameInterpolator> m_interpolator;
     bool m_interpLoadAttempted = false;
     std::mutex m_interpMutex;
+
+    // Neural source upscaling (ESRGAN family). Lazily loaded, like the interpolator.
+    UpscaleConfig m_upscale;
+    std::unique_ptr<OnnxUpscaler> m_upscaler;
+    bool m_upscaleLoadAttempted = false;
+    std::mutex m_upscaleMutex;
+
+    /** @brief Lazily create and load the upscaler; false if unavailable. */
+    bool ensureUpscaler();
 
     /**
      * @brief Build FFmpeg filter chain from effects config

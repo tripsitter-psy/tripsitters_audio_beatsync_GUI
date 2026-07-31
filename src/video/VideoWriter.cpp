@@ -1,6 +1,7 @@
 #include "VideoWriter.h"
 #include "TransitionLibrary.h"
 #include "OnnxFrameInterpolator.h"
+#include "OnnxUpscaler.h"
 #include <iostream>
 #include <sstream>
 #include <iomanip>
@@ -1213,7 +1214,31 @@ bool VideoWriter::normalizeVideos(const std::vector<std::string>& inputVideos,
         std::string normalizedPath = tempDir + normalizedName;
         std::cout << "[BeatSync] Output path: " << normalizedPath << "\n";
 
-        if (!normalizeVideo(video, normalizedPath)) {
+        // Optional neural upscale of the source before normalization. Doing it
+        // here means each clip is enlarged once, however many times it is later
+        // cycled into the edit, and the normalize pass below then scales the
+        // result to the output resolution. Any failure (model missing, source
+        // already large enough) is non-fatal: we normalize the original.
+        std::string normalizeSource = video;
+        std::string upscaledPath;
+        if (m_upscale.enabled) {
+            upscaledPath = tempDir + "beatsync_upscaled_" + std::to_string(index - 1) + "_" +
+                           baseName + ".mp4";
+            if (upscaleVideo(video, upscaledPath)) {
+                normalizeSource = upscaledPath;
+            } else {
+                std::cout << "[BeatSync] Upscale skipped for " << video << ": " << m_lastError << "\n";
+                std::remove(upscaledPath.c_str());
+                upscaledPath.clear();
+            }
+        }
+
+        struct UpscaleTempCleanup {
+            const std::string& path;
+            ~UpscaleTempCleanup() { if (!path.empty()) std::remove(path.c_str()); }
+        } upscaleCleanup{upscaledPath};
+
+        if (!normalizeVideo(normalizeSource, normalizedPath)) {
             // A single unreadable/corrupt source (e.g. truncated MP4 with a
             // missing moov atom, or a malformed VLC partial recording) must not
             // abort the entire export. Skip it and keep going with the rest.
@@ -2111,6 +2136,201 @@ void VideoWriter::setInterpolationModelPath(const std::string& path) {
         m_interpolator.reset();
         m_interpLoadAttempted = false;
     }
+}
+
+void VideoWriter::setUpscaleConfig(const UpscaleConfig& config) {
+    std::lock_guard<std::mutex> lock(m_upscaleMutex);
+    m_upscale = config;
+    // Config change invalidates a previously loaded model
+    m_upscaler.reset();
+    m_upscaleLoadAttempted = false;
+}
+
+bool VideoWriter::ensureUpscaler() {
+    std::lock_guard<std::mutex> lock(m_upscaleMutex);
+    if (m_upscaler && m_upscaler->isLoaded()) return true;
+    if (m_upscaleLoadAttempted) return m_upscaler && m_upscaler->isLoaded();
+
+    m_upscaleLoadAttempted = true;
+    if (!OnnxUpscaler::isAvailable()) {
+        m_lastError = "ONNX Runtime not compiled in (no upscaler)";
+        return false;
+    }
+    std::string modelPath = m_upscale.modelPath.empty() ? std::string("models/upscale.onnx")
+                                                        : m_upscale.modelPath;
+    if (!std::filesystem::exists(modelPath)) {
+        m_lastError = "Upscale model not found: " + modelPath;
+        return false;
+    }
+    m_upscaler = std::make_unique<OnnxUpscaler>();
+    m_upscaler->setTileSize(m_upscale.tileSize);
+    if (!m_upscaler->loadModel(modelPath, /*useGPU=*/true)) {
+        m_lastError = "Upscale model load failed: " + m_upscaler->getLastError();
+        m_upscaler.reset();
+        return false;
+    }
+    std::cout << "[Upscale] Model loaded (" << m_upscaler->getScale() << "x): " << modelPath << "\n";
+    return true;
+}
+
+bool VideoWriter::upscaleVideo(const std::string& inputVideo, const std::string& outputVideo) {
+    if (!m_upscale.enabled) {
+        m_lastError = "Upscaling not enabled";
+        return false;
+    }
+
+    // Probe the source: skip work when it is already large enough, and keep the
+    // native frame rate so no frames are dropped or duplicated here.
+    int srcW = 0, srcH = 0;
+    double srcFps = 0.0;
+    {
+        VideoProcessor proc;
+        if (proc.open(inputVideo)) {
+            const auto info = proc.getInfo();
+            srcW = info.width;
+            srcH = info.height;
+            srcFps = info.fps;
+            proc.close();
+        }
+    }
+    if (srcW <= 0 || srcH <= 0) {
+        m_lastError = "Upscale: could not probe source dimensions";
+        return false;
+    }
+    if (std::max(srcW, srcH) >= m_upscale.maxSourceEdge) {
+        m_lastError = "Upscale skipped: source already " + std::to_string(srcW) + "x" +
+                      std::to_string(srcH);
+        return false;
+    }
+    if (srcFps <= 0.0) srcFps = m_outputFps > 0 ? m_outputFps : 30;
+
+    if (!ensureUpscaler()) {
+        return false;  // m_lastError set by ensureUpscaler
+    }
+    const int scale = m_upscaler->getScale();
+
+    std::string tempDir = getTempDir();
+    if (tempDir.empty()) {
+        m_lastError = "Upscale: no temp directory";
+        return false;
+    }
+    std::ostringstream tag;
+    tag << "upscale_" << std::this_thread::get_id() << "_"
+        << std::chrono::steady_clock::now().time_since_epoch().count();
+    const std::string srcRaw = tempDir + tag.str() + "_src.rgb";
+    const std::string outRaw = tempDir + tag.str() + "_out.rgb";
+
+    struct RawCleanup {
+        std::vector<std::string> files;
+        ~RawCleanup() { for (auto& f : files) std::remove(f.c_str()); }
+    } cleanup{{srcRaw, outRaw}};
+
+    const std::string ffmpegPath = getFFmpegPath();
+
+    // Stage 1: decode to raw RGB24 at native size
+    {
+        std::ostringstream cmd;
+        cmd << "\"" << ffmpegPath << "\" -nostdin -i \"" << inputVideo << "\""
+            << " -vf \"format=rgb24\" -f rawvideo -y \"" << srcRaw << "\"";
+        std::string out; int rc;
+#ifdef _WIN32
+        rc = runHiddenCommand(cmd.str(), out, m_cancelFlag);
+#else
+        // Drain the pipe: ffmpeg writes progress continuously and would block
+        // on a full buffer if nobody reads it.
+        FILE* p = popen_compat((cmd.str() + " 2>&1").c_str(), "r");
+        if (!p) {
+            m_lastError = "Upscale: could not start FFmpeg";
+            return false;
+        }
+        char buf[512];
+        while (fgets(buf, sizeof(buf), p)) out += buf;
+        rc = pclose_compat(p);
+#endif
+        if (rc != 0) {
+            appendFfmpegLog("beatsync_ffmpeg_upscale.log", "upscaleVideo::extract", cmd.str(), rc, out, "");
+            size_t lastLine = out.find_last_not_of("\n");
+            if (lastLine != std::string::npos) {
+                size_t start = out.rfind('\n', lastLine);
+                out = out.substr(start == std::string::npos ? 0 : start + 1);
+            }
+            m_lastError = "Upscale: source frame extraction failed: " + out;
+            return false;
+        }
+    }
+
+    // Stage 2: upscale every frame, streaming to avoid holding a whole clip in RAM
+    const size_t inFrameBytes = static_cast<size_t>(srcW) * srcH * 3;
+    size_t frameCount = 0;
+    {
+        std::ifstream in(srcRaw, std::ios::binary);
+        std::ofstream out(outRaw, std::ios::binary);
+        if (!in || !out) {
+            m_lastError = "Upscale: could not open raw frame buffers";
+            return false;
+        }
+        std::vector<uint8_t> frame(inFrameBytes);
+        std::vector<uint8_t> upscaled;
+        while (in.read(reinterpret_cast<char*>(frame.data()), inFrameBytes)) {
+            if (m_cancelFlag && *m_cancelFlag != 0) {
+                m_lastError = "Cancelled by user";
+                return false;
+            }
+            if (!m_upscaler->upscale(frame.data(), srcW, srcH, upscaled)) {
+                m_lastError = "Upscale inference failed: " + m_upscaler->getLastError();
+                return false;
+            }
+            out.write(reinterpret_cast<const char*>(upscaled.data()),
+                      static_cast<std::streamsize>(upscaled.size()));
+            ++frameCount;
+            if (frameCount % 50 == 0) {
+                reportProgress(0.0);  // keeps cancel-aware callers responsive
+            }
+        }
+    }
+    if (frameCount == 0) {
+        m_lastError = "Upscale: no frames decoded";
+        return false;
+    }
+
+    // Stage 3: encode the upscaled sequence, carrying the original audio over
+    {
+        std::ostringstream cmd;
+        cmd << "\"" << ffmpegPath << "\" -nostdin"
+            << " -f rawvideo -pix_fmt rgb24 -s " << (srcW * scale) << "x" << (srcH * scale)
+            << " -r " << srcFps << " -i \"" << outRaw << "\""
+            << " -i \"" << inputVideo << "\""
+            << " -map 0:v -map \"1:a?\" -shortest "
+            << getEncoderArgs("fast")
+            << " -c:a aac -b:a 192k -video_track_timescale 90000 -y \"" << outputVideo << "\"";
+        std::string out; int rc;
+#ifdef _WIN32
+        rc = runHiddenCommand(cmd.str(), out, m_cancelFlag);
+#else
+        FILE* p = popen_compat((cmd.str() + " 2>&1").c_str(), "r");
+        if (!p) {
+            m_lastError = "Upscale: could not start FFmpeg for encode";
+            return false;
+        }
+        char buf[512];
+        while (fgets(buf, sizeof(buf), p)) out += buf;
+        rc = pclose_compat(p);
+#endif
+        if (rc != 0) {
+            appendFfmpegLog("beatsync_ffmpeg_upscale.log", "upscaleVideo::encode", cmd.str(), rc, out, "");
+            size_t lastLine = out.find_last_not_of("\n");
+            if (lastLine != std::string::npos) {
+                size_t start = out.rfind('\n', lastLine);
+                out = out.substr(start == std::string::npos ? 0 : start + 1);
+            }
+            m_lastError = "Upscale: encode failed: " + out;
+            return false;
+        }
+    }
+
+    std::cout << "[Upscale] " << srcW << "x" << srcH << " -> " << (srcW * scale) << "x"
+              << (srcH * scale) << " (" << frameCount << " frames)\n";
+    return true;
 }
 
 bool VideoWriter::ensureInterpolator() {
