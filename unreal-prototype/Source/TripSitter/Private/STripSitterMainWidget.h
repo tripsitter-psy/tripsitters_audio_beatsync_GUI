@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Fonts/SlateFontInfo.h"
 #include "Widgets/SCompoundWidget.h"
+#include "Input/PopupMethodReply.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Styling/SlateBrush.h"
 #include "Brushes/SlateImageBrush.h"
@@ -92,6 +93,17 @@ public:
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
+
+	/**
+	 * Render popups (combo box dropdowns, menus) inside this window instead of
+	 * spawning separate OS-level popup windows. Wayland does not let a client
+	 * position its own top-level windows, so the default CreateNewWindow method
+	 * puts dropdowns in the middle of the screen where they cannot be clicked.
+	 */
+	virtual FPopupMethodReply OnQueryPopupMethod() const override
+	{
+		return FPopupMethodReply::UseMethod(EPopupMethod::UseCurrentWindow);
+	}
 
 private:
 	// Load theme assets (fonts, images)

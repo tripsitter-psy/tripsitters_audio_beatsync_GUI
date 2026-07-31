@@ -52,6 +52,13 @@ cp unreal-prototype/Source/TripSitter/Resources/* $UE/Binaries/Linux/Resources/
   either install them system-wide (ldconfig) or `patchelf --set-rpath` the provider `.so`.
   `-DBEATSYNC_CUDA_LIB_DIRS=...` bakes a DT_RPATH into the CLI and shared library.
 - File dialogs use `IDesktopPlatform`, which forwards to the `SlateFileDialogs` module on Linux
+- **Dropdowns/menus must render in-window on Wayland.** Slate's default popup method
+  spawns a separate OS-level window, but Wayland does not let a client position its own
+  top-level windows, so every `SComboBox` dropdown appears detached in the middle of the
+  screen and cannot be clicked. `STripSitterMainWidget` overrides `OnQueryPopupMethod()`
+  to return `EPopupMethod::UseCurrentWindow`; because that is a scoping override, all
+  descendant popups inherit it. Do not remove it — the symptom looks like a layout bug
+  but is a windowing-protocol limitation.
 
 ### Backend Build (with CUDA + TensorRT GPU Acceleration + AudioFlux)
 
