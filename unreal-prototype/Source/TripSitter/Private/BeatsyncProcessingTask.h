@@ -4,6 +4,7 @@
 #include "Async/AsyncWork.h"
 #include "HAL/ThreadSafeBool.h"
 #include "BeatsyncLoader.h"
+#include "RenderEtaEstimator.h"
 #include <atomic>
 
 // Analysis mode enum (matches STripSitterMainWidget::EAnalysisMode)
@@ -167,6 +168,14 @@ public:
     }
     bool IsCancelled() const { return bCancelRequested; }
 
+    /**
+     * Live progress for the UI to poll (game thread, e.g. once a second): the
+     * work-weighted bar position and a status line with the current stage and
+     * the estimated time remaining. Returns false before the render stages start
+     * (during beat analysis), in which case the last ReportProgress() values stand.
+     */
+    bool GetLiveStatus(float& OutProgress, FString& OutStatus) const;
+
     FORCEINLINE TStatId GetStatId() const
     {
         RETURN_QUICK_DECLARE_CYCLE_STAT(FBeatsyncProcessingTask, STATGROUP_ThreadPoolAsyncTasks);
@@ -188,6 +197,13 @@ private:
     FString TempEffectsPath;
 
     void ReportProgress(float Progress, const FString& Status);
+
+    // Render ETA: planned before the writer stages run, fed by the backend's
+    // stage progress callback, polled by the widget through GetLiveStatus().
+    TSharedPtr<FRenderEtaEstimator, ESPMode::ThreadSafe> Eta;
+    void BuildEtaPlan(const TArray<double>& FilteredBeats, double ClipDuration);
+    static FString ComposeStatus(const TSharedPtr<FRenderEtaEstimator, ESPMode::ThreadSafe>& InEta,
+                                 const FString& BaseStatus, float& InOutProgress);
     bool HasAnyEffectsEnabled() const;
 
     // Helper to signal completion and cleanup - call before every return in DoWork

@@ -227,6 +227,26 @@ public:
     void setProgressCallback(std::function<void(double)> callback);
 
     /**
+     * @brief Stage-aware progress for ETA estimation.
+     *
+     * Called with a stage name and that stage's own completion in [0, 1]:
+     *   "upscale"   neural upscaling of source clips (progress weighted by clip duration)
+     *   "normalize" re-encoding sources to the common format (weighted by clip duration)
+     *   "cut"       extracting beat segments (weighted by estimated cost: copy vs
+     *               re-encode vs interpolated slow-mo) and concatenating them
+     *   "effects"   the effects render pass (ffmpeg out_time / duration)
+     *   "mux"       muxing the audio track (ffmpeg out_time / duration)
+     * The coarse setProgressCallback() keeps its old behaviour.
+     */
+    void setStageProgressCallback(std::function<void(const std::string& stage, double progress)> callback);
+
+    /**
+     * @brief Probe container duration / stream geometry of a video file.
+     * @return true on success; fps is the average frame rate, 0 if unknown.
+     */
+    static bool probeVideo(const std::string& path, double& durationSec, int& width, int& height, double& fps);
+
+    /**
      * @brief Set cancel flag pointer for cooperative cancellation
      * @param flag Pointer to flag (owned by caller). If *flag becomes non-zero, processing aborts.
      */
@@ -393,6 +413,13 @@ private:
 
     std::string m_lastError;
     std::function<void(double)> m_progressCallback;
+    std::function<void(const std::string&, double)> m_stageCallback;
+    // Window inside the current stage that a nested step (one clip's upscale or
+    // normalize pass) maps its local 0..1 progress onto. See beginSubStage().
+    std::string m_subStageName;
+    double m_subStageBase = 0.0;
+    double m_subStageSpan = 1.0;
+    double m_currentClipDuration = 0.0;  // source clip being upscaled/normalized (seconds)
     const int* m_cancelFlag = nullptr;  // External cancel flag (owned by caller)
 
 
@@ -482,6 +509,16 @@ private:
     std::string getFFmpegPath() const;
 
     void reportProgress(double progress);
+public:
+    void reportStage(const std::string& stage, double progress);
+private:
+    void beginSubStage(const std::string& stage, double base, double span);
+    void reportSubStage(double localProgress);
+    // Run an ffmpeg command line, appending "-progress pipe:1 -nostats" so the
+    // encoder's out_time can drive reportSubStage() against expectedDuration
+    // (seconds of output). Returns the exit code (-2 = cancelled).
+    int runFfmpegWithProgress(const std::string& cmdLine, std::string& output, double expectedDuration,
+                              double localBase = 0.0, double localSpan = 1.0);
 
     // GPU encoder detection and selection
     /**

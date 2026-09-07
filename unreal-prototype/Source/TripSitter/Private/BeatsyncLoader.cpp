@@ -22,7 +22,10 @@ using bs_create_video_writer_t = void* (*)();
 using bs_destroy_video_writer_t = void (*)(void*);
 using bs_video_get_last_error_t = const char* (*)(void*);
 using bs_progress_cb = void (*)(double, void*);
+using bs_stage_progress_cb = void (*)(const char*, double, void*);
 using bs_video_set_progress_callback_t = void (*)(void*, bs_progress_cb, void*);
+using bs_video_set_stage_progress_callback_t = void (*)(void*, bs_stage_progress_cb, void*);
+using bs_video_probe_t = int (*)(const char*, double*, int*, int*, double*);
 using bs_video_set_cancel_flag_t = void (*)(void*, const int*);
 using bs_video_is_cancelled_t = int (*)(void*);
 using bs_video_set_output_settings_t = void (*)(void*, int, int, int);
@@ -170,6 +173,8 @@ struct FBeatsyncApi
     bs_destroy_video_writer_t destroy_video_writer = nullptr;
     bs_video_get_last_error_t video_get_last_error = nullptr;
     bs_video_set_progress_callback_t video_set_progress_callback = nullptr;
+    bs_video_set_stage_progress_callback_t video_set_stage_progress_callback = nullptr;
+    bs_video_probe_t video_probe = nullptr;
     bs_video_set_cancel_flag_t video_set_cancel_flag = nullptr;
     bs_video_is_cancelled_t video_is_cancelled = nullptr;
     bs_video_set_output_settings_t video_set_output_settings = nullptr;
@@ -314,6 +319,9 @@ bool FBeatsyncLoader::Initialize()
     GApi.destroy_video_writer = (bs_destroy_video_writer_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_destroy_video_writer"));
     GApi.video_get_last_error = (bs_video_get_last_error_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_get_last_error"));
     GApi.video_set_progress_callback = (bs_video_set_progress_callback_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_progress_callback"));
+    // Optional (newer backends): stage-aware progress for the ETA and file probing.
+    GApi.video_set_stage_progress_callback = (bs_video_set_stage_progress_callback_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_stage_progress_callback"));
+    GApi.video_probe = (bs_video_probe_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_probe"));
     GApi.video_set_cancel_flag = (bs_video_set_cancel_flag_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_cancel_flag"));
     GApi.video_is_cancelled = (bs_video_is_cancelled_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_is_cancelled"));
     GApi.video_set_output_settings = (bs_video_set_output_settings_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_video_set_output_settings"));
@@ -546,6 +554,60 @@ FString FBeatsyncLoader::GetVideoLastError(void* Handle)
     if (!GApi.video_get_last_error || !Handle) return FString();
     const char* Err = GApi.video_get_last_error(Handle);
     return Err ? FString(UTF8_TO_TCHAR(Err)) : FString();
+}
+
+// Stage progress trampoline. Same shape as the coarse progress callback above:
+// the map is keyed by writer handle and the lock is released before invoking.
+static TMap<void*, TUniquePtr<TFunction<void(const FString&, double)>>> GStageCallbacks;
+static FCriticalSection GStageCallbacksLock;
+
+static void StaticStageProgressCallback(const char* Stage, double Progress, void* UserData)
+{
+    TFunction<void(const FString&, double)> LocalCallback;
+    {
+        FScopeLock Lock(&GStageCallbacksLock);
+        if (UserData)
+        {
+            auto* CallbackPtr = GStageCallbacks.Find(UserData);
+            if (CallbackPtr && *CallbackPtr && **CallbackPtr)
+            {
+                LocalCallback = **CallbackPtr;
+            }
+        }
+    }
+    if (LocalCallback)
+    {
+        LocalCallback(FString(UTF8_TO_TCHAR(Stage ? Stage : "")), Progress);
+    }
+}
+
+void FBeatsyncLoader::SetStageProgressCallback(void* Handle, TFunction<void(const FString&, double)> Callback)
+{
+    if (!GApi.video_set_stage_progress_callback || !Handle) return;
+    if (Callback)
+    {
+        {
+            FScopeLock Lock(&GStageCallbacksLock);
+            GStageCallbacks.Add(Handle, MakeUnique<TFunction<void(const FString&, double)>>(MoveTemp(Callback)));
+        }
+        GApi.video_set_stage_progress_callback(Handle, StaticStageProgressCallback, Handle);
+    }
+    else
+    {
+        GApi.video_set_stage_progress_callback(Handle, nullptr, nullptr);
+        FScopeLock Lock(&GStageCallbacksLock);
+        GStageCallbacks.Remove(Handle);
+    }
+}
+
+bool FBeatsyncLoader::ProbeVideo(const FString& Path, double& OutDuration, int32& OutWidth, int32& OutHeight, double& OutFps)
+{
+    OutDuration = 0.0; OutWidth = 0; OutHeight = 0; OutFps = 0.0;
+    if (!GApi.video_probe) return false;
+    double Dur = 0.0, Fps = 0.0; int W = 0, H = 0;
+    if (GApi.video_probe(TCHAR_TO_UTF8(*Path), &Dur, &W, &H, &Fps) != 0) return false;
+    OutDuration = Dur; OutWidth = W; OutHeight = H; OutFps = Fps;
+    return true;
 }
 
 void FBeatsyncLoader::SetProgressCallback(void* Handle, TFunction<void(double)> Callback)

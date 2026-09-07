@@ -195,6 +195,12 @@ public:
      *  AsyncTask(ENamedThreads::GameThread, ...) to avoid Slate threading assertions.
      *  The callback must remain valid for the lifetime of the video processing operation. */
     static void SetProgressCallback(void* Handle, TFunction<void(double)> Callback);
+    // Stage-aware progress ("upscale", "normalize", "cut", "effects", "mux" with the
+    // stage's own 0..1 completion). Called on a backend worker thread. No-op when the
+    // loaded backend predates bs_video_set_stage_progress_callback.
+    static void SetStageProgressCallback(void* Handle, TFunction<void(const FString&, double)> Callback);
+    // Duration/size/fps of a media file via the backend (libavformat). False if unsupported.
+    static bool ProbeVideo(const FString& Path, double& OutDuration, int32& OutWidth, int32& OutHeight, double& OutFps);
 
     /** Set cancel flag for video processing operations.
      *  Pass a pointer to an int that will be checked periodically during processing.

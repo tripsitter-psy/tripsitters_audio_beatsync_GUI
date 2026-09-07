@@ -12,6 +12,7 @@ FBeatsyncProcessingTask::FBeatsyncProcessingTask(const FBeatsyncProcessingParams
     , OnComplete(InCompleteDelegate)
     , SharedCancelFlag(MakeShared<FThreadSafeBool>(false))
 {
+    Eta = MakeShared<FRenderEtaEstimator, ESPMode::ThreadSafe>();
     // Create event for synchronization between DoWork and destructor
     WorkCompletedEvent = FPlatformProcess::GetSynchEventFromPool(true); // ManualReset = true
 }
@@ -44,7 +45,8 @@ FBeatsyncProcessingTask::~FBeatsyncProcessingTask()
     if (Writer)
     {
         // Clear callback first to prevent use-after-free - callback captures SharedCancelFlag
-        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
+        FBeatsyncLoader::SetStageProgressCallback(Writer, nullptr);
+    FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
         FBeatsyncLoader::DestroyVideoWriter(Writer);
         Writer = nullptr;
     }
@@ -61,12 +63,164 @@ void FBeatsyncProcessingTask::ReportProgress(float Progress, const FString& Stat
 {
     if (OnProgress.IsBound())
     {
+        // Once the render stages are planned, the bar and the status line come
+        // from the ETA estimator so they never jump backwards between the fixed
+        // per-step values used here and the live countdown.
+        FString FinalStatus = ComposeStatus(Eta, Status, Progress);
         // Marshal to game thread for UI updates
         auto LocalOnProgress = OnProgress;
-        AsyncTask(ENamedThreads::GameThread, [LocalOnProgress, Progress, Status]() {
-            LocalOnProgress.ExecuteIfBound(Progress, Status);
+        AsyncTask(ENamedThreads::GameThread, [LocalOnProgress, Progress, FinalStatus]() {
+            LocalOnProgress.ExecuteIfBound(Progress, FinalStatus);
         });
     }
+}
+
+FString FBeatsyncProcessingTask::ComposeStatus(const TSharedPtr<FRenderEtaEstimator, ESPMode::ThreadSafe>& InEta,
+                                               const FString& BaseStatus, float& InOutProgress)
+{
+    if (!InEta.IsValid()) return BaseStatus;
+    FRenderEtaEstimator::FStatus S = InEta->GetStatus();
+    if (S.StageLabel.IsEmpty()) return BaseStatus;
+
+    // Beat analysis occupies the first 20% of the bar; the planned render stages
+    // share the remaining 80% in proportion to their estimated duration.
+    InOutProgress = FMath::Max(InOutProgress, 0.2f + 0.8f * static_cast<float>(S.OverallProgress));
+
+    FString Line = S.StageLabel;
+    if (S.StageProgress > 0.0)
+    {
+        Line += FString::Printf(TEXT("  %d%%"), FMath::Clamp(FMath::FloorToInt(S.StageProgress * 100.0), 0, 100));
+    }
+    if (!S.EtaText.IsEmpty())
+    {
+        Line += TEXT("  \u00B7  ") + S.EtaText;
+        if (!S.bMeasured) Line += TEXT(" (estimating)");
+    }
+    return Line;
+}
+
+bool FBeatsyncProcessingTask::GetLiveStatus(float& OutProgress, FString& OutStatus) const
+{
+    if (!Eta.IsValid()) return false;
+    FRenderEtaEstimator::FStatus S = Eta->GetStatus();
+    if (S.StageLabel.IsEmpty()) return false;
+    OutProgress = 0.0f;
+    OutStatus = ComposeStatus(Eta, FString(), OutProgress);
+    return true;
+}
+
+void FBeatsyncProcessingTask::BuildEtaPlan(const TArray<double>& FilteredBeats, double ClipDuration)
+{
+    if (!Eta.IsValid()) return;
+
+    int32 OutW = Params.OutputWidth, OutH = Params.OutputHeight;
+    if (Params.bVerticalOutput && OutW > OutH) Swap(OutW, OutH);
+    const double OutMP = FMath::Max(0.1, (double)OutW * OutH / 1.0e6);
+
+    // Output length: last cut plus its slot (intro gaps are filled with footage).
+    double OutputSeconds = 0.0;
+    if (FilteredBeats.Num() > 0)
+    {
+        OutputSeconds = FilteredBeats.Last() + FMath::Max(ClipDuration, 0.1);
+    }
+    if (Params.AudioEnd > Params.AudioStart && Params.AudioEnd > 0.0)
+    {
+        OutputSeconds = FMath::Min(OutputSeconds, Params.AudioEnd - Params.AudioStart + FMath::Max(ClipDuration, 0.1));
+    }
+    OutputSeconds = FMath::Max(OutputSeconds, 1.0);
+
+    TArray<FRenderEtaStage> Plan;
+
+    // Multi-clip sources are re-encoded to the common format (and optionally
+    // upscaled first). Both scale with the source footage length.
+    const bool bNormalizes = Params.bIsMultiClip && Params.VideoPaths.Num() > 1;
+    if (bNormalizes)
+    {
+        double SourceSeconds = 0.0;
+        double SourceMPFrames = 0.0;
+        for (const FString& Path : Params.VideoPaths)
+        {
+            double Dur = 0.0, Fps = 0.0; int32 W = 0, H = 0;
+            if (!FBeatsyncLoader::ProbeVideo(Path, Dur, W, H, Fps) || Dur <= 0.0)
+            {
+                Dur = 30.0; W = 1920; H = 1080; Fps = 30.0;  // unknown: assume a typical clip
+            }
+            if (Fps <= 0.0) Fps = 30.0;
+            if (W <= 0 || H <= 0) { W = 1920; H = 1080; }
+            SourceSeconds += Dur;
+            SourceMPFrames += Dur * Fps * ((double)W * H / 1.0e6);
+        }
+        if (!Params.UpscaleModel.IsEmpty())
+        {
+            FRenderEtaStage Up;
+            Up.Key = TEXT("upscale");
+            Up.RateKey = Params.UpscaleModel.Contains(TEXT("2x")) ? TEXT("upscale_2x") : TEXT("upscale_4x");
+            Up.Label = TEXT("Upscaling clips (AI)");
+            Up.Work = SourceMPFrames;
+            Plan.Add(Up);
+        }
+        FRenderEtaStage Norm;
+        Norm.Key = TEXT("normalize");
+        Norm.Label = TEXT("Normalizing clips");
+        // Upscaled sources are encoded at the larger size, so the re-encode is
+        // driven by the output resolution either way.
+        Norm.Work = SourceSeconds * OutMP;
+        Plan.Add(Norm);
+    }
+
+    // Cut stage: mirrors the backend's cost model (1 unit per stream-copied
+    // clip; retimed clips re-encode their slot; optical-flow/RIFE slow-mo costs
+    // far more per second than a plain re-encode).
+    {
+        const int32 Beats = FilteredBeats.Num();
+        double AvgSlot = ClipDuration;
+        if (Beats > 1)
+        {
+            AvgSlot = (FilteredBeats.Last() - FilteredBeats[0]) / (Beats - 1);
+        }
+        AvgSlot = FMath::Clamp(AvgSlot, 0.05, 10.0);
+
+        double AffectedFraction = 0.0;
+        int32 Smoothing = 0;
+        if (Params.SpeedConfig.bEnabled)
+        {
+            AffectedFraction = FMath::Clamp((double)Params.SpeedConfig.AffectedFraction, 0.0, 1.0);
+            Smoothing = Params.SpeedConfig.Smoothing;
+        }
+        else if (Params.bSpeedRamps)
+        {
+            // Energy-band ramps: roughly the calm third of the track plays in slow-mo.
+            AffectedFraction = 0.35;
+            Smoothing = (Params.RampInterpMode == TEXT("rife")) ? 2 : (Params.RampInterpMode == TEXT("mci")) ? 1 : 0;
+        }
+        double PerSecond = 4.0;
+        if (Smoothing == 1) PerSecond = 20.0;
+        if (Smoothing == 2) PerSecond = 40.0;
+        const double Affected = Beats * AffectedFraction;
+        FRenderEtaStage Cut;
+        Cut.Key = TEXT("cut");
+        Cut.Label = TEXT("Cutting to the beat");
+        Cut.Work = (Beats - Affected) * 1.0 + Affected * (1.0 + AvgSlot * PerSecond);
+        Plan.Add(Cut);
+    }
+
+    if (HasAnyEffectsEnabled())
+    {
+        FRenderEtaStage Fx;
+        Fx.Key = TEXT("effects");
+        Fx.Label = TEXT("Applying effects");
+        Fx.Work = OutputSeconds * OutMP;
+        Plan.Add(Fx);
+    }
+
+    FRenderEtaStage Mux;
+    Mux.Key = TEXT("mux");
+    Mux.Label = TEXT("Adding audio");
+    Mux.Work = OutputSeconds;
+    Plan.Add(Mux);
+
+    Eta->SetPlan(Plan);
+    UE_LOG(LogTemp, Log, TEXT("TripSitter: ETA plan: %d stages, output ~%.0f s at %dx%d"), Plan.Num(), OutputSeconds, OutW, OutH);
 }
 
 bool FBeatsyncProcessingTask::HasAnyEffectsEnabled() const
@@ -573,11 +727,13 @@ void FBeatsyncProcessingTask::DoWork()
     // CRITICAL: This callback is called from a worker thread in the backend DLL,
     // but Slate UI can ONLY be updated from the GameThread. Must marshal!
     auto LocalOnProgress = OnProgress;
-    FBeatsyncLoader::SetProgressCallback(Writer, [LocalOnProgress, SharedCancelFlag = this->SharedCancelFlag](double Prog) {
+    FBeatsyncLoader::SetProgressCallback(Writer, [LocalOnProgress, SharedCancelFlag = this->SharedCancelFlag,
+                                                  LocalEta = this->Eta](double Prog) {
         if (!(*SharedCancelFlag))
         {
             float Progress = 0.2f + 0.5f * static_cast<float>(Prog);
-            FString Status = TEXT("Processing video...");
+            // With a planned ETA the estimator owns the bar position and status line.
+            FString Status = ComposeStatus(LocalEta, TEXT("Processing video..."), Progress);
             // Marshal to game thread for UI updates - Slate cannot be accessed from worker threads
             AsyncTask(ENamedThreads::GameThread, [LocalOnProgress, Progress, Status]() {
                 LocalOnProgress.ExecuteIfBound(Progress, Status);
@@ -591,7 +747,8 @@ void FBeatsyncProcessingTask::DoWork()
     {
         Result.bSuccess = false;
         Result.ErrorMessage = TEXT("No beats found in selection range");
-        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
+        FBeatsyncLoader::SetStageProgressCallback(Writer, nullptr);
+    FBeatsyncLoader::SetProgressCallback(Writer, nullptr);
         FBeatsyncLoader::DestroyVideoWriter(Writer);
         Writer = nullptr;
         auto LocalOnComplete = OnComplete;
@@ -605,6 +762,19 @@ void FBeatsyncProcessingTask::DoWork()
     ReportProgress(0.25f, TEXT("Cutting video at beats..."));
 
     double ClipDuration = FilteredBeats.Num() > 1 ? (FilteredBeats[1] - FilteredBeats[0]) : 1.0;
+
+    // Plan the render stages for the ETA and feed the estimator from the
+    // backend's stage progress (called on a backend worker thread; the
+    // estimator is thread-safe and the widget polls it on the game thread).
+    Eta->LoadCalibration();
+    BuildEtaPlan(FilteredBeats, ClipDuration);
+    Eta->Start();
+    {
+        TSharedPtr<FRenderEtaEstimator, ESPMode::ThreadSafe> LocalEta = Eta;
+        FBeatsyncLoader::SetStageProgressCallback(Writer, [LocalEta](const FString& Stage, double Prog) {
+            LocalEta->OnStageProgress(Stage, Prog);
+        });
+    }
 
     // Create temp files in system temp directory (not next to output)
     FString TempDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir());
@@ -788,7 +958,8 @@ void FBeatsyncProcessingTask::DoWork()
         FString ErrorMsg = FBeatsyncLoader::GetVideoLastError(Writer);
         Result.bSuccess = false;
         Result.ErrorMessage = ErrorMsg.IsEmpty() ? TEXT("Failed to cut video") : ErrorMsg;
-        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);  // Clear callback before destroy to prevent UAF
+        FBeatsyncLoader::SetStageProgressCallback(Writer, nullptr);
+    FBeatsyncLoader::SetProgressCallback(Writer, nullptr);  // Clear callback before destroy to prevent UAF
         FBeatsyncLoader::DestroyVideoWriter(Writer);
         Writer = nullptr;  // Prevent double-free in destructor
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
@@ -803,7 +974,8 @@ void FBeatsyncProcessingTask::DoWork()
 
     if (IsCancelled())
     {
-        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);  // Clear callback before destroy to prevent UAF
+        FBeatsyncLoader::SetStageProgressCallback(Writer, nullptr);
+    FBeatsyncLoader::SetProgressCallback(Writer, nullptr);  // Clear callback before destroy to prevent UAF
         FBeatsyncLoader::DestroyVideoWriter(Writer);
         Writer = nullptr;  // Prevent double-free in destructor
         IFileManager::Get().Delete(*TempVideoPath, false, true, true);
@@ -843,7 +1015,8 @@ void FBeatsyncProcessingTask::DoWork()
 
     if (IsCancelled())
     {
-        FBeatsyncLoader::SetProgressCallback(Writer, nullptr);  // Clear callback before destroy to prevent UAF
+        FBeatsyncLoader::SetStageProgressCallback(Writer, nullptr);
+    FBeatsyncLoader::SetProgressCallback(Writer, nullptr);  // Clear callback before destroy to prevent UAF
         FBeatsyncLoader::DestroyVideoWriter(Writer);
         Writer = nullptr;  // Prevent double-free in destructor
         IFileManager::Get().Delete(*CurrentVideoPath, false, true, true);
@@ -892,6 +1065,7 @@ void FBeatsyncProcessingTask::DoWork()
         FBeatsyncLoader::CleanupNormalizedVideos(NormalizedVideos);
     }
 
+    FBeatsyncLoader::SetStageProgressCallback(Writer, nullptr);
     FBeatsyncLoader::SetProgressCallback(Writer, nullptr);  // Clear callback before destroy to prevent UAF
     FBeatsyncLoader::DestroyVideoWriter(Writer);
     Writer = nullptr;  // Prevent double-free in destructor
@@ -903,6 +1077,7 @@ void FBeatsyncProcessingTask::DoWork()
         Result.ErrorMessage = TEXT("Processing failed");
     }
 
+    Eta->Finish(bSuccess);
     ReportProgress(1.0f, bSuccess ? TEXT("Complete!") : TEXT("Failed"));
 
     auto LocalOnComplete = OnComplete;

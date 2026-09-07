@@ -43,7 +43,8 @@ extern "C" {
 // Run a command hidden (no console window) and capture output.
 // Returns exit code; output is appended to 'output'.
 // If cancelFlag is provided and becomes non-zero, the process is terminated.
-static int runHiddenCommand(const std::string& cmdLine, std::string& output, const int* cancelFlag = nullptr) {
+static int runHiddenCommand(const std::string& cmdLine, std::string& output, const int* cancelFlag = nullptr,
+                            const std::function<void(const std::string&)>& onLine = nullptr) {
     if (cmdLine.empty()) {
         output = "Error: empty command line";
         return -1;
@@ -109,9 +110,18 @@ static int runHiddenCommand(const std::string& cmdLine, std::string& output, con
     // Read output in chunks with non-blocking check for cancellation
     char buf[4096];
     DWORD bytesRead;
+    std::string lineBuf;
     while (ReadFile(hReadPipe, buf, sizeof(buf) - 1, &bytesRead, NULL) && bytesRead > 0) {
         buf[bytesRead] = '\0';
         output += buf;
+        if (onLine) {
+            lineBuf.append(buf, bytesRead);
+            size_t nl;
+            while ((nl = lineBuf.find_first_of("\r\n")) != std::string::npos) {
+                if (nl > 0) onLine(lineBuf.substr(0, nl));
+                lineBuf.erase(0, nl + 1);
+            }
+        }
 
         // Check for cancellation during output reading
         if (cancelFlag && *cancelFlag != 0) {
@@ -172,6 +182,80 @@ static int runHiddenCommand(const std::string& cmdLine, std::string& output, con
 #else
 #define popen_compat popen
 #define pclose_compat pclose
+#include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <poll.h>
+
+// POSIX counterpart of the Windows runner: runs the command through /bin/sh,
+// captures stdout+stderr, honours the cancel flag by killing the child, and
+// hands every complete output line to onLine (used to read ffmpeg -progress).
+static int runHiddenCommand(const std::string& cmdLine, std::string& output, const int* cancelFlag = nullptr,
+                            const std::function<void(const std::string&)>& onLine = nullptr) {
+    if (cmdLine.empty()) {
+        output = "Error: empty command line";
+        return -1;
+    }
+    int fds[2];
+    if (pipe(fds) != 0) {
+        output = "Error: pipe() failed";
+        return -1;
+    }
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(fds[0]); close(fds[1]);
+        output = "Error: fork() failed";
+        return -1;
+    }
+    if (pid == 0) {
+        dup2(fds[1], STDOUT_FILENO);
+        dup2(fds[1], STDERR_FILENO);
+        close(fds[0]); close(fds[1]);
+        int devnull = open("/dev/null", O_RDONLY);
+        if (devnull >= 0) { dup2(devnull, STDIN_FILENO); close(devnull); }
+        execl("/bin/sh", "sh", "-c", cmdLine.c_str(), (char*)nullptr);
+        _exit(127);
+    }
+    close(fds[1]);
+
+    std::string lineBuf;
+    char buf[4096];
+    bool cancelled = false;
+    for (;;) {
+        if (cancelFlag && *cancelFlag != 0) {
+            kill(pid, SIGTERM);
+            cancelled = true;
+            break;
+        }
+        struct pollfd pfd{fds[0], POLLIN, 0};
+        int pr = poll(&pfd, 1, 100);
+        if (pr == 0) continue;                 // timeout: re-check cancel flag
+        if (pr < 0) { if (errno == EINTR) continue; break; }
+        ssize_t n = read(fds[0], buf, sizeof(buf));
+        if (n <= 0) break;                     // EOF (child closed its end) or error
+        output.append(buf, n);
+        if (onLine) {
+            lineBuf.append(buf, n);
+            size_t nl;
+            while ((nl = lineBuf.find_first_of("\r\n")) != std::string::npos) {
+                if (nl > 0) onLine(lineBuf.substr(0, nl));
+                lineBuf.erase(0, nl + 1);
+            }
+        }
+    }
+    close(fds[0]);
+
+    int status = 0;
+    waitpid(pid, &status, 0);
+    if (cancelled) {
+        output += "\nCancelled by user";
+        return -2;
+    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return -1;
+}
 #endif
 
 extern "C" {
@@ -1095,28 +1179,19 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
         fflush(diagLog);
     }
 
-#ifdef _WIN32
-    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput, m_cancelFlag);
+    {
+        double clipDur = m_currentClipDuration;
+        if (clipDur <= 0.0) {
+            double d = 0.0, fps = 0.0; int w = 0, h = 0;
+            if (probeVideo(inputVideo, d, w, h, fps)) clipDur = d;
+        }
+        exitCode = runFfmpegWithProgress(cmd.str(), ffmpegOutput, clipDur);
+    }
     if (exitCode == -2) {
         m_lastError = "Cancelled by user";
-        if (diagLog) { fprintf(diagLog, "  CANCELLED by user\n"); fclose(diagLog); }
+        if (diagLog) { fprintf(diagLog, "  CANCELLED by user\n"); }
         return false;
     }
-#else
-    std::string fullCmd = cmd.str() + " 2>&1";
-
-    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
-    if (!pipe) {
-        m_lastError = "Failed to execute FFmpeg for video normalization";
-        if (diagLog) { fprintf(diagLog, "  ERROR: popen failed\n"); }
-        return false;
-    }
-    char buffer[256];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        ffmpegOutput += buffer;
-    }
-    exitCode = pclose_compat(pipe);
-#endif
 
     if (diagLog) {
         fprintf(diagLog, "  exitCode: %d\n", exitCode);
@@ -1183,8 +1258,30 @@ bool VideoWriter::normalizeVideos(const std::vector<std::string>& inputVideos,
     int index = 0;
     int skippedCount = 0;
 
+    // Per-clip durations weight the stage progress so a long clip does not make
+    // the ETA jump. Unknown durations fall back to equal weights.
+    std::vector<double> clipDurations(inputVideos.size(), 0.0);
+    std::vector<double> clipWeights(inputVideos.size(), 1.0);
+    {
+        double total = 0.0;
+        for (size_t i = 0; i < inputVideos.size(); ++i) {
+            double d = 0.0, fps = 0.0; int w = 0, h = 0;
+            if (probeVideo(inputVideos[i], d, w, h, fps) && d > 0.0) {
+                clipDurations[i] = d;
+                clipWeights[i] = d;
+            }
+            total += clipWeights[i];
+        }
+        if (total > 0.0) for (auto& cw : clipWeights) cw /= total;
+    }
+    double stageDone = 0.0;   // cumulative weight of finished clips
+    if (m_upscale.enabled) reportStage("upscale", 0.0);
+    reportStage("normalize", 0.0);
+
     for (const auto& video : inputVideos) {
         std::cout << "[BeatSync] Processing video " << index << ": " << video << "\n";
+        const double clipWeight = clipWeights[static_cast<size_t>(index)];
+        m_currentClipDuration = clipDurations[static_cast<size_t>(index)];
 
         // Generate a unique normalized filename in temp directory
         // Use simple string manipulation instead of std::filesystem to avoid potential issues
@@ -1224,6 +1321,7 @@ bool VideoWriter::normalizeVideos(const std::vector<std::string>& inputVideos,
         if (m_upscale.enabled) {
             upscaledPath = tempDir + "beatsync_upscaled_" + std::to_string(index - 1) + "_" +
                            baseName + ".mp4";
+            beginSubStage("upscale", stageDone, clipWeight);
             if (upscaleVideo(video, upscaledPath)) {
                 normalizeSource = upscaledPath;
             } else {
@@ -1238,6 +1336,7 @@ bool VideoWriter::normalizeVideos(const std::vector<std::string>& inputVideos,
             ~UpscaleTempCleanup() { if (!path.empty()) std::remove(path.c_str()); }
         } upscaleCleanup{upscaledPath};
 
+        beginSubStage("normalize", stageDone, clipWeight);
         if (!normalizeVideo(normalizeSource, normalizedPath)) {
             // A single unreadable/corrupt source (e.g. truncated MP4 with a
             // missing moov atom, or a malformed VLC partial recording) must not
@@ -1252,16 +1351,24 @@ bool VideoWriter::normalizeVideos(const std::vector<std::string>& inputVideos,
             if (m_progressCallback) {
                 reportProgress(static_cast<double>(index) / inputVideos.size() * 0.1);
             }
+            stageDone += clipWeight;
+            reportStage("normalize", stageDone);
             continue;
         }
 
         normalizedPaths.push_back(normalizedPath);
+        stageDone += clipWeight;
+        if (m_upscale.enabled) reportStage("upscale", stageDone);
+        reportStage("normalize", stageDone);
 
         // Report progress
         if (m_progressCallback) {
             reportProgress(static_cast<double>(index) / inputVideos.size() * 0.1);  // 10% for normalization
         }
     }
+    m_subStageName.clear();
+    if (m_upscale.enabled) reportStage("upscale", 1.0);
+    reportStage("normalize", 1.0);
 
     if (skippedCount > 0) {
         std::cout << "[BeatSync] normalizeVideos skipped " << skippedCount
@@ -1709,21 +1816,14 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
     // Execute FFmpeg
     std::string ffmpegOutput;
     int exitCode;
-#ifdef _WIN32
-    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput);
-#else
-    std::string fullCmd = cmd.str() + " 2>&1";
-    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
-    if (!pipe) {
-        m_lastError = "Failed to execute FFmpeg for audio muxing";
-        return false;
+    {
+        double vidDur = 0.0, fps = 0.0; int w = 0, h = 0;
+        probeVideo(inputVideo, vidDur, w, h, fps);
+        beginSubStage("mux", 0.0, 1.0);
+        exitCode = runFfmpegWithProgress(cmd.str(), ffmpegOutput, vidDur);
+        m_subStageName.clear();
+        if (exitCode == 0) reportStage("mux", 1.0);
     }
-    char buffer[256];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        ffmpegOutput += buffer;
-    }
-    exitCode = pclose_compat(pipe);
-#endif
 
     // Persist muxing output for troubleshooting
     {
@@ -1752,6 +1852,95 @@ void VideoWriter::reportProgress(double progress) {
     if (m_progressCallback) {
         m_progressCallback(progress);
     }
+}
+
+void VideoWriter::setStageProgressCallback(std::function<void(const std::string&, double)> callback) {
+    m_stageCallback = std::move(callback);
+}
+
+void VideoWriter::reportStage(const std::string& stage, double progress) {
+    if (m_stageCallback) {
+        m_stageCallback(stage, std::min(1.0, std::max(0.0, progress)));
+    }
+}
+
+void VideoWriter::beginSubStage(const std::string& stage, double base, double span) {
+    m_subStageName = stage;
+    m_subStageBase = base;
+    m_subStageSpan = span;
+    reportStage(stage, base);
+}
+
+void VideoWriter::reportSubStage(double localProgress) {
+    if (!m_subStageName.empty()) {
+        reportStage(m_subStageName, m_subStageBase + m_subStageSpan * std::min(1.0, std::max(0.0, localProgress)));
+    }
+}
+
+int VideoWriter::runFfmpegWithProgress(const std::string& cmdLine, std::string& output, double expectedDuration,
+                                       double localBase, double localSpan) {
+    // Insert the progress options right after the ffmpeg executable (the first
+    // quoted token) so they apply globally and do not disturb per-input options.
+    std::string cmd = cmdLine;
+    size_t insertAt = std::string::npos;
+    if (!cmd.empty() && cmd[0] == '"') {
+        size_t closeQuote = cmd.find('"', 1);
+        if (closeQuote != std::string::npos) insertAt = closeQuote + 1;
+    } else {
+        insertAt = cmd.find(' ');
+    }
+    if (insertAt != std::string::npos) {
+        cmd.insert(insertAt, " -progress pipe:1 -nostats");
+    }
+    double lastReported = -1.0;
+    auto onLine = [&](const std::string& line) {
+        // ffmpeg -progress emits "out_time_us=<microseconds>" (older builds: out_time_ms)
+        const char* key = nullptr;
+        if (line.compare(0, 12, "out_time_us=") == 0) key = line.c_str() + 12;
+        else if (line.compare(0, 12, "out_time_ms=") == 0) key = line.c_str() + 12;
+        if (!key || expectedDuration <= 0.0) return;
+        double us = std::atof(key);
+        if (us < 0.0) return;
+        double p = std::min(1.0, (us / 1e6) / expectedDuration);
+        if (p - lastReported >= 0.005) {
+            lastReported = p;
+            reportSubStage(localBase + localSpan * p);
+        }
+    };
+    return runHiddenCommand(cmd, output, m_cancelFlag, onLine);
+}
+
+bool VideoWriter::probeVideo(const std::string& path, double& durationSec, int& width, int& height, double& fps) {
+    durationSec = 0.0; width = 0; height = 0; fps = 0.0;
+    AVFormatContext* ctx = nullptr;
+    if (avformat_open_input(&ctx, path.c_str(), nullptr, nullptr) != 0 || !ctx) {
+        return false;
+    }
+    if (avformat_find_stream_info(ctx, nullptr) < 0) {
+        avformat_close_input(&ctx);
+        return false;
+    }
+    if (ctx->duration > 0) {
+        durationSec = static_cast<double>(ctx->duration) / AV_TIME_BASE;
+    }
+    for (unsigned i = 0; i < ctx->nb_streams; ++i) {
+        AVStream* st = ctx->streams[i];
+        if (st->codecpar && st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            width = st->codecpar->width;
+            height = st->codecpar->height;
+            if (st->avg_frame_rate.den > 0 && st->avg_frame_rate.num > 0) {
+                fps = av_q2d(st->avg_frame_rate);
+            } else if (st->r_frame_rate.den > 0 && st->r_frame_rate.num > 0) {
+                fps = av_q2d(st->r_frame_rate);
+            }
+            if (durationSec <= 0.0 && st->duration > 0) {
+                durationSec = st->duration * av_q2d(st->time_base);
+            }
+            break;
+        }
+    }
+    avformat_close_input(&ctx);
+    return durationSec > 0.0 || width > 0;
 }
 
 // ==================== GPU Encoder Detection ====================
@@ -2232,21 +2421,13 @@ bool VideoWriter::upscaleVideo(const std::string& inputVideo, const std::string&
         std::ostringstream cmd;
         cmd << "\"" << ffmpegPath << "\" -nostdin -i \"" << inputVideo << "\""
             << " -vf \"format=rgb24\" -f rawvideo -y \"" << srcRaw << "\"";
-        std::string out; int rc;
-#ifdef _WIN32
-        rc = runHiddenCommand(cmd.str(), out, m_cancelFlag);
-#else
-        // Drain the pipe: ffmpeg writes progress continuously and would block
-        // on a full buffer if nobody reads it.
-        FILE* p = popen_compat((cmd.str() + " 2>&1").c_str(), "r");
-        if (!p) {
-            m_lastError = "Upscale: could not start FFmpeg";
+        std::string out;
+        // Decoding is ~5% of the stage, inference ~85%, encoding ~10%.
+        int rc = runFfmpegWithProgress(cmd.str(), out, m_currentClipDuration, 0.0, 0.05);
+        if (rc == -2) {
+            m_lastError = "Cancelled by user";
             return false;
         }
-        char buf[512];
-        while (fgets(buf, sizeof(buf), p)) out += buf;
-        rc = pclose_compat(p);
-#endif
         if (rc != 0) {
             appendFfmpegLog("beatsync_ffmpeg_upscale.log", "upscaleVideo::extract", cmd.str(), rc, out, "");
             size_t lastLine = out.find_last_not_of("\n");
@@ -2262,6 +2443,12 @@ bool VideoWriter::upscaleVideo(const std::string& inputVideo, const std::string&
     // Stage 2: upscale every frame, streaming to avoid holding a whole clip in RAM
     const size_t inFrameBytes = static_cast<size_t>(srcW) * srcH * 3;
     size_t frameCount = 0;
+    size_t totalFrames = 0;
+    {
+        std::error_code ec;
+        auto rawSize = std::filesystem::file_size(srcRaw, ec);
+        if (!ec && inFrameBytes > 0) totalFrames = static_cast<size_t>(rawSize / inFrameBytes);
+    }
     {
         std::ifstream in(srcRaw, std::ios::binary);
         std::ofstream out(outRaw, std::ios::binary);
@@ -2283,8 +2470,13 @@ bool VideoWriter::upscaleVideo(const std::string& inputVideo, const std::string&
             out.write(reinterpret_cast<const char*>(upscaled.data()),
                       static_cast<std::streamsize>(upscaled.size()));
             ++frameCount;
-            if (frameCount % 50 == 0) {
-                reportProgress(0.0);  // keeps cancel-aware callers responsive
+            if (frameCount % 10 == 0 || frameCount == totalFrames) {
+                if (totalFrames > 0) {
+                    reportSubStage(0.05 + 0.85 * (static_cast<double>(frameCount) / totalFrames));
+                }
+                if (frameCount % 50 == 0) {
+                    reportProgress(0.0);  // keeps cancel-aware callers responsive
+                }
             }
         }
     }
@@ -2303,19 +2495,13 @@ bool VideoWriter::upscaleVideo(const std::string& inputVideo, const std::string&
             << " -map 0:v -map \"1:a?\" -shortest "
             << getEncoderArgs("fast")
             << " -c:a aac -b:a 192k -video_track_timescale 90000 -y \"" << outputVideo << "\"";
-        std::string out; int rc;
-#ifdef _WIN32
-        rc = runHiddenCommand(cmd.str(), out, m_cancelFlag);
-#else
-        FILE* p = popen_compat((cmd.str() + " 2>&1").c_str(), "r");
-        if (!p) {
-            m_lastError = "Upscale: could not start FFmpeg for encode";
+        std::string out;
+        double encDur = (srcFps > 0.0) ? frameCount / srcFps : m_currentClipDuration;
+        int rc = runFfmpegWithProgress(cmd.str(), out, encDur, 0.9, 0.1);
+        if (rc == -2) {
+            m_lastError = "Cancelled by user";
             return false;
         }
-        char buf[512];
-        while (fgets(buf, sizeof(buf), p)) out += buf;
-        rc = pclose_compat(p);
-#endif
         if (rc != 0) {
             appendFfmpegLog("beatsync_ffmpeg_upscale.log", "upscaleVideo::encode", cmd.str(), rc, out, "");
             size_t lastLine = out.find_last_not_of("\n");
@@ -3030,25 +3216,18 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
 
     std::string ffmpegOutput;
     int exitCode;
-#ifdef _WIN32
-    exitCode = runHiddenCommand(cmd.str(), ffmpegOutput, m_cancelFlag);
+    {
+        double vidDur = 0.0, fps = 0.0; int w = 0, h = 0;
+        probeVideo(inputVideo, vidDur, w, h, fps);
+        beginSubStage("effects", 0.0, 1.0);
+        exitCode = runFfmpegWithProgress(cmd.str(), ffmpegOutput, vidDur);
+        m_subStageName.clear();
+        if (exitCode == 0) reportStage("effects", 1.0);
+    }
     if (exitCode == -2) {
         m_lastError = "Cancelled by user";
         return false;
     }
-#else
-    std::string fullCmd = cmd.str() + " 2>&1";
-    FILE* pipe = popen_compat(fullCmd.c_str(), "r");
-    if (!pipe) {
-        m_lastError = "Failed to execute FFmpeg for effects";
-        return false;
-    }
-    char buffer[256];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        ffmpegOutput += buffer;
-    }
-    exitCode = pclose_compat(pipe);
-#endif
 
     // Clean up temp files
     if (useFilterScript && !filterScriptPath.empty()) {

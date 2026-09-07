@@ -24,6 +24,9 @@ extern "C" {
 #endif
 
 typedef void (*bs_progress_cb)(double progress, void* user_data);
+// Stage-aware progress: stage is one of "upscale", "normalize", "cut", "effects",
+// "mux"; progress is that stage's own completion in [0, 1]. Meant for ETA display.
+typedef void (*bs_stage_progress_cb)(const char* stage, double progress, void* user_data);
 
 // Library version constant (set at build time via CMake -DBEATSYNC_VERSION=...)
 BEATSYNC_API extern const char* const BS_VERSION;
@@ -58,6 +61,9 @@ BEATSYNC_API void bs_destroy_video_writer(void* writer);
 BEATSYNC_API const char* bs_video_get_last_error(void* writer); // returned string is owned by library (valid until next call)
 BEATSYNC_API const char* bs_resolve_ffmpeg_path(); // returned string is owned by library
 BEATSYNC_API void bs_video_set_progress_callback(void* writer, bs_progress_cb cb, void* user_data);
+BEATSYNC_API void bs_video_set_stage_progress_callback(void* writer, bs_stage_progress_cb cb, void* user_data);
+// Container duration (s), video stream size and average fps of a file. Returns 0 on success.
+BEATSYNC_API int bs_video_probe(const char* path, double* out_duration, int* out_width, int* out_height, double* out_fps);
 // Set cancel flag for video processing (pass pointer to int, non-zero value = cancel)
 // The writer checks this flag periodically during long operations
 BEATSYNC_API void bs_video_set_cancel_flag(void* writer, const int* cancel_flag);

@@ -11,6 +11,7 @@
 #include "Brushes/SlateImageBrush.h"
 #include "Brushes/SlateDynamicImageBrush.h"
 #include "Async/AsyncWork.h"
+#include "Containers/Ticker.h"
 #include "BeatsyncProcessingTask.h"
 #include "SWaveformViewer.h"
 
@@ -151,6 +152,9 @@ private:
 
 	// Async processing task
 	TUniquePtr<FAsyncTask<FBeatsyncProcessingTask>> ProcessingTask;
+	// Once-a-second refresh of the progress bar / ETA while a render runs, so the
+	// countdown keeps moving between backend progress events.
+	FTSTicker::FDelegateHandle EtaTickerHandle;
 
 	// Configuration
 	EBeatRate BeatRate = EBeatRate::Every;
@@ -299,5 +303,6 @@ private:
 
 	// Processing callbacks
 	void OnProcessingProgress(float InProgress, const FString& Status);
+	bool TickRenderEta(float DeltaTime);
 	void OnProcessingComplete(const FBeatsyncProcessingResult& Result);
 };

@@ -180,6 +180,12 @@ BeatSyncEditor/
 - `int bs_video_add_audio_track(void* writer, const char* inputVideo, const char* audioFile, const char* outputVideo, int trimToShortest, double audioStart, double audioEnd)` - Mux audio into video
 - `void bs_video_set_output_settings(void* writer, int width, int height, int fps)` - Output dimensions/framerate (default 1920x1080@24; use 1080x1920 for vertical 9:16)
 
+### Stage progress + ETA
+- `typedef void (*bs_stage_progress_cb)(const char* stage, double progress, void* user_data)`
+- `void bs_video_set_stage_progress_callback(void* writer, bs_stage_progress_cb cb, void* user_data)` - Per-stage 0..1 progress: `upscale`, `normalize` (weighted by clip duration), `cut` (weighted by estimated clip cost: copy=1, retimed=1+slot*4/20/40 for dup/minterpolate/RIFE), `effects`, `mux` (ffmpeg `-progress pipe:1` out_time / duration)
+- `int bs_video_probe(const char* path, double* duration, int* width, int* height, double* fps)` - libavformat probe, used by the GUI to plan the ETA
+- GUI: `RenderEtaEstimator.{h,cpp}` builds a plan (work units per stage), measures each stage's real rate while it runs, and persists learned units/s per stage to `<Saved>/RenderCalibration.txt` (delete to reset). `STripSitterMainWidget` polls it once a second so the countdown moves between events.
+
 ### Dynamic Sync (energy-driven cut density)
 - `void bs_dynamic_sync_default_config(bs_dynamic_sync_config_t* out_config)` - Fill defaults (thresholds 0.35/0.70, divisors 4/2/1)
 - `int bs_dynamic_sync_filter_beats(const char* audio_path, const double* beats, size_t beat_count, const bs_dynamic_sync_config_t* config, double** out_beats, size_t* out_count)` - Keep every Nth beat per local energy band; free with `bs_free_beats`

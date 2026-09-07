@@ -3428,7 +3428,30 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 
 	ProcessingTask->StartBackgroundTask();
 
+	// Live ETA: poll the task's estimator every second on the game thread.
+	if (EtaTickerHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(EtaTickerHandle);
+	}
+	EtaTickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateSP(this, &STripSitterMainWidget::TickRenderEta), 1.0f);
+
 	return FReply::Handled();
+}
+
+bool STripSitterMainWidget::TickRenderEta(float /*DeltaTime*/)
+{
+	if (!bIsProcessing || !ProcessingTask.IsValid())
+	{
+		EtaTickerHandle.Reset();
+		return false;  // stop ticking
+	}
+	float LiveProgress = 0.0f;
+	FString LiveStatus;
+	if (ProcessingTask->GetTask().GetLiveStatus(LiveProgress, LiveStatus))
+	{
+		OnProcessingProgress(FMath::Max(Progress, LiveProgress), LiveStatus);
+	}
+	return true;
 }
 
 void STripSitterMainWidget::OnProcessingProgress(float InProgress, const FString& Status)
@@ -3449,6 +3472,11 @@ void STripSitterMainWidget::OnProcessingProgress(float InProgress, const FString
 void STripSitterMainWidget::OnProcessingComplete(const FBeatsyncProcessingResult& Result)
 {
 	bIsProcessing = false;
+	if (EtaTickerHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(EtaTickerHandle);
+		EtaTickerHandle.Reset();
+	}
 
 	if (Result.bSuccess)
 	{

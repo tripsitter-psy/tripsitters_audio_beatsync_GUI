@@ -646,6 +646,34 @@ BEATSYNC_API const char* bs_resolve_ffmpeg_path() {
     }
 }
 
+BEATSYNC_API void bs_video_set_stage_progress_callback(void* writer, bs_stage_progress_cb cb, void* user_data) {
+    if (!writer) return;
+    auto* w = static_cast<BeatSync::VideoWriter*>(writer);
+    if (cb) {
+        w->setStageProgressCallback([cb, user_data](const std::string& stage, double progress) {
+            cb(stage.c_str(), progress, user_data);
+        });
+    } else {
+        w->setStageProgressCallback(nullptr);
+    }
+}
+
+BEATSYNC_API int bs_video_probe(const char* path, double* out_duration, int* out_width, int* out_height, double* out_fps) {
+    if (!path) return -1;
+    double d = 0.0, fps = 0.0; int w = 0, h = 0;
+    bool ok = false;
+    try {
+        ok = BeatSync::VideoWriter::probeVideo(path, d, w, h, fps);
+    } catch (...) {
+        ok = false;
+    }
+    if (out_duration) *out_duration = d;
+    if (out_width) *out_width = w;
+    if (out_height) *out_height = h;
+    if (out_fps) *out_fps = fps;
+    return ok ? 0 : -1;
+}
+
 BEATSYNC_API void bs_video_set_progress_callback(void* writer, bs_progress_cb cb, void* user_data) {
     if (!writer) return;
 
@@ -995,6 +1023,30 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
             fflush(logFile);
         }
 
+        // Cost model for the "cut" stage progress (drives the GUI's ETA). A
+        // stream-copied beat clip costs ~1 unit; a retimed clip re-encodes its
+        // whole slot (cost grows with slot length); optical-flow / RIFE slow-mo
+        // is far more expensive per second than a plain re-encode.
+        auto cutClipCost = [&](size_t beatIdx, double slotDuration) -> double {
+            double spd = (speedCfg.enabled && beatIdx < clipSpeeds.size()) ? clipSpeeds[beatIdx] : 1.0;
+            if (std::fabs(spd - 1.0) <= 1e-6) return 1.0;
+            double perSecond = 4.0;                                       // plain re-encode (dup frames)
+            if (speedCfg.smoothing == 1) perSecond = 20.0;                // minterpolate
+            if (speedCfg.smoothing == 2) perSecond = (spd < 1.0) ? 40.0 : 20.0;  // RIFE for slow-mo
+            return 1.0 + slotDuration * perSecond;
+        };
+        double cutTotalCost = 0.0;
+        for (size_t i = 0; i < beatCount; ++i) {
+            double next = (i + 1 < beatCount) ? beatTimes[i + 1]
+                                              : beatTimes[i] + std::max(clipDuration, MIN_SEGMENT_DURATION);
+            double slot = next - beatTimes[i];
+            if (slot > longGapThreshold && i + 1 < beatCount) cutTotalCost += 1.0;  // gap fill = copies
+            else cutTotalCost += cutClipCost(i, slot > 0 ? slot : MIN_SEGMENT_DURATION);
+        }
+        double cutDoneCost = 0.0;
+        // Segment extraction is ~92% of the stage, the final concat the rest.
+        w->reportStage("cut", 0.0);
+
         // Check for intro gap (before first beat)
         if (beatTimes[0] > longGapThreshold) {
             fillGapWithFullVideos(0.0, beatTimes[0], "INTRO");
@@ -1022,6 +1074,8 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
             if (gapDuration > longGapThreshold && i + 1 < beatCount) {
                 // This is a breakdown/gap section - fill with full videos
                 fillGapWithFullVideos(beatTime, nextTime, "BREAKDOWN");
+                cutDoneCost += 1.0;
+                if (cutTotalCost > 0.0) w->reportStage("cut", 0.92 * cutDoneCost / cutTotalCost);
             } else {
                 // Normal beat interval - cut as usual
                 double duration = gapDuration;
@@ -1104,6 +1158,8 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
                 if (segOk) {
                     tempFiles.push_back(tempFile);
                     totalSegmentCount++;
+                    cutDoneCost += cutClipCost(i, duration);
+                    if (cutTotalCost > 0.0) w->reportStage("cut", 0.92 * cutDoneCost / cutTotalCost);
                 } else {
                     std::string errMsg = w->getLastError();
                     s_lastError = "Failed to copy video segment " + std::to_string(i) + ": " + errMsg;
@@ -1131,7 +1187,9 @@ BEATSYNC_API int bs_video_cut_at_beats_multi(void* writer, const char** inputVid
         }
 
         // Concatenate all segments
+        w->reportStage("cut", 0.92);
         bool success = w->concatenateVideos(tempFiles, outputVideo);
+        if (success) w->reportStage("cut", 1.0);
 
         if (logFile) {
             fprintf(logFile, "Concatenation %s\n", success ? "SUCCEEDED" : "FAILED");
