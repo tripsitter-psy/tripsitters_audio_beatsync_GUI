@@ -8,6 +8,9 @@
 #include "BeatsyncLoader.h"  // From TripSitterUE plugin
 #include "Misc/Paths.h"
 #include "HAL/PlatformProcess.h"
+#include "Styling/AppStyle.h"
+#include "Styling/SlateStyle.h"
+#include "Styling/SlateStyleRegistry.h"
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -18,6 +21,68 @@ static HICON GWindowIcon = nullptr;
 #endif
 
 IMPLEMENT_APPLICATION(TripSitter, "TripSitter");
+
+// Slate draws its own title bar for SWindows without an OS border, and puts the
+// active app style's "AppIcon" brush (the Unreal logo by default) in its top-left
+// corner. This style set shadows just that brush with the TripSitter logo and
+// inherits everything else from the core style.
+static TSharedPtr<FSlateStyleSet> GTripSitterStyle;
+
+static FString FindResourceFile(const TCHAR* FileName)
+{
+    const FString ExeDir = FPaths::GetPath(FPlatformProcess::ExecutablePath());
+    TArray<FString> Candidates;
+    Candidates.Add(FPaths::Combine(ExeDir, TEXT("Resources"), FileName));
+    const FString EnvDir = FPlatformMisc::GetEnvironmentVariable(TEXT("BEATSYNC_RESOURCES"));
+    if (!EnvDir.IsEmpty())
+    {
+        Candidates.Add(FPaths::Combine(EnvDir, FileName));
+    }
+    Candidates.Add(FPaths::Combine(FPaths::ProjectDir(), TEXT("Source"), TEXT("TripSitter"), TEXT("Resources"), FileName));
+    Candidates.Add(FPaths::ConvertRelativePathToFull(FPaths::Combine(ExeDir, TEXT(".."), TEXT(".."), TEXT("Source"), TEXT("Programs"), TEXT("TripSitter"), TEXT("Resources"), FileName)));
+    for (const FString& Path : Candidates)
+    {
+        if (FPaths::FileExists(Path))
+        {
+            return Path;
+        }
+    }
+    return FString();
+}
+
+static void RegisterTripSitterAppStyle()
+{
+    // TitleIcon.png is a pre-scaled (128px) copy of icon.png: the standalone
+    // renderer does not filter when downsampling, so the full-size art looks rough.
+    FString IconPath = FindResourceFile(TEXT("TitleIcon.png"));
+    if (IconPath.IsEmpty())
+    {
+        IconPath = FindResourceFile(TEXT("icon.png"));
+    }
+    if (IconPath.IsEmpty())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("TripSitter: Resources/TitleIcon.png not found; keeping the default title bar icon"));
+        return;
+    }
+
+    GTripSitterStyle = MakeShared<FSlateStyleSet>(TEXT("TripSitterStyle"));
+    GTripSitterStyle->SetParentStyleName(FAppStyle::GetAppStyleSetName());
+    // The logo art is 857x779; keep its aspect at the core style's 45px icon height.
+    GTripSitterStyle->Set("AppIcon", new FSlateImageBrush(IconPath, FVector2D(49.5f, 45.f)));
+    GTripSitterStyle->Set("AppIcon.Small", new FSlateImageBrush(IconPath, FVector2D(26.4f, 24.f)));
+    FSlateStyleRegistry::RegisterSlateStyle(*GTripSitterStyle);
+    FAppStyle::SetAppStyleSetName(GTripSitterStyle->GetStyleSetName());
+    UE_LOG(LogTemp, Log, TEXT("TripSitter: title bar icon set from %s"), *IconPath);
+}
+
+static void UnregisterTripSitterAppStyle()
+{
+    if (GTripSitterStyle.IsValid())
+    {
+        FSlateStyleRegistry::UnRegisterSlateStyle(*GTripSitterStyle);
+        GTripSitterStyle.Reset();
+    }
+}
 
 int RunTripSitter(const TCHAR* CommandLine)
 {
@@ -41,6 +106,7 @@ int RunTripSitter(const TCHAR* CommandLine)
     // Initialize Slate as standalone application
     FSlateApplication::InitializeAsStandaloneApplication(GetStandardStandaloneRenderer());
     FSlateApplication::InitHighDPI(true);
+    RegisterTripSitterAppStyle();
 
     // Initialize the beatsync backend DLL
     if (!FBeatsyncLoader::Initialize())
@@ -137,6 +203,7 @@ int RunTripSitter(const TCHAR* CommandLine)
     // after AppExit() has unloaded Internationalization, so ICU aborts in
     // ubidi_close() during ~FICUTextBiDi.
     MainWindow.Reset();
+    UnregisterTripSitterAppStyle();
 
 #if PLATFORM_WINDOWS
     // Destroy custom window icon to prevent GDI resource leak
