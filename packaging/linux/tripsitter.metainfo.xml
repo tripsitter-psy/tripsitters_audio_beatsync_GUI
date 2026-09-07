@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>@APP_ID@</id>
+  <name>MTV TripSitter</name>
+  <summary>Cut video to the beat of your music</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.tripsitter_psy"><name>MTV</name></developer>
+  <description>
+    <p>
+      TripSitter analyses a music track, detects its beats (spectral flux, BeatNet
+      and Demucs stem separation via ONNX Runtime, tuned for psytrance and EDM)
+      and cuts one or more videos in time with the music. It offers dynamic
+      cut density, speed ramps with neural frame interpolation, neural upscaling,
+      transitions and beat-driven effects.
+    </p>
+    <p>
+      This build bundles FFmpeg (GPL) and ONNX Runtime. NVIDIA GPU acceleration is
+      used automatically when the bundled CUDA runtime and a driver are present;
+      otherwise analysis runs on the CPU.
+    </p>
+  </description>
+  <launchable type="desktop-id">@APP_ID@.desktop</launchable>
+  <url type="homepage">https://github.com/tripsitter-psy/tripsitters_audio_beatsync_GUI</url>
+  <url type="bugtracker">https://github.com/tripsitter-psy/tripsitters_audio_beatsync_GUI/issues</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="@APP_VERSION@" date="@DATE@"/>
+  </releases>
+</component>

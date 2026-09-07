@@ -350,6 +350,17 @@ endif()
 
 # Bandlimited resampler support (libsamplerate)
 find_package(SampleRate CONFIG QUIET)
+if(NOT SampleRate_FOUND AND UNIX)
+    # Debian/Ubuntu ship libsamplerate without a CMake config; fall back to pkg-config.
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(SAMPLERATE_PC QUIET IMPORTED_TARGET samplerate)
+        if(SAMPLERATE_PC_FOUND)
+            add_library(SampleRate::samplerate ALIAS PkgConfig::SAMPLERATE_PC)
+            set(SampleRate_FOUND TRUE)
+        endif()
+    endif()
+endif()
 if(SampleRate_FOUND)
     message(STATUS "libsamplerate found - enabling high-quality resampling")
     # Use HAVE_LIBSAMPLERATE to match the macro checked in AudioFluxBeatDetector.cpp
@@ -548,6 +559,7 @@ if(EXISTS "${RESOURCE_SRC_DIR}")
     install(FILES
         "${RESOURCE_SRC_DIR}/wallpaper.png"
         "${RESOURCE_SRC_DIR}/TitleHeader.png"
+        "${RESOURCE_SRC_DIR}/TitleIcon.png"
         "${RESOURCE_SRC_DIR}/Corpta.otf"
         DESTINATION "${UE_BIN_DIR}/Resources"
         OPTIONAL

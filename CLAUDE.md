@@ -39,10 +39,17 @@ cp src/backend/beatsync_capi.h        $UE/Binaries/ThirdParty/include/
 cp build/libbeatsync_backend_shared.so $UE/Binaries/Linux/
 cp models/*.onnx                       $UE/Binaries/Linux/models/
 cp unreal-prototype/Source/TripSitter/Resources/* $UE/Binaries/Linux/Resources/
+# Window/taskbar icon (LinuxWindow.cpp loads <ProjectDir>/Content/Splash/Icon.bmp)
+mkdir -p $UE/Programs/TripSitter/Content/Splash
+cp unreal-prototype/Source/TripSitter/Resources/Icon.bmp $UE/Programs/TripSitter/Content/Splash/
 ```
 
 **Output**: `$UE/Engine/Binaries/Linux/TripSitter`. Launch detached
 (`setsid nohup ./TripSitter &`) or it dies with its parent shell.
+
+**Linux packaging** (tarball, AppImage, Flatpak): `packaging/linux/package.sh`, documented in
+`packaging/linux/README.md`. The backend is rebuilt in an Ubuntu 22.04 container so the
+packages run on any distro with glibc >= 2.35; the prebuilt UE binary only needs glibc 2.28.
 
 **Linux notes**:
 - FFmpeg comes from the system via pkg-config (Fedora headers live in `/usr/include/ffmpeg`), not vcpkg
@@ -52,6 +59,14 @@ cp unreal-prototype/Source/TripSitter/Resources/* $UE/Binaries/Linux/Resources/
   either install them system-wide (ldconfig) or `patchelf --set-rpath` the provider `.so`.
   `-DBEATSYNC_CUDA_LIB_DIRS=...` bakes a DT_RPATH into the CLI and shared library.
 - File dialogs use `IDesktopPlatform`, which forwards to the `SlateFileDialogs` module on Linux
+- **App icon.** Slate draws its own title bar (no OS border) and shows the active app
+  style's `AppIcon` brush there, which is the Unreal logo unless overridden.
+  `TripSitterMain.cpp` registers a `TripSitterStyle` style set (parent: the core style)
+  whose `AppIcon`/`AppIcon.Small` brushes point at `Resources/TitleIcon.png` (a 128px
+  Lanczos-scaled copy of `icon.png`; the standalone renderer does not filter when
+  downsampling). The OS-level window icon on Linux is `Engine/Programs/TripSitter/Content/Splash/Icon.bmp`
+  (32-bit BMP, see `LinuxWindow.cpp`); GNOME Wayland ignores it and matches the app id
+  `TripSitter` to a desktop file instead.
 - **Dropdowns/menus must render in-window on Wayland.** Slate's default popup method
   spawns a separate OS-level window, but Wayland does not let a client position its own
   top-level windows, so every `SComboBox` dropdown appears detached in the middle of the

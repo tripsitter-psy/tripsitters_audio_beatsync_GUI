@@ -1,0 +1,45 @@
+#!/bin/sh
+# Launcher for the portable Linux bundle (tarball, AppImage and Flatpak all use it).
+#
+# Layout (relative to the bundle root):
+#   Engine/Binaries/Linux/TripSitter                  Unreal Slate program
+#   Engine/Binaries/Linux/libbeatsync_backend_shared.so
+#   Engine/Binaries/Linux/lib/                        FFmpeg, ONNX Runtime, AudioFlux [, cuda/]
+#   Engine/Binaries/Linux/bin/ffmpeg                  FFmpeg CLI used for cutting/encoding
+#   Engine/Binaries/Linux/models/, Resources/
+#   Engine/Content/, Engine/Config/, Engine/Shaders/  Unreal runtime data
+#
+# Set TRIPSITTER_ROOT to override auto-detection (the Flatpak sets it to /app).
+
+if [ -n "$TRIPSITTER_ROOT" ]; then
+    ROOT="$TRIPSITTER_ROOT"
+elif [ -n "$APPDIR" ]; then
+    ROOT="$APPDIR"
+else
+    ROOT="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+fi
+BIN="$ROOT/Engine/Binaries/Linux"
+
+if [ ! -x "$BIN/TripSitter" ]; then
+    echo "TripSitter: cannot find $BIN/TripSitter" >&2
+    exit 1
+fi
+
+# The backend shells out to ffmpeg; point it at the bundled copy unless overridden.
+if [ -z "$BEATSYNC_FFMPEG_PATH" ] && [ -x "$BIN/bin/ffmpeg" ]; then
+    export BEATSYNC_FFMPEG_PATH="$BIN/bin/ffmpeg"
+fi
+
+# The bundle is read-only (AppImage squashfs, /app in Flatpak). Unreal writes
+# logs/config under ~/.config/Epic/TripSitter when -SaveToUserDir is given, and
+# the backend appends its ffmpeg diagnostics to the working directory, so start
+# from a writable per-user state directory.
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/tripsitter"
+mkdir -p "$STATE_DIR/logs" 2>/dev/null && cd "$STATE_DIR/logs"
+
+# Optional bundled CUDA runtime (lib/cuda). ONNX Runtime falls back to CPU when absent.
+if [ -d "$BIN/lib/cuda" ]; then
+    export LD_LIBRARY_PATH="$BIN/lib/cuda${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
+exec "$BIN/TripSitter" -SaveToUserDir "$@"

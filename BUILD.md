@@ -305,6 +305,18 @@ Alternatively pass `-DBEATSYNC_CUDA_LIB_DIRS="/path/to/cuda/lib64;/path/to/cudnn
 configure time to bake a DT_RPATH into the CLI and shared library. Without any of this the
 app silently falls back to CPU (the TensorRT → CUDA → CPU chain still works).
 
+### Packaging (tarball, AppImage, Flatpak)
+
+See `packaging/linux/README.md`. In short:
+
+```bash
+packaging/linux/package.sh        # -> build/linux-dist/*.tar.xz, *.AppImage, *.flatpak
+```
+
+The backend is rebuilt inside an Ubuntu 22.04 container (podman/docker) so the packages run
+on any x86_64 distro with glibc >= 2.35; FFmpeg comes from the BtbN shared build and ONNX
+Runtime from the official tarball. CUDA libraries are opt-in via `CUDA_LIB_DIRS`.
+
 ## Performance Notes
 
 ### Compile Time

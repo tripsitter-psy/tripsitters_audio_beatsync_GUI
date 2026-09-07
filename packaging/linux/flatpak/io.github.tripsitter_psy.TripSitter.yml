@@ -1,0 +1,43 @@
+# Flatpak manifest for MTV TripSitter.
+#
+# The Unreal Engine GUI cannot be built inside flatpak-builder (it needs a full
+# UE source tree and its EULA forbids redistributing that source), so this
+# manifest packages the prebuilt, self-contained bundle produced by
+# packaging/linux/stage.sh. That also means it is not Flathub-eligible; it is
+# meant for a self-hosted repo or a single-file .flatpak bundle
+# (packaging/linux/make-flatpak.sh).
+app-id: io.github.tripsitter_psy.TripSitter
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: tripsitter
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  # /dev/dri for OpenGL plus /dev/nvidia* for CUDA inference and NVENC encoding.
+  - --device=all
+  # The file pickers are Unreal's own (SlateFileDialogs), not portal-based, so the
+  # app needs to see the host filesystem to open media and write output videos.
+  - --filesystem=host
+  - --env=TRIPSITTER_ROOT=/app
+  # NVIDIA driver libraries (libcuda, libnvidia-encode) arrive through the GL
+  # extension; nothing else is needed for the bundled CUDA runtime.
+
+modules:
+  - name: tripsitter
+    buildsystem: simple
+    build-commands:
+      - cp -a Engine /app/
+      - install -Dm755 AppRun /app/bin/tripsitter
+      - install -Dm644 usr/share/applications/io.github.tripsitter_psy.TripSitter.desktop
+          /app/share/applications/io.github.tripsitter_psy.TripSitter.desktop
+      - install -Dm644 usr/share/metainfo/io.github.tripsitter_psy.TripSitter.metainfo.xml
+          /app/share/metainfo/io.github.tripsitter_psy.TripSitter.metainfo.xml
+      - install -Dm644 usr/share/icons/hicolor/512x512/apps/io.github.tripsitter_psy.TripSitter.png
+          /app/share/icons/hicolor/512x512/apps/io.github.tripsitter_psy.TripSitter.png
+      - mkdir -p /app/share/licenses && cp -a licenses /app/share/licenses/tripsitter
+    sources:
+      - type: dir
+        path: ../../../build/linux-dist/AppDir

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=MTV TripSitter
+GenericName=Beat-synced video editor
+Comment=Cut and sync video to the beat of your music (psytrance/EDM tuned)
+Exec=tripsitter %F
+Icon=@APP_ID@
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+MimeType=audio/mpeg;audio/x-wav;audio/flac;audio/ogg;video/mp4;video/x-matroska;video/quicktime;video/webm;
+Keywords=beat;sync;video;music;edit;psytrance;
+StartupWMClass=TripSitter
