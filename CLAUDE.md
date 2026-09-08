@@ -224,6 +224,12 @@ Defined in `vcpkg.json`:
 - TensorRT 10.9.0.34 (location set via `$env:TENSORRT_HOME`)
 - Overlay triplet `triplets/x64-windows.cmake` sets `TENSORRT_HOME`
 
+**GPU acceleration is a core feature, not optional.** CPU fallback is a last resort for
+machines with no CUDA at all; never ship a build or package without the GPU inference
+libraries, and never let a code path degrade to CPU silently (log it and show it in the
+UI). For AMD (Radeon) and Intel users the target is a GPU path too (ONNX Runtime
+ROCm/DirectML/OpenVINO or a Vulkan backend), not CPU.
+
 **GPU Execution Provider Fallback Chain**:
 
 Both `OnnxBeatDetector` and `OnnxStemSeparator` automatically select the best available execution provider:
