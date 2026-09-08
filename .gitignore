@@ -83,3 +83,4 @@ Testing/Temporary/
 
 # Linux packaging
 tools/appimagetool-x86_64.AppImage
+tools/appimage-runtime-x86_64

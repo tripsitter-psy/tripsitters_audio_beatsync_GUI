@@ -11,7 +11,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake ninja-build pkg-config git patchelf \
         xz-utils ca-certificates curl file \
-        libsamplerate0-dev \
+        libsamplerate0-dev squashfs-tools \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src

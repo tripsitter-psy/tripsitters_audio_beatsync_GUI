@@ -18,8 +18,30 @@ fi
 OUT="$DIST_DIR/$APP_NAME-$APP_VERSION-x86_64.AppImage"
 rm -f "$OUT"
 log "Building $OUT"
-# --appimage-extract-and-run: works without FUSE on the build machine.
-# xz squashfs: with the CUDA runtime bundled a zstd image is ~2.15 GB, just over
-# GitHub's 2 GiB release-asset limit; xz brings it to ~1.7 GB (slower first start).
-ARCH=x86_64 "$APPIMAGETOOL" --appimage-extract-and-run --comp xz -n "$APPDIR" "$OUT"
+
+# A type-2 AppImage is the static runtime followed by a squashfs of the AppDir.
+# appimagetool's bundled mksquashfs only speaks zstd, and with the CUDA runtime
+# on board a zstd image is ~2.15 GB, just over GitHub's 2 GiB release-asset
+# limit. So the image is built with xz by squashfs-tools in the build container
+# (same result as `appimagetool --comp xz` on a distro that ships mksquashfs+xz),
+# and appimagetool is only the fallback when no container tool is available.
+RUNTIME="$TOOLS/appimage-runtime-x86_64"
+if [ -n "$CONTAINER_TOOL" ] && "$CONTAINER_TOOL" image exists "$CONTAINER_IMAGE" 2>/dev/null; then
+    if [ ! -s "$RUNTIME" ]; then
+        log "Downloading AppImage type-2 runtime"
+        curl -fL -o "$RUNTIME" https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+    fi
+    SQUASH="$DIST_DIR/appimage.squashfs"
+    rm -f "$SQUASH"
+    USERNS=(); [ "$(basename "$CONTAINER_TOOL")" = podman ] && USERNS=(--userns=keep-id)
+    "$CONTAINER_TOOL" run --rm "${USERNS[@]}" -v "$DIST_DIR:/dist:Z" "$CONTAINER_IMAGE" \
+        mksquashfs /dist/AppDir /dist/appimage.squashfs -comp xz -Xdict-size 100% -b 1M \
+            -noappend -no-xattrs -all-root -processors "$(nproc)" -quiet
+    cat "$RUNTIME" "$SQUASH" > "$OUT"
+    rm -f "$SQUASH"
+    chmod +x "$OUT"
+else
+    # --appimage-extract-and-run: works without FUSE on the build machine.
+    ARCH=x86_64 "$APPIMAGETOOL" --appimage-extract-and-run --comp zstd -n "$APPDIR" "$OUT"
+fi
 log "Wrote $OUT ($(du -h "$OUT" | cut -f1))"
