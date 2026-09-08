@@ -19,6 +19,7 @@ OUT="$DIST_DIR/$APP_NAME-$APP_VERSION-x86_64.AppImage"
 rm -f "$OUT"
 log "Building $OUT"
 # --appimage-extract-and-run: works without FUSE on the build machine.
-# zstd squashfs keeps the 300 MB of ONNX models and 550 MB of libraries reasonable.
-ARCH=x86_64 "$APPIMAGETOOL" --appimage-extract-and-run --comp zstd -n "$APPDIR" "$OUT"
+# xz squashfs: with the CUDA runtime bundled a zstd image is ~2.15 GB, just over
+# GitHub's 2 GiB release-asset limit; xz brings it to ~1.7 GB (slower first start).
+ARCH=x86_64 "$APPIMAGETOOL" --appimage-extract-and-run --comp xz -n "$APPDIR" "$OUT"
 log "Wrote $OUT ($(du -h "$OUT" | cut -f1))"
