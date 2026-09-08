@@ -84,8 +84,8 @@ minutes), AI upscaling of 4K footage or RIFE slow-mo can take an hour or more.
 
 ### Known limitations
 
-- Linux packages are CPU-only for the AI models unless the CUDA runtime is bundled
-  (a separate, much larger "GPU" download will follow). NVENC encoding works either way.
+- The AI features need an NVIDIA GPU to be fast; on AMD/Intel or without a GPU they
+  run on the CPU and take many times longer.
 - File dialogs are the app's own, so on Flatpak the app has full home-folder access.
 - No Mac build yet.
 

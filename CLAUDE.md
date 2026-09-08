@@ -50,6 +50,9 @@ cp unreal-prototype/Source/TripSitter/Resources/Icon.bmp $UE/Programs/TripSitter
 **Linux packaging** (tarball, AppImage, Flatpak): `packaging/linux/package.sh`, documented in
 `packaging/linux/README.md`. The backend is rebuilt in an Ubuntu 22.04 container so the
 packages run on any distro with glibc >= 2.35; the prebuilt UE binary only needs glibc 2.28.
+The CUDA runtime (cuBLAS/cuDNN/cuFFT/NVRTC, ~2.3 GB) is bundled by default so AI stages
+run on the GPU; `CUDA_LIB_DIRS=none` opts out. Never ship a CPU-only bundle by accident:
+a 134-clip upscale+RIFE render took 4+ hours on CPU vs. minutes on the GPU.
 
 **Linux notes**:
 - FFmpeg comes from the system via pkg-config (Fedora headers live in `/usr/include/ffmpeg`), not vcpkg

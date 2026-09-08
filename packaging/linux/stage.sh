@@ -76,7 +76,9 @@ cp "$ORT_ROOT/LICENSE" "$APPDIR/licenses/onnxruntime-LICENSE.txt" 2>/dev/null ||
 cp "$REPO_ROOT/thirdparty/audioFlux/LICENSE.md" "$APPDIR/licenses/audioFlux-LICENSE.md" 2>/dev/null || true
 
 # --- Optional CUDA runtime ---------------------------------------------------------
-if [ -n "$CUDA_LIB_DIRS" ]; then
+if [ -z "$CUDA_LIB_DIRS" ]; then
+    log "WARNING: no CUDA libraries found; this bundle will run AI stages on the CPU (set CUDA_LIB_DIRS)"
+else
     log "Bundling CUDA runtime from $CUDA_LIB_DIRS"
     mkdir -p "$BIN/lib/cuda"
     IFS=: read -r -a cuda_dirs <<< "$CUDA_LIB_DIRS"
@@ -86,6 +88,12 @@ if [ -n "$CUDA_LIB_DIRS" ]; then
     # so every libcudnn_*.so.9 is included explicitly.
     queue=($(readelf -d "$BIN/lib/libonnxruntime_providers_cuda.so" | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p'))
     for d in "${cuda_dirs[@]}"; do for f in "$d"/libcudnn*.so.9; do [ -e "$f" ] && queue+=("$(basename "$f")"); done; done
+    # dlopen'd at runtime by cuDNN's runtime-compiled engines / cuFFT JIT paths.
+    queue+=(libnvrtc.so.12 libnvJitLink.so.12)
+    # libnvrtc dlopens the builtins by its major.minor SONAME (libnvrtc-builtins.so.12.8).
+    for d in "${cuda_dirs[@]}"; do for f in "$d"/libnvrtc-builtins.so.[0-9]*.[0-9]*; do
+        n="$(basename "$f")"; case "$n" in *.so.[0-9]*.[0-9]*.[0-9]*) ;; *) [ -e "$f" ] && queue+=("$n");; esac
+    done; done
     declare -A seen
     while [ ${#queue[@]} -gt 0 ]; do
         name="${queue[0]}"; queue=("${queue[@]:1}")

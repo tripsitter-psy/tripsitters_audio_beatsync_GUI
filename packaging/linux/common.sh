@@ -16,10 +16,23 @@ UE_ROOT="${UE_ROOT:-$HOME/UE5_Source/UnrealEngine}"
 FFMPEG_ROOT="${FFMPEG_ROOT:-$REPO_ROOT/thirdparty/ffmpeg-n8.1-latest-linux64-gpl-shared-8.1}"
 ORT_ROOT="${ORT_ROOT:-$REPO_ROOT/thirdparty/onnxruntime-linux-x64-gpu-1.23.2}"
 
-# Optional CUDA runtime libraries to bundle (cuBLAS, cuFFT, cuRAND, cudart, cuDNN).
-# Leave empty for a CPU-only bundle (the app falls back to CPU automatically).
-# Example: CUDA_LIB_DIRS="$HOME/cuda-12.8/lib64:/usr/local/cudnn-9.10.2/lib"
-CUDA_LIB_DIRS="${CUDA_LIB_DIRS:-}"
+# CUDA runtime libraries to bundle (cuBLAS, cuFFT, cuRAND, cudart, cuDNN, NVRTC) so
+# the AI stages (stem separation, upscaling, RIFE) run on the GPU. Bundled by
+# default; auto-detected from the usual install locations. Set CUDA_LIB_DIRS=none
+# for a CPU-only bundle (about 2.3 GB smaller, AI stages become much slower).
+if [ -z "${CUDA_LIB_DIRS:-}" ]; then
+    CUDA_LIB_DIRS=""
+    for d in "$HOME"/cuda-12*/lib64 /usr/local/cuda-12*/lib64 /usr/local/cuda/lib64 \
+             /usr/local/cudnn-9*/lib /usr/lib64 /usr/lib/x86_64-linux-gnu; do
+        [ -d "$d" ] || continue
+        case "$d" in
+            *cudnn*) [ -e "$d/libcudnn.so.9" ] || continue ;;
+            *) [ -e "$d/libcublas.so.12" ] || [ -e "$d/libcudnn.so.9" ] || continue ;;
+        esac
+        CUDA_LIB_DIRS="${CUDA_LIB_DIRS:+$CUDA_LIB_DIRS:}$d"
+    done
+fi
+[ "$CUDA_LIB_DIRS" = "none" ] && CUDA_LIB_DIRS=""
 
 BUILD_ROOT="$REPO_ROOT/build"
 PORTABLE_OUT="$BUILD_ROOT/linux-portable"     # container build output

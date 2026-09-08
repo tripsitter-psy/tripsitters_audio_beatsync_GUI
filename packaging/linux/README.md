@@ -4,7 +4,7 @@ Three distributable formats are produced from **one staged bundle**:
 
 | Output | File | Runs on |
 |---|---|---|
-| Portable tarball | `build/linux-dist/MTVTripSitter-<ver>-linux-x86_64.tar.xz` | any x86_64 distro with glibc ≥ 2.35 (Ubuntu 22.04+, Debian 12+, Fedora 36+, openSUSE Leap 15.5+, Arch) |
+| Portable tarball | `build/linux-dist/MTVTripSitter-<ver>-linux-x86_64.tar.xz` | any x86_64 distro with glibc ≥ 2.35 (Ubuntu 22.04+, Debian 12+, Fedora 36+, openSUSE Leap 15.5+, Arch); NVIDIA driver 535+ for GPU AI |
 | AppImage | `build/linux-dist/MTVTripSitter-<ver>-x86_64.AppImage` | same as the tarball, single file, needs FUSE (or `--appimage-extract-and-run`) |
 | Flatpak | `build/linux-dist/MTVTripSitter-<ver>-x86_64.flatpak` | any distro with Flatpak + Flathub (runtime `org.freedesktop.Platform//25.08`) |
 
@@ -61,19 +61,24 @@ Environment overrides live in `common.sh`: `UE_ROOT`, `APP_VERSION`, `FFMPEG_ROO
 
 ## GPU acceleration
 
-By default the packages are **CPU-only for inference** (NVENC encoding still works: FFmpeg dlopens
-the driver's `libnvidia-encode`). ONNX Runtime's CUDA provider needs cuBLAS, cuFFT, cuRAND, cudart
-and cuDNN 9, about 2.3 GB uncompressed, so they are opt-in:
+The CUDA runtime (cuBLAS, cuFFT, cuRAND, cudart, cuDNN 9, NVRTC; about 2.3 GB
+uncompressed) is **bundled by default** so stem separation, upscaling and RIFE run on
+NVIDIA GPUs out of the box. `common.sh` auto-detects it in `~/cuda-12*`,
+`/usr/local/cuda*` and `/usr/local/cudnn-9*`; set `CUDA_LIB_DIRS` explicitly for other
+locations, or `CUDA_LIB_DIRS=none` for a CPU-only bundle. `stage.sh` warns loudly when
+it cannot find CUDA, because a CPU-only bundle makes AI renders many times slower.
 
-```bash
-CUDA_LIB_DIRS="$HOME/cuda-12.8/lib64:/usr/local/cudnn-9.10.2/lib" packaging/linux/stage.sh
-```
+`stage.sh` follows the CUDA provider's `NEEDED` chain into those directories, copies what
+it finds into `Engine/Binaries/Linux/lib/cuda/`, and sets `$ORIGIN` RPATHs. Users only
+need the NVIDIA driver (535+). In the Flatpak the driver comes from
+`org.freedesktop.Platform.GL.nvidia-*`, which Flatpak installs automatically to match the
+host driver. TensorRT is not bundled; the TensorRT → CUDA → CPU fallback in the backend
+handles that. NVENC encoding needs only the driver either way.
 
-`stage.sh` follows the provider's `NEEDED` chain into those directories, copies what it finds into
-`Engine/Binaries/Linux/lib/cuda/`, and sets `$ORIGIN` RPATHs. The user then only needs the NVIDIA
-driver (535+). In the Flatpak the driver comes from `org.freedesktop.Platform.GL.nvidia-*`, which
-Flatpak installs automatically to match the host driver. TensorRT is not bundled; the
-TensorRT → CUDA → CPU fallback in the backend handles that.
+Verification: run the bundled backend with a clean environment and watch for
+`Upscaler: CUDA execution provider enabled` (see `scripts`-free check in the git history
+of this file: a tiny C program calling `bs_video_set_upscale_config` +
+`bs_video_normalize_sources` on a 320x240 clip).
 
 ## Runtime behaviour worth knowing
 
