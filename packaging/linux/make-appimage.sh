@@ -20,11 +20,11 @@ rm -f "$OUT"
 log "Building $OUT"
 
 # A type-2 AppImage is the static runtime followed by a squashfs of the AppDir.
-# appimagetool's bundled mksquashfs only speaks zstd, and with the CUDA runtime
-# on board a zstd image is ~2.15 GB, just over GitHub's 2 GiB release-asset
-# limit. So the image is built with xz by squashfs-tools in the build container
-# (same result as `appimagetool --comp xz` on a distro that ships mksquashfs+xz),
-# and appimagetool is only the fallback when no container tool is available.
+# The runtime only mounts zstd/zlib images, and appimagetool's defaults produce
+# a ~2.15 GB image with the CUDA runtime on board, just over GitHub's 2 GiB
+# release-asset limit. squashfs-tools in the build container lets us use zstd at
+# its maximum level with 1 MB blocks, which is enough to get under the limit;
+# appimagetool is the fallback when no container tool is available.
 RUNTIME="$TOOLS/appimage-runtime-x86_64"
 if [ -n "$CONTAINER_TOOL" ] && "$CONTAINER_TOOL" image exists "$CONTAINER_IMAGE" 2>/dev/null; then
     if [ ! -s "$RUNTIME" ]; then
@@ -35,7 +35,7 @@ if [ -n "$CONTAINER_TOOL" ] && "$CONTAINER_TOOL" image exists "$CONTAINER_IMAGE"
     rm -f "$SQUASH"
     USERNS=(); [ "$(basename "$CONTAINER_TOOL")" = podman ] && USERNS=(--userns=keep-id)
     "$CONTAINER_TOOL" run --rm "${USERNS[@]}" -v "$DIST_DIR:/dist:Z" "$CONTAINER_IMAGE" \
-        mksquashfs /dist/AppDir /dist/appimage.squashfs -comp xz -Xdict-size 100% -b 1M \
+        mksquashfs /dist/AppDir /dist/appimage.squashfs -comp zstd -Xcompression-level 22 -b 1M \
             -noappend -no-xattrs -all-root -processors "$(nproc)" -quiet
     cat "$RUNTIME" "$SQUASH" > "$OUT"
     rm -f "$SQUASH"
