@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <atomic>
@@ -543,6 +544,40 @@ private:
     std::string getEncoderArgs(const std::string& speedPreset) const;
 
     /**
+     * @brief Global ffmpeg options the selected encoder needs before any input,
+     *        e.g. "-init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va"
+     *        for VAAPI. Empty for NVENC/AMF/QSV/libx264. Insert right after "-nostdin".
+     */
+    std::string getEncoderGlobalArgs() const;
+
+    /**
+     * @brief Filter fragment the selected encoder needs at the END of the video
+     *        filter chain (VAAPI encoders only accept hardware frames, so
+     *        ",format=nv12,hwupload"). Empty for other encoders. Use
+     *        appendEncoderFilter() to add it to a chain or emit a "-vf".
+     */
+    std::string getEncoderFilterSuffix() const;
+
+    /** Append the encoder filter suffix to an existing "-vf" chain (no quotes). */
+    std::string withEncoderFilter(const std::string& vfChain) const;
+    /** Same for a -filter_complex graph (handles a labelled final output). */
+    std::string withEncoderFilterComplex(const std::string& filterComplex) const;
+    /** " -init_hw_device ..." (leading space) or "" - goes right after "-nostdin". */
+    std::string encoderGlobalPrefix() const;
+    /** ",format=nv12,hwupload" or "" - goes at the end of a -vf chain. */
+    std::string encoderVfTail() const;
+    /** " -vf \"format=nv12,hwupload\"" or "" - for commands with no filter at all. */
+    std::string encoderVfOption() const;
+
+    /**
+     * @brief Functional encoder probe: actually encodes a few black frames with
+     *        the encoder (and its hardware setup) and caches the result. Unlike
+     *        probeEncoder(), which only checks that ffmpeg lists the encoder,
+     *        this fails for hardware whose runtime/driver is missing.
+     */
+    bool probeEncoderWorks(const std::string& encoder) const;
+
+    /**
      * @brief Check if CUDA hardware acceleration is available for decoding
      * @return true if CUDA hwaccel is supported by FFmpeg
      */
@@ -563,6 +598,8 @@ private:
     // Access to these mutable caches is protected by m_cacheMutex
     mutable GPUEncoderInfo m_cachedEncoder = GPUEncoderInfo{};
     mutable bool m_encoderCacheValid = false;
+    mutable std::map<std::string, bool> m_encoderWorksCache;
+    mutable std::string m_vaapiDevice;  // e.g. /dev/dri/renderD128 once VAAPI is selected
     mutable int m_cudaHwaccelCache = -1;  // -1 = not checked, 0 = no, 1 = yes
     mutable int m_scaleCudaCache = -1;    // -1 = not checked, 0 = no, 1 = yes
     mutable std::recursive_mutex m_cacheMutex;

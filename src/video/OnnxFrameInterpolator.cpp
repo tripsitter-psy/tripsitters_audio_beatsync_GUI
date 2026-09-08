@@ -1,4 +1,7 @@
 #include "OnnxFrameInterpolator.h"
+#ifdef USE_ONNX
+#include "../audio/OnnxProviders.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -87,74 +90,39 @@ bool OnnxFrameInterpolator::loadModel(const std::string& modelPath, bool useGPU,
         return false;
     }
     try {
-        m_impl->sessionOptions = std::make_unique<Ort::SessionOptions>();
-        m_impl->sessionOptions->SetIntraOpNumThreads(0);
-        m_impl->sessionOptions->SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-
-        std::string activeProvider = "CPU";
+        // Shared provider chain (OnnxProviders). TensorRT is skipped on purpose:
+        // per-resolution engine builds are not worth it for short, variably
+        // sized clips, so NVIDIA runs on CUDA; AMD on MIGraphX/ROCm, Intel on OpenVINO.
+        OnnxProviderRequest req;
+        req.component = "RIFE";
+        req.deviceId = gpuDeviceId;
+        req.allowTensorRT = false;
+        std::string sessionError;
         if (useGPU) {
-            const OrtApi& ortApi = Ort::GetApi();
-
-            // CUDA execution provider (primary GPU path for RIFE; per-resolution
-            // TensorRT engine builds aren't worth it for short variable clips).
-            try {
-                OrtCUDAProviderOptionsV2* cudaOptions = nullptr;
-                OrtStatus* status = ortApi.CreateCUDAProviderOptions(&cudaOptions);
-                if (status == nullptr && cudaOptions != nullptr) {
-                    const char* keys[] = {"device_id", "arena_extend_strategy"};
-                    char deviceIdStr[16];
-                    snprintf(deviceIdStr, sizeof(deviceIdStr), "%d", gpuDeviceId);
-                    const char* values[] = {deviceIdStr, "kSameAsRequested"};
-                    status = ortApi.UpdateCUDAProviderOptions(cudaOptions, keys, values, 2);
-                    if (status == nullptr) {
-                        status = ortApi.SessionOptionsAppendExecutionProvider_CUDA_V2(
-                            static_cast<OrtSessionOptions*>(*m_impl->sessionOptions), cudaOptions);
-                        if (status == nullptr) {
-                            activeProvider = "CUDA";
-                            std::cerr << "[BeatSync] RIFE: CUDA execution provider enabled" << std::endl;
-                        } else {
-                            const char* msg = ortApi.GetErrorMessage(status);
-                            std::cerr << "[BeatSync] RIFE: CUDA append failed: " << (msg ? msg : "?") << std::endl;
-                            ortApi.ReleaseStatus(status);
-                        }
-                    } else {
-                        ortApi.ReleaseStatus(status);
-                    }
-                    ortApi.ReleaseCUDAProviderOptions(cudaOptions);
-                } else if (status != nullptr) {
-                    ortApi.ReleaseStatus(status);
-                }
-            } catch (...) {
-                std::cerr << "[BeatSync] RIFE: CUDA provider exception" << std::endl;
-            }
-
-#ifdef _WIN32
-            if (activeProvider == "CPU") {
-                try {
-                    m_impl->sessionOptions->AppendExecutionProvider("DML", {});
-                    activeProvider = "DirectML";
-                    std::cerr << "[BeatSync] RIFE: DirectML execution provider enabled" << std::endl;
-                } catch (...) {
-                    std::cerr << "[BeatSync] RIFE: DirectML fallback failed" << std::endl;
-                }
-            }
-#endif
+            OnnxProviderResult chosen;
+            m_impl->session = createSessionWithFallback(*m_impl->env, modelPath, req,
+                [](Ort::SessionOptions& o) {
+                    o.SetIntraOpNumThreads(0);
+                    o.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+                }, chosen, sessionError);
+            std::cerr << "[BeatSync] RIFE final execution provider: " << chosen.detail << std::endl;
+        } else {
+            Ort::SessionOptions o;
+            o.SetIntraOpNumThreads(0);
+            o.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+            OnnxProviderRequest cpuReq = req;
+            cpuReq.skipProviders = {"TensorRT", "CUDA", "MIGraphX", "ROCm", "OpenVINO", "DirectML"};
+            OnnxProviderResult chosen;
+            m_impl->session = createSessionWithFallback(*m_impl->env, modelPath, cpuReq,
+                [](Ort::SessionOptions& o) {
+                    o.SetIntraOpNumThreads(0);
+                    o.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+                }, chosen, sessionError);
         }
-        std::cerr << "[BeatSync] RIFE final execution provider: " << activeProvider << std::endl;
-
-#ifdef _WIN32
-        int wlen = MultiByteToWideChar(CP_UTF8, 0, modelPath.c_str(), -1, NULL, 0);
-        if (wlen <= 0) {
-            m_impl->lastError = "Failed to convert model path to wide string";
+        if (!m_impl->session) {
+            m_impl->lastError = "ONNX load failed: " + sessionError;
             return false;
         }
-        std::wstring widePath(static_cast<size_t>(wlen), 0);
-        MultiByteToWideChar(CP_UTF8, 0, modelPath.c_str(), -1, &widePath[0], wlen);
-        widePath.resize(static_cast<size_t>(wlen) - 1);
-        m_impl->session = std::make_unique<Ort::Session>(*m_impl->env, widePath.c_str(), *m_impl->sessionOptions);
-#else
-        m_impl->session = std::make_unique<Ort::Session>(*m_impl->env, modelPath.c_str(), *m_impl->sessionOptions);
-#endif
 
         // Cache I/O names in model order.
         Ort::AllocatorWithDefaultOptions allocator;

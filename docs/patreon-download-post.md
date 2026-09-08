@@ -62,10 +62,13 @@ about FUSE, run it with `--appimage-extract-and-run`.)
 
 - 64-bit x86 machine, 8 GB RAM or more, a few GB of free disk for temp files while rendering.
 - Any GPU with working OpenGL drivers for the app itself.
-- **NVIDIA GPU (GTX 10-series or newer, driver 535+)** for the fast path: video
-  encoding uses NVENC, and the AI features (stem separation, RIFE slow-mo, upscaling)
-  run on the GPU. Without an NVIDIA card everything still works on the CPU, it's just
-  slower — expect AI upscaling and stem separation to take a while.
+- **NVIDIA GPU (GTX 10-series or newer, driver 535+)** is the fastest path: NVENC
+  encoding plus CUDA/TensorRT for the AI features (stem separation, RIFE slow-mo, upscaling).
+- **AMD Radeon**: install ROCm 7.2 (AMD's GPU compute stack) and use the AppImage or the
+  portable folder; encoding uses VAAPI through Mesa.
+- **Intel Arc / Iris / UHD**: works out of the box (OpenVINO is bundled), encoding via VAAPI or Quick Sync.
+- The app tells you at startup which GPU path it found. If it says CPU only, the AI stages
+  still work but take many times longer.
 - Linux build tested on Fedora 44 and Ubuntu 22.04 on both Wayland and X11.
 
 ### Quick start
@@ -84,8 +87,8 @@ minutes), AI upscaling of 4K footage or RIFE slow-mo can take an hour or more.
 
 ### Known limitations
 
-- The AI features need an NVIDIA GPU to be fast; on AMD/Intel or without a GPU they
-  run on the CPU and take many times longer.
+- AMD and Intel GPU support is new and has had far less testing than NVIDIA; please report
+  what the startup status line says on your machine.
 - File dialogs are the app's own, so on Flatpak the app has full home-folder access.
 - No Mac build yet.
 

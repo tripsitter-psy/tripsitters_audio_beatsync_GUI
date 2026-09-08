@@ -80,6 +80,31 @@ that calls `bs_video_set_upscale_config` + `bs_video_normalize_sources` on a sma
 run it with `env -i` (no LD_LIBRARY_PATH), and check stderr for
 `Upscaler: CUDA execution provider enabled`.
 
+## Non-NVIDIA GPUs
+
+The bundle also carries ONNX Runtime providers for Intel and AMD, taken from the vendors'
+pip wheels (place them in `thirdparty/ort-providers/`; `stage.sh` warns if they are missing):
+
+```bash
+mkdir -p thirdparty/ort-providers && cd thirdparty/ort-providers
+# Intel: self-contained (OpenVINO runtime + Intel GPU/NPU plugins are inside the wheel)
+curl -LO https://files.pythonhosted.org/packages/42/0c/8d97419dfeedf419c5fe5293f3dbc59284855a63ad22e71f46c0010c9dc4/onnxruntime_openvino-1.23.0-cp312-cp312-manylinux_2_28_x86_64.whl
+# AMD: provider only; the user must have ROCm 7.2 installed (/opt/rocm)
+curl -LO https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/onnxruntime_migraphx-1.23.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+```
+
+Provider order and honesty checks are described in CLAUDE.md ("GPU execution provider
+chain"). Video encoding on AMD/Intel uses VAAPI through Mesa, which needs no extra runtime.
+
+Verified here (NVIDIA-only machine): with the CUDA provider removed, the chain reports the
+NVIDIA card as *not* an Intel GPU, and falls through to OpenVINO on the CPU with an explicit
+"NO GPU acceleration" message; the 2x upscaler model runs through the OpenVINO provider.
+Not verified: an actual Intel GPU or AMD card (none available), so treat the first report from
+such a machine as a test case.
+
+Flatpak caveat: the sandbox cannot see the host's `/opt/rocm`, so AMD acceleration currently
+works from the AppImage/tarball only. Intel needs nothing from the host except the driver.
+
 ## Runtime behaviour worth knowing
 
 * `AppRun` passes `-SaveToUserDir`, so Unreal logs/config go to `~/.config/Epic/TripSitter/Saved/`

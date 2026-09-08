@@ -75,6 +75,28 @@ cp "$ORT_ROOT/lib/libonnxruntime_providers_shared.so" "$ORT_ROOT/lib/libonnxrunt
 cp "$ORT_ROOT/LICENSE" "$APPDIR/licenses/onnxruntime-LICENSE.txt" 2>/dev/null || true
 cp "$REPO_ROOT/thirdparty/audioFlux/LICENSE.md" "$APPDIR/licenses/audioFlux-LICENSE.md" 2>/dev/null || true
 
+# --- Intel (OpenVINO) and AMD (MIGraphX) execution providers ------------------------
+OV_WHEEL="$(ls "$ORT_PROVIDERS_DIR"/onnxruntime_openvino-1.23.*-cp312-*.whl 2>/dev/null | head -1)"
+MG_WHEEL="$(ls "$ORT_PROVIDERS_DIR"/onnxruntime_migraphx-1.23.*-cp312-*.whl 2>/dev/null | head -1)"
+if [ -n "$OV_WHEEL" ]; then
+    log "Bundling Intel OpenVINO execution provider from $(basename "$OV_WHEEL")"
+    tmp="$(mktemp -d)"
+    unzip -q -o "$OV_WHEEL" 'onnxruntime/capi/libonnxruntime_providers_openvino.so' \
+        'onnxruntime/capi/libopenvino*' 'onnxruntime/capi/libtbb*' -d "$tmp"
+    cp -a "$tmp"/onnxruntime/capi/. "$BIN/lib/"
+    rm -rf "$tmp"
+    unzip -p "$OV_WHEEL" '*/LICENSE' > "$APPDIR/licenses/onnxruntime-openvino-LICENSE.txt" 2>/dev/null || true
+else
+    log "WARNING: no onnxruntime_openvino wheel in $ORT_PROVIDERS_DIR; Intel GPUs will run AI on the CPU"
+fi
+if [ -n "$MG_WHEEL" ]; then
+    log "Bundling AMD MIGraphX execution provider from $(basename "$MG_WHEEL")"
+    unzip -p "$MG_WHEEL" 'onnxruntime/capi/libonnxruntime_providers_migraphx.so' > "$BIN/lib/libonnxruntime_providers_migraphx.so"
+    chmod 755 "$BIN/lib/libonnxruntime_providers_migraphx.so"
+else
+    log "WARNING: no onnxruntime_migraphx wheel in $ORT_PROVIDERS_DIR; AMD GPUs will run AI on the CPU"
+fi
+
 # --- Optional CUDA runtime ---------------------------------------------------------
 if [ -z "$CUDA_LIB_DIRS" ]; then
     log "WARNING: no CUDA libraries found; this bundle will run AI stages on the CPU (set CUDA_LIB_DIRS)"

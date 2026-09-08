@@ -180,6 +180,7 @@ if(USE_ONNX)
     if(onnxruntime_FOUND)
         message(STATUS "ONNX Runtime found - enabling native AI inference")
         list(APPEND OPTIONAL_SOURCES
+            src/audio/OnnxProviders.cpp
             src/audio/OnnxBeatDetector.cpp
             src/audio/OnnxStemSeparator.cpp
             src/audio/OnnxMusicAnalyzer.cpp

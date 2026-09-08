@@ -513,6 +513,8 @@ void STripSitterMainWidget::Construct(const FArguments& InArgs)
 			]
 		]
 	];
+
+	StartAccelerationProbe();
 }
 
 TSharedRef<SWidget> STripSitterMainWidget::CreateFileSection()
@@ -3436,6 +3438,42 @@ FReply STripSitterMainWidget::OnStartSyncClicked()
 	EtaTickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateSP(this, &STripSitterMainWidget::TickRenderEta), 1.0f);
 
 	return FReply::Handled();
+}
+
+void STripSitterMainWidget::StartAccelerationProbe()
+{
+	if (!FBeatsyncLoader::IsInitialized() || !FBeatsyncLoader::IsAIAvailable())
+	{
+		return;
+	}
+	if (ETATextBlock.IsValid())
+	{
+		ETATextBlock->SetText(FText::FromString(TEXT("Checking GPU acceleration...")));
+	}
+	TWeakPtr<STripSitterMainWidget> WeakThis = SharedThis(this);
+	Async(EAsyncExecution::Thread, [WeakThis]()
+	{
+		FString Summary;
+		const int32 Result = FBeatsyncLoader::ProbeAcceleration(Summary);
+		AsyncTask(ENamedThreads::GameThread, [WeakThis, Result, Summary]()
+		{
+			TSharedPtr<STripSitterMainWidget> This = WeakThis.Pin();
+			if (!This.IsValid() || !This->ETATextBlock.IsValid()) return;
+			if (Result == 1)
+			{
+				This->ETATextBlock->SetText(FText::FromString(FString::Printf(TEXT("GPU: %s"), *Summary)));
+				This->ETATextBlock->SetColorAndOpacity(FLinearColor(0.55f, 1.0f, 0.65f));
+				UE_LOG(LogTemp, Log, TEXT("TripSitter: AI acceleration: %s"), *Summary);
+			}
+			else
+			{
+				This->ETATextBlock->SetText(FText::FromString(FString::Printf(
+					TEXT("WARNING: no GPU acceleration (%s) - AI stages will be very slow"), *Summary)));
+				This->ETATextBlock->SetColorAndOpacity(FLinearColor(1.0f, 0.55f, 0.2f));
+				UE_LOG(LogTemp, Warning, TEXT("TripSitter: NO GPU acceleration for AI stages: %s"), *Summary);
+			}
+		});
+	});
 }
 
 bool STripSitterMainWidget::TickRenderEta(float /*DeltaTime*/)

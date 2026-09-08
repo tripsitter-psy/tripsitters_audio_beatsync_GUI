@@ -800,7 +800,7 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
     // and pixel format to prevent freezing from mixed source formats
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\" -nostdin";
+    cmd << "\"" << ffmpegPath << "\" -nostdin" << encoderGlobalPrefix();
 
     // GPU acceleration: Use CUDA hardware decoding if available
     // IMPORTANT: Periodically force CPU mode to release GPU memory and prevent CUDA crashes
@@ -842,12 +842,12 @@ bool VideoWriter::copySegmentFast(const std::string& inputVideo,
         cmd << " -vf \"scale_cuda=" << m_outputWidth << ":" << m_outputHeight
             << ":force_original_aspect_ratio=decrease,hwdownload,format=nv12"
             << ",pad=" << m_outputWidth << ":" << m_outputHeight
-            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << encoderVfTail() << "\"";
     } else {
         // CPU filter chain (original behavior)
         cmd << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
             << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
-            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << encoderVfTail() << "\"";
     }
 
     // Always use best available encoder (GPU preferred)
@@ -957,7 +957,7 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
     // FIX: Normalize ALL clips to same resolution, frame rate, and pixel format
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\" -nostdin";
+    cmd << "\"" << ffmpegPath << "\" -nostdin" << encoderGlobalPrefix();
 
     // GPU acceleration: Use CUDA hardware decoding if available
     // IMPORTANT: Periodically force CPU mode to release GPU memory and prevent CUDA crashes
@@ -1017,12 +1017,12 @@ bool VideoWriter::copySegmentPrecise(const std::string& inputVideo,
         cmd << " -vf \"scale_cuda=" << m_outputWidth << ":" << m_outputHeight
             << ":force_original_aspect_ratio=decrease,hwdownload,format=nv12"
             << ",pad=" << m_outputWidth << ":" << m_outputHeight
-            << ":(ow-iw)/2:(oh-ih)/2,setsar=1" << retimeFpsStr << "\"";
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1" << retimeFpsStr << encoderVfTail() << "\"";
     } else {
         // CPU filter chain (original behavior)
         cmd << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
             << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
-            << ":(ow-iw)/2:(oh-ih)/2,setsar=1" << retimeFpsStr << "\"";
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1" << retimeFpsStr << encoderVfTail() << "\"";
     }
 
     // Retime audio to match the new video length so this segment file stays
@@ -1124,7 +1124,7 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
     }
 
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\" -nostdin";
+    cmd << "\"" << ffmpegPath << "\" -nostdin" << encoderGlobalPrefix();
     bool cudaAvail = hasCudaHwaccel();
     bool scaleCudaAvail = hasScaleCudaFilter();
     bool nvencAvail = probeEncoder("h264_nvenc");
@@ -1147,7 +1147,7 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
         cmd << " -vf \"scale_cuda=" << m_outputWidth << ":" << m_outputHeight
             << ":force_original_aspect_ratio=decrease,hwdownload,format=nv12"
             << ",pad=" << m_outputWidth << ":" << m_outputHeight
-            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << encoderVfTail() << "\"";
 
         // NVENC encoding for GPU-accelerated output
         cmd << " -c:v h264_nvenc -preset p4 -rc vbr -cq 18 -pix_fmt yuv420p"
@@ -1161,10 +1161,10 @@ bool VideoWriter::normalizeVideo(const std::string& inputVideo, const std::strin
         // CPU filter chain
         cmd << " -vf \"scale=" << m_outputWidth << ":" << m_outputHeight
             << ":force_original_aspect_ratio=decrease,pad=" << m_outputWidth << ":" << m_outputHeight
-            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << "\"";
+            << ":(ow-iw)/2:(oh-ih)/2,setsar=1,fps=" << m_outputFps << encoderVfTail() << "\"";
 
-        // libx264 CPU encoding
-        cmd << " -c:v libx264 -preset fast -crf 18"
+        // Best working encoder (VAAPI/QSV/AMF on non-NVIDIA machines, libx264 last)
+        cmd << " " << getEncoderArgs("fast")
             << " -c:a aac -b:a 192k -ar 44100"
             << " -video_track_timescale 90000"
             << " -y \"" << outputVideo << "\"";
@@ -1520,7 +1520,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
 
                     // Build ffmpeg command with all inputs
                     std::ostringstream cmd;
-                    cmd << "\"" << ffmpegPath << "\" -nostdin";
+                    cmd << "\"" << ffmpegPath << "\" -nostdin" << encoderGlobalPrefix();
                     for (const auto &v : inputVideos) {
                         cmd << " -i \"" << v << "\"";
                     }
@@ -1570,6 +1570,11 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
                     // Combine video transitions and audio concat into full filter_complex
                     std::string fullFilter = filterComplex + ";" + audioFilter.str();
                     std::string finalVideoLabel = "[t" + std::to_string(inputVideos.size()-1) + "]";
+                    if (!getEncoderFilterSuffix().empty()) {
+                        // VAAPI needs hardware frames: upload the final video label.
+                        fullFilter += ";" + finalVideoLabel + getEncoderFilterSuffix() + "[hwout]";
+                        finalVideoLabel = "[hwout]";
+                    }
 
                     // Use filter_complex_script file if command is too long (Windows limit ~8191 chars)
                     std::string filterScriptPath;
@@ -1650,7 +1655,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
     }
 
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\" -nostdin -fflags +genpts+igndts -f concat -safe 0 -i \"" << listFile
+    cmd << "\"" << ffmpegPath << "\" -nostdin" << encoderGlobalPrefix() << " -fflags +genpts+igndts -f concat -safe 0 -i \"" << listFile
         << "\" -c copy -video_track_timescale 90000 -y \"" << outputVideo << "\"";
 
     // Execute FFmpeg hidden (no console flash on Windows)
@@ -1718,7 +1723,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
         // Attempt a safe re-encode fallback (slower but normalizes timestamps)
         // Use GPU acceleration if available for faster re-encoding
         std::ostringstream reencodeCmd;
-        reencodeCmd << "\"" << ffmpegPath << "\" -nostdin";
+        reencodeCmd << "\"" << ffmpegPath << "\" -nostdin" << encoderGlobalPrefix();
 
         // Add CUDA hardware acceleration for decoding if available
         if (hasCudaHwaccel()) {
@@ -1726,7 +1731,7 @@ bool VideoWriter::concatenateVideos(const std::vector<std::string>& inputVideos,
         }
 
         reencodeCmd << " -fflags +genpts -f concat -safe 0 -i \"" << listFile
-                    << "\" " << getEncoderArgs("ultrafast") << " -r " << m_outputFps
+                    << "\"" << encoderVfOption() << " " << getEncoderArgs("ultrafast") << " -r " << m_outputFps
                     << " -c:a aac -b:a 192k -video_track_timescale 90000 -y \"" << outputVideo << "\"";
 
         // Execute re-encode hidden (no console flash on Windows)
@@ -1786,7 +1791,7 @@ bool VideoWriter::addAudioTrack(const std::string& inputVideo,
 
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\" -nostdin";
+    cmd << "\"" << ffmpegPath << "\" -nostdin" << encoderGlobalPrefix();
 
     // Combine video from first input with audio from second input
     // -c:v copy = stream copy video (fast, no re-encode)
@@ -2036,61 +2041,126 @@ bool VideoWriter::probeEncoder(const std::string& encoder) const {
     return found;
 }
 
+namespace {
+std::string presetFor(const std::string& encoder, const std::string& speedPreset) {
+    if (encoder == "h264_nvenc") return (speedPreset == "ultrafast") ? "p1" : (speedPreset == "fast") ? "p4" : "p5";
+    if (encoder == "h264_amf")   return (speedPreset == "ultrafast") ? "speed" : (speedPreset == "fast") ? "balanced" : "quality";
+    if (encoder == "h264_qsv")   return (speedPreset == "ultrafast") ? "veryfast" : (speedPreset == "fast") ? "fast" : "medium";
+    if (encoder == "h264_vaapi") return "";  // VAAPI has no speed presets; quality via -qp
+    return speedPreset;                       // libx264
+}
+
+std::vector<std::string> vaapiRenderNodes() {
+    std::vector<std::string> nodes;
+#ifndef _WIN32
+    std::error_code ec;
+    for (int i = 128; i < 136; ++i) {
+        std::string n = "/dev/dri/renderD" + std::to_string(i);
+        if (std::filesystem::exists(n, ec)) nodes.push_back(n);
+    }
+#endif
+    return nodes;
+}
+} // namespace
+
+bool VideoWriter::probeEncoderWorks(const std::string& encoder) const {
+    std::lock_guard<std::recursive_mutex> lock(m_cacheMutex);
+    auto it = m_encoderWorksCache.find(encoder);
+    if (it != m_encoderWorksCache.end()) return it->second;
+
+    if (!probeEncoder(encoder)) {            // not even compiled into this ffmpeg
+        m_encoderWorksCache[encoder] = false;
+        return false;
+    }
+    const std::string ffmpegPath = getFFmpegPath();
+    auto runProbe = [&](const std::string& globalArgs, const std::string& vf) {
+        std::ostringstream cmd;
+        cmd << "\"" << ffmpegPath << "\" -nostdin -hide_banner -loglevel error " << globalArgs
+            << " -f lavfi -i color=black:s=256x256:r=25:d=0.2";
+        if (!vf.empty()) cmd << " -vf \"" << vf << "\"";
+        cmd << " -c:v " << encoder << " -frames:v 3 -f null -";
+        std::string out;
+        int rc = runHiddenCommand(cmd.str(), out);
+        if (rc != 0) {
+            std::cout << "[GPU] encoder probe " << encoder << " failed (rc=" << rc << "): "
+                      << out.substr(0, 200) << "\n";
+        }
+        return rc == 0;
+    };
+
+    bool works = false;
+    if (encoder == "h264_vaapi") {
+        for (const std::string& node : vaapiRenderNodes()) {
+            if (runProbe("-init_hw_device vaapi=va:" + node + " -filter_hw_device va", "format=nv12,hwupload")) {
+                m_vaapiDevice = node;
+                works = true;
+                break;
+            }
+        }
+    } else {
+        works = runProbe("", "");
+    }
+    std::cout << "[GPU] encoder " << encoder << (works ? " works" : " NOT usable") << "\n";
+    m_encoderWorksCache[encoder] = works;
+    return works;
+}
+
 GPUEncoderInfo VideoWriter::detectBestEncoder(const std::string& speedPreset) const {
     std::lock_guard<std::recursive_mutex> lock(m_cacheMutex);
-    // Return cached result if available
     if (m_encoderCacheValid) {
-        // Adjust preset for cached encoder
         GPUEncoderInfo result = m_cachedEncoder;
-        if (result.encoderName == "h264_nvenc") {
-            result.preset = (speedPreset == "ultrafast") ? "p1" :
-                           (speedPreset == "fast") ? "p4" : "p5";
-        } else if (result.encoderName == "h264_amf") {
-            result.preset = (speedPreset == "ultrafast") ? "speed" :
-                           (speedPreset == "fast") ? "balanced" : "quality";
-        } else if (result.encoderName == "h264_qsv") {
-            result.preset = (speedPreset == "ultrafast") ? "veryfast" :
-                           (speedPreset == "fast") ? "fast" : "medium";
-        } else {
-            result.preset = speedPreset;
-        }
+        result.preset = presetFor(result.encoderName, speedPreset);
         return result;
     }
 
-    // Try NVIDIA NVENC first (most common high-end GPU)
-    if (probeEncoder("h264_nvenc")) {
-        std::string preset = (speedPreset == "ultrafast") ? "p1" :
-                            (speedPreset == "fast") ? "p4" : "p5";
-        m_cachedEncoder = {"h264_nvenc", preset, true};
-        m_encoderCacheValid = true;
-        std::cout << "[GPU] Detected NVIDIA NVENC encoder\n";
-        return m_cachedEncoder;
+    // BEATSYNC_ENCODER=h264_vaapi|h264_qsv|h264_amf|h264_nvenc|libx264 forces a
+    // choice (still verified); useful for support and for machines with several GPUs.
+    if (const char* forced = std::getenv("BEATSYNC_ENCODER")) {
+        std::string f = forced;
+        if (!f.empty()) {
+            if (f == "libx264" || probeEncoderWorks(f)) {
+                m_cachedEncoder = {f, presetFor(f, speedPreset), f != "libx264"};
+                m_encoderCacheValid = true;
+                std::cout << "[GPU] Using encoder from BEATSYNC_ENCODER: " << f << "\n";
+                return m_cachedEncoder;
+            }
+            std::cout << "[GPU] BEATSYNC_ENCODER=" << f << " is not usable here; auto-detecting\n";
+        }
     }
 
-    // Try AMD AMF
-    if (probeEncoder("h264_amf")) {
-        std::string preset = (speedPreset == "ultrafast") ? "speed" :
-                            (speedPreset == "fast") ? "balanced" : "quality";
-        m_cachedEncoder = {"h264_amf", preset, true};
-        m_encoderCacheValid = true;
-        std::cout << "[GPU] Detected AMD AMF encoder\n";
-        return m_cachedEncoder;
+    // Every candidate is verified by actually encoding a few frames: this ffmpeg
+    // build lists AMF/QSV/VAAPI/NVENC regardless of what the machine can run.
+    // Linux: NVIDIA NVENC, then VAAPI (Mesa AMD and Intel, no extra runtime),
+    // then Intel QSV (needs libvpl), then AMD AMF (needs amdgpu-pro's AMF runtime).
+    // Windows: NVENC, AMF, QSV.
+    const char* order[] = {
+        "h264_nvenc",
+#ifdef _WIN32
+        "h264_amf", "h264_qsv",
+#else
+        "h264_vaapi", "h264_qsv", "h264_amf",
+#endif
+    };
+    const char* label[] = {
+        "NVIDIA NVENC",
+#ifdef _WIN32
+        "AMD AMF", "Intel Quick Sync",
+#else
+        "VAAPI (AMD/Intel)", "Intel Quick Sync", "AMD AMF",
+#endif
+    };
+    for (size_t i = 0; i < sizeof(order) / sizeof(order[0]); ++i) {
+        if (probeEncoderWorks(order[i])) {
+            m_cachedEncoder = {order[i], presetFor(order[i], speedPreset), true};
+            m_encoderCacheValid = true;
+            std::cout << "[GPU] Using " << label[i] << " encoder (" << order[i] << ")\n";
+            return m_cachedEncoder;
+        }
     }
 
-    // Try Intel Quick Sync
-    if (probeEncoder("h264_qsv")) {
-        std::string preset = (speedPreset == "ultrafast") ? "veryfast" :
-                            (speedPreset == "fast") ? "fast" : "medium";
-        m_cachedEncoder = {"h264_qsv", preset, true};
-        m_encoderCacheValid = true;
-        std::cout << "[GPU] Detected Intel Quick Sync encoder\n";
-        return m_cachedEncoder;
-    }
-
-    // Fallback to software encoder
     m_cachedEncoder = {"libx264", speedPreset, false};
     m_encoderCacheValid = true;
-    std::cout << "[GPU] No hardware encoder found, using software libx264\n";
+    std::cout << "[GPU] WARNING: no working hardware encoder found, using software libx264 (slow)\n";
     return m_cachedEncoder;
 }
 
@@ -2111,6 +2181,10 @@ std::string VideoWriter::getEncoderArgs(const std::string& speedPreset) const {
         // Intel Quick Sync: Use global_quality for CRF-like mode
         args << "-c:v h264_qsv -preset " << enc.preset
              << " -global_quality 18 -pix_fmt yuv420p";
+    } else if (enc.encoderName == "h264_vaapi") {
+        // VAAPI (Mesa AMD / Intel): constant QP; frames arrive via hwupload
+        // (see getEncoderFilterSuffix), so no -pix_fmt here.
+        args << "-c:v h264_vaapi -rc_mode CQP -qp 20";
     } else {
         // Software fallback (libx264)
         args << "-c:v libx264 -preset " << enc.preset
@@ -2118,6 +2192,58 @@ std::string VideoWriter::getEncoderArgs(const std::string& speedPreset) const {
     }
 
     return args.str();
+}
+
+std::string VideoWriter::getEncoderGlobalArgs() const {
+    GPUEncoderInfo enc = detectBestEncoder("fast");
+    if (enc.encoderName == "h264_vaapi" && !m_vaapiDevice.empty()) {
+        return "-init_hw_device vaapi=va:" + m_vaapiDevice + " -filter_hw_device va";
+    }
+    return "";
+}
+
+std::string VideoWriter::getEncoderFilterSuffix() const {
+    GPUEncoderInfo enc = detectBestEncoder("fast");
+    if (enc.encoderName == "h264_vaapi") return "format=nv12,hwupload";
+    return "";
+}
+
+std::string VideoWriter::encoderGlobalPrefix() const {
+    std::string g = getEncoderGlobalArgs();
+    return g.empty() ? std::string() : " " + g;
+}
+
+std::string VideoWriter::encoderVfTail() const {
+    std::string suffix = getEncoderFilterSuffix();
+    return suffix.empty() ? std::string() : "," + suffix;
+}
+
+std::string VideoWriter::encoderVfOption() const {
+    std::string suffix = getEncoderFilterSuffix();
+    return suffix.empty() ? std::string() : " -vf \"" + suffix + "\"";
+}
+
+std::string VideoWriter::withEncoderFilterComplex(const std::string& filterComplex) const {
+    std::string suffix = getEncoderFilterSuffix();
+    if (suffix.empty()) return filterComplex;
+    if (filterComplex.empty()) return suffix;
+    // Unlabelled final chain: extend it. Labelled ("...[name]"): add a chain that
+    // consumes the label and leaves the hardware frames unlabelled for -map.
+    if (filterComplex.back() == ']') {
+        size_t open = filterComplex.rfind('[');
+        if (open != std::string::npos) {
+            std::string label = filterComplex.substr(open);
+            return filterComplex + ";" + label + suffix;
+        }
+    }
+    return filterComplex + "," + suffix;
+}
+
+std::string VideoWriter::withEncoderFilter(const std::string& vfChain) const {
+    std::string suffix = getEncoderFilterSuffix();
+    if (suffix.empty()) return vfChain;
+    if (vfChain.empty()) return suffix;
+    return vfChain + "," + suffix;
 }
 
 bool VideoWriter::hasCudaHwaccel() const {
@@ -2419,7 +2545,7 @@ bool VideoWriter::upscaleVideo(const std::string& inputVideo, const std::string&
     // Stage 1: decode to raw RGB24 at native size
     {
         std::ostringstream cmd;
-        cmd << "\"" << ffmpegPath << "\" -nostdin -i \"" << inputVideo << "\""
+        cmd << "\"" << ffmpegPath << "\" -nostdin" << encoderGlobalPrefix() << " -i \"" << inputVideo << "\""
             << " -vf \"format=rgb24\" -f rawvideo -y \"" << srcRaw << "\"";
         std::string out;
         // Decoding is ~5% of the stage, inference ~85%, encoding ~10%.
@@ -2488,11 +2614,11 @@ bool VideoWriter::upscaleVideo(const std::string& inputVideo, const std::string&
     // Stage 3: encode the upscaled sequence, carrying the original audio over
     {
         std::ostringstream cmd;
-        cmd << "\"" << ffmpegPath << "\" -nostdin"
+        cmd << "\"" << ffmpegPath << "\" -nostdin" << encoderGlobalPrefix()
             << " -f rawvideo -pix_fmt rgb24 -s " << (srcW * scale) << "x" << (srcH * scale)
             << " -r " << srcFps << " -i \"" << outRaw << "\""
             << " -i \"" << inputVideo << "\""
-            << " -map 0:v -map \"1:a?\" -shortest "
+            << " -map 0:v -map \"1:a?\" -shortest" << encoderVfOption() << " "
             << getEncoderArgs("fast")
             << " -c:a aac -b:a 192k -video_track_timescale 90000 -y \"" << outputVideo << "\"";
         std::string out;
@@ -2596,7 +2722,7 @@ bool VideoWriter::extractSpeedClipInterpolated(const std::string& inputVideo,
     const std::string ffmpegPath = getFFmpegPath();
     {
         std::ostringstream cmd;
-        cmd << "\"" << ffmpegPath << "\" -nostdin";
+        cmd << "\"" << ffmpegPath << "\" -nostdin" << encoderGlobalPrefix();
         cmd << std::fixed << std::setprecision(6);
         cmd << " -ss " << sourceStart << " -t " << windowDur;
         cmd << std::defaultfloat;
@@ -2670,11 +2796,11 @@ bool VideoWriter::extractSpeedClipInterpolated(const std::string& inputVideo,
     // master audio is muxed over the whole timeline later).
     {
         std::ostringstream cmd;
-        cmd << "\"" << ffmpegPath << "\" -nostdin";
+        cmd << "\"" << ffmpegPath << "\" -nostdin" << encoderGlobalPrefix();
         cmd << " -f rawvideo -pix_fmt rgb24 -s " << W << "x" << H
             << " -r " << m_outputFps << " -i \"" << outRaw << "\"";
         cmd << " -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100";
-        cmd << " -vf format=yuv420p";
+        cmd << " -vf \"" << withEncoderFilter("format=yuv420p") << "\"";
         cmd << " " << getEncoderArgs("ultrafast");
         cmd << " -c:a aac -b:a 192k -ar 44100 -shortest";
         cmd << " -video_track_timescale 90000";
@@ -2948,7 +3074,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
         // Simple copy
         std::string ffmpegPath = getFFmpegPath();
         std::ostringstream cmd;
-        cmd << "\"" << ffmpegPath << "\" -nostdin -i \"" << inputVideo << "\""
+        cmd << "\"" << ffmpegPath << "\" -nostdin" << encoderGlobalPrefix() << " -i \"" << inputVideo << "\""
             << " -c copy -y \"" << outputVideo << "\"";
 
         std::string ffmpegOutput;
@@ -2974,7 +3100,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
     // Apply effects with re-encoding
     std::string ffmpegPath = getFFmpegPath();
     std::ostringstream cmd;
-    cmd << "\"" << ffmpegPath << "\" -nostdin";
+    cmd << "\"" << ffmpegPath << "\" -nostdin" << encoderGlobalPrefix();
     bool cudaAvailable = hasCudaHwaccel();
     bool scaleCudaAvailable = hasScaleCudaFilter();
     bool nvencAvailable = probeEncoder("h264_nvenc");
@@ -3187,6 +3313,7 @@ bool VideoWriter::applyEffects(const std::string& inputVideo, const std::string&
 
     // Use filter_script file if the filter is too long for command line (Windows limit ~8191 chars)
     std::string filterScriptPath;
+    vf = withEncoderFilterComplex(vf);
     bool useFilterScript = vf.length() > 6000;  // Leave margin for rest of command
     
     if (!vf.empty()) {

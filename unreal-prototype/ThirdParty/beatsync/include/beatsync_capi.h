@@ -416,6 +416,14 @@ BEATSYNC_API int bs_ai_is_available(void);
 // Returns a library-owned, NUL-terminated string. Do not free.
 // Valid until library unloads or next call to bs_ai_get_providers().
 BEATSYNC_API const char* bs_ai_get_providers(void);
+// Probe which execution provider this machine will actually use for AI stages
+// (creates a throwaway session): returns 1 = GPU accelerated, 0 = CPU only,
+// -1 = ONNX unavailable. out_summary (may be NULL) receives a human readable
+// description such as "CUDA (NVIDIA GPU)" or "CPU only - no GPU acceleration".
+BEATSYNC_API int bs_ai_probe_acceleration(char* out_summary, size_t summary_size);
+// Description of the provider used by the most recent AI session of any kind
+// (beat detector, stem separator, RIFE, upscaler); empty if none yet.
+BEATSYNC_API const char* bs_ai_get_last_provider(void);
 
 // Check if GPU is enabled for a specific analyzer instance (returns 1 if GPU active, 0 if CPU)
 BEATSYNC_API int bs_ai_is_gpu_enabled(void* analyzer);

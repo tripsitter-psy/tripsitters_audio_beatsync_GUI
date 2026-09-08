@@ -1750,6 +1750,7 @@ BEATSYNC_API void bs_span_add_event(bs_span_t span, const char* event) {
 #ifdef USE_ONNX
 #include "../audio/OnnxMusicAnalyzer.h"
 #include "../audio/OnnxBeatDetector.h"
+#include "../audio/OnnxProviders.h"
 #include "../audio/OnnxStemSeparator.h"
 #endif
 
@@ -2294,6 +2295,34 @@ BEATSYNC_API int bs_ai_is_available() {
     return BeatSync::OnnxBeatDetector::isOnnxRuntimeAvailable() ? 1 : 0;
 #else
     return 0;
+#endif
+}
+
+BEATSYNC_API int bs_ai_probe_acceleration(char* out_summary, size_t summary_size) {
+#ifdef USE_ONNX
+    try {
+        BeatSync::OnnxProviderResult r = BeatSync::probeAcceleration();
+        if (out_summary && summary_size > 0) {
+            std::snprintf(out_summary, summary_size, "%s", r.detail.c_str());
+        }
+        return r.isGpu ? 1 : 0;
+    } catch (...) {
+        if (out_summary && summary_size > 0) std::snprintf(out_summary, summary_size, "probe failed");
+        return 0;
+    }
+#else
+    if (out_summary && summary_size > 0) std::snprintf(out_summary, summary_size, "ONNX Runtime not available");
+    return -1;
+#endif
+}
+
+BEATSYNC_API const char* bs_ai_get_last_provider() {
+#ifdef USE_ONNX
+    static std::string s_active;
+    s_active = BeatSync::lastProviderSummary();
+    return s_active.c_str();
+#else
+    return "";
 #endif
 }
 

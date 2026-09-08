@@ -260,6 +260,10 @@ public:
     // AI Analyzer (ONNX neural network - GPU accelerated)
     static bool IsAIAvailable();
     static FString GetAIProviders();
+    // Which execution provider AI stages will really use on this machine (creates a
+    // throwaway session, ~1 s on a GPU). Returns 1 = GPU, 0 = CPU only, -1 = unknown.
+    // OutSummary e.g. "CUDA (NVIDIA GPU)" or "CPU only - no GPU acceleration".
+    static int32 ProbeAcceleration(FString& OutSummary);
     static void* CreateAIAnalyzer(const FAIConfig& Config);
     static void DestroyAIAnalyzer(void* Handle);
     static bool AIAnalyzeFile(void* Analyzer, const FString& FilePath, FAIResult& OutResult);

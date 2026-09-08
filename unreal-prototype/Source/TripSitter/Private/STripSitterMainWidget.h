@@ -304,5 +304,7 @@ private:
 	// Processing callbacks
 	void OnProcessingProgress(float InProgress, const FString& Status);
 	bool TickRenderEta(float DeltaTime);
+	// Startup probe of GPU acceleration, shown on the right of the status line.
+	void StartAccelerationProbe();
 	void OnProcessingComplete(const FBeatsyncProcessingResult& Result);
 };

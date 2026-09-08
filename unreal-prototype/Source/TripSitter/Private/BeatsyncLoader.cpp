@@ -147,6 +147,7 @@ struct bs_ai_result_t {
 using bs_ai_progress_cb = int (*)(float, const char*, const char*, void*);
 using bs_ai_is_available_t = int (*)();
 using bs_ai_get_providers_t = const char* (*)();
+using bs_ai_probe_acceleration_t = int (*)(char*, size_t);
 using bs_create_ai_analyzer_t = void* (*)(const bs_ai_config_t*);
 using bs_destroy_ai_analyzer_t = void (*)(void*);
 using bs_ai_analyze_file_t = int (*)(void*, const char*, bs_ai_result_t*, bs_ai_progress_cb, void*);
@@ -203,6 +204,7 @@ struct FBeatsyncApi
     // AI analyzer functions
     bs_ai_is_available_t ai_is_available = nullptr;
     bs_ai_get_providers_t ai_get_providers = nullptr;
+    bs_ai_probe_acceleration_t ai_probe_acceleration = nullptr;
     bs_create_ai_analyzer_t create_ai_analyzer = nullptr;
     bs_destroy_ai_analyzer_t destroy_ai_analyzer = nullptr;
     bs_ai_analyze_file_t ai_analyze_file = nullptr;
@@ -351,6 +353,7 @@ bool FBeatsyncLoader::Initialize()
     // AI analyzer functions (ONNX neural network)
     GApi.ai_is_available = (bs_ai_is_available_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_is_available"));
     GApi.ai_get_providers = (bs_ai_get_providers_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_get_providers"));
+    GApi.ai_probe_acceleration = (bs_ai_probe_acceleration_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_probe_acceleration"));
     GApi.create_ai_analyzer = (bs_create_ai_analyzer_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_create_ai_analyzer"));
     GApi.destroy_ai_analyzer = (bs_destroy_ai_analyzer_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_destroy_ai_analyzer"));
     GApi.ai_analyze_file = (bs_ai_analyze_file_t)FPlatformProcess::GetDllExport(GApi.DllHandle, TEXT("bs_ai_analyze_file"));
@@ -608,6 +611,20 @@ bool FBeatsyncLoader::ProbeVideo(const FString& Path, double& OutDuration, int32
     if (GApi.video_probe(TCHAR_TO_UTF8(*Path), &Dur, &W, &H, &Fps) != 0) return false;
     OutDuration = Dur; OutWidth = W; OutHeight = H; OutFps = Fps;
     return true;
+}
+
+int32 FBeatsyncLoader::ProbeAcceleration(FString& OutSummary)
+{
+    OutSummary.Empty();
+    if (!GApi.ai_probe_acceleration)
+    {
+        OutSummary = TEXT("backend has no acceleration probe");
+        return -1;
+    }
+    char Buf[256] = {0};
+    int Result = GApi.ai_probe_acceleration(Buf, sizeof(Buf));
+    OutSummary = FString(UTF8_TO_TCHAR(Buf));
+    return Result;
 }
 
 void FBeatsyncLoader::SetProgressCallback(void* Handle, TFunction<void(double)> Callback)

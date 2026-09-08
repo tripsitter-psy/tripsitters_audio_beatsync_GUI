@@ -230,16 +230,29 @@ libraries, and never let a code path degrade to CPU silently (log it and show it
 UI). For AMD (Radeon) and Intel users the target is a GPU path too (ONNX Runtime
 ROCm/DirectML/OpenVINO or a Vulkan backend), not CPU.
 
-**GPU Execution Provider Fallback Chain**:
+**GPU execution provider chain** (`src/audio/OnnxProviders.{h,cpp}`, shared by the beat
+detector, stem separator, RIFE and the upscaler; do not re-implement it per component):
 
-Both `OnnxBeatDetector` and `OnnxStemSeparator` automatically select the best available execution provider:
+1. **TensorRT** (NVIDIA RTX; fixed-shape models only: beat detector, upscaler; stem separator opt-in via `BEATSYNC_TRT_STEMSEP=1`)
+2. **CUDA** (any NVIDIA GPU; always appended behind TensorRT for subgraphs it declines)
+3. **MIGraphX**, then **ROCm** (AMD Radeon; provider from the `onnxruntime_migraphx` 1.23.2 wheel, needs ROCm 7.2 on the host)
+4. **OpenVINO GPU / NPU** (Intel Arc/Iris/UHD; provider + runtime from the `onnxruntime_openvino` wheel, self-contained). The
+   GPU rung is only used when OpenVINO's `FULL_DEVICE_NAME` says Intel: the plugin also enumerates NVIDIA/AMD OpenCL devices.
+5. **DirectML** (Windows)
+6. **OpenVINO CPU** (Intel CPUs, still faster than the plain CPU EP) and finally **CPU**
 
-1. **TensorRT** (RTX GPUs) - Best performance on RTX cards with Tensor Cores, FP16 enabled, 8GB workspace
-2. **CUDA** (GTX/RTX GPUs) - Falls back if TensorRT unavailable or fails
-3. **DirectML** (AMD/Intel GPUs) - Falls back if CUDA unavailable (Windows only)
-4. **CPU** - Final fallback if no GPU acceleration available
+`createSessionWithFallback()` retries with the next rung when a provider appends but fails at
+session creation. `bs_ai_probe_acceleration()` runs a tiny inference and reports the real
+provider; the GUI shows it in the status line at startup and warns in orange when it is CPU.
+Env overrides: `BEATSYNC_FORCE_CPU=1`, `BEATSYNC_NO_TENSORRT=1`.
 
-This ensures the app works on any system while maximizing performance on NVIDIA GPUs. The stem separation model (Demucs) particularly benefits from GPU acceleration due to its computational intensity.
+**Video encoder selection** (`VideoWriter::detectBestEncoder`): candidates are verified by
+actually encoding three frames (`probeEncoderWorks`), because the bundled FFmpeg lists
+NVENC/AMF/QSV/VAAPI regardless of hardware. Order on Linux: NVENC → VAAPI (Mesa AMD and Intel,
+no extra runtime) → QSV → AMF → libx264; Windows: NVENC → AMF → QSV → libx264. VAAPI needs
+`-init_hw_device` before inputs and `format=nv12,hwupload` at the end of every video filter
+chain; every ffmpeg command site goes through `encoderGlobalPrefix()` / `encoderVfTail()` /
+`encoderVfOption()` / `withEncoderFilterComplex()`. `BEATSYNC_ENCODER=<name>` forces one.
 
 Note: `avutil` is included in FFmpeg core and is not a selectable vcpkg feature.
 

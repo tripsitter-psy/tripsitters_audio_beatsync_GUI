@@ -16,6 +16,12 @@ UE_ROOT="${UE_ROOT:-$HOME/UE5_Source/UnrealEngine}"
 FFMPEG_ROOT="${FFMPEG_ROOT:-$REPO_ROOT/thirdparty/ffmpeg-n8.1-latest-linux64-gpl-shared-8.1}"
 ORT_ROOT="${ORT_ROOT:-$REPO_ROOT/thirdparty/onnxruntime-linux-x64-gpu-1.23.2}"
 
+# ONNX Runtime execution providers for non-NVIDIA GPUs, taken from the official
+# pip wheels (see README.md "Non-NVIDIA GPUs"):
+#   Intel  onnxruntime_openvino-1.23.*  (self-contained: ships the OpenVINO runtime + Intel GPU/NPU plugins)
+#   AMD    onnxruntime_migraphx-1.23.2  (ROCm 7.2; the host must have ROCm installed)
+ORT_PROVIDERS_DIR="${ORT_PROVIDERS_DIR:-$REPO_ROOT/thirdparty/ort-providers}"
+
 # CUDA runtime libraries to bundle (cuBLAS, cuFFT, cuRAND, cudart, cuDNN, NVRTC) so
 # the AI stages (stem separation, upscaling, RIFE) run on the GPU. Bundled by
 # default; auto-detected from the usual install locations. Set CUDA_LIB_DIRS=none

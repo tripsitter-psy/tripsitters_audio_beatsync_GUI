@@ -1,4 +1,7 @@
 #include "OnnxUpscaler.h"
+#ifdef USE_ONNX
+#include "../audio/OnnxProviders.h"
+#endif
 
 #include <algorithm>
 #include <cstring>
@@ -70,123 +73,46 @@ bool OnnxUpscaler::loadModel(const std::string& modelPath, bool useGPU, int gpuD
         return false;
     }
     try {
-        m_impl->sessionOptions = std::make_unique<Ort::SessionOptions>();
-        m_impl->sessionOptions->SetIntraOpNumThreads(0);
-        m_impl->sessionOptions->SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-
-        std::string activeProvider = "CPU";
+        // Provider selection is shared with the other AI components (OnnxProviders):
+        // TensorRT -> CUDA -> MIGraphX/ROCm -> OpenVINO GPU -> DirectML -> CPU.
+        // TensorRT first: unlike the interpolator (variable clip sizes), the
+        // upscaler always runs fixed-size tiles, so a handful of engines cover
+        // every frame of every clip. Engines are cached on disk (survives a
+        // reboot, unlike the temp dir), so only the first run pays the build cost.
+        OnnxProviderRequest req;
+        req.component = "Upscaler";
+        req.deviceId = gpuDeviceId;
+        req.allowTensorRT = useGPU;
+        req.trtFp16 = true;  // Ada tensor cores; SR is tolerant of fp16
         if (useGPU) {
-            const OrtApi& ortApi = Ort::GetApi();
-
-            // TensorRT first: unlike the interpolator (variable clip sizes), the
-            // upscaler always runs fixed-size tiles, so a handful of engines cover
-            // every frame of every clip. Engines are cached on disk, so only the
-            // first run pays the build cost.
-            try {
-                OrtTensorRTProviderOptionsV2* trtOptions = nullptr;
-                OrtStatus* status = ortApi.CreateTensorRTProviderOptions(&trtOptions);
-                if (status == nullptr && trtOptions != nullptr) {
-                    // Engines are tied to this GPU and TensorRT version and take
-                    // ~25s to build, so cache them somewhere that survives a
-                    // reboot rather than in the temp directory.
-                    std::string cacheDir;
-                    if (const char* xdg = std::getenv("XDG_CACHE_HOME")) {
-                        cacheDir = std::string(xdg) + "/beatsync/trt";
-                    } else if (const char* home = std::getenv("HOME")) {
-                        cacheDir = std::string(home) + "/.cache/beatsync/trt";
-                    } else {
-                        cacheDir = (std::filesystem::temp_directory_path() / "beatsync_trt_cache").string();
-                    }
-                    std::error_code ec;
-                    std::filesystem::create_directories(cacheDir, ec);
-                    if (ec) {
-                        cacheDir = (std::filesystem::temp_directory_path() / "beatsync_trt_cache").string();
-                        std::filesystem::create_directories(cacheDir, ec);
-                    }
-
-                    char deviceIdStr[16];
-                    snprintf(deviceIdStr, sizeof(deviceIdStr), "%d", gpuDeviceId);
-                    const char* keys[] = {
-                        "device_id",
-                        "trt_fp16_enable",          // Ada tensor cores; SR is tolerant of fp16
-                        "trt_engine_cache_enable",
-                        "trt_engine_cache_path",
-                        "trt_timing_cache_enable"
-                    };
-                    const char* values[] = {deviceIdStr, "1", "1", cacheDir.c_str(), "1"};
-                    status = ortApi.UpdateTensorRTProviderOptions(trtOptions, keys, values, 5);
-                    if (status == nullptr) {
-                        status = ortApi.SessionOptionsAppendExecutionProvider_TensorRT_V2(
-                            static_cast<OrtSessionOptions*>(*m_impl->sessionOptions), trtOptions);
-                        if (status == nullptr) {
-                            activeProvider = "TensorRT";
-                            std::cerr << "[BeatSync] Upscaler: TensorRT execution provider enabled "
-                                      << "(engine cache: " << cacheDir << ")" << std::endl;
-                        } else {
-                            const char* msg = ortApi.GetErrorMessage(status);
-                            std::cerr << "[BeatSync] Upscaler: TensorRT unavailable ("
-                                      << (msg ? msg : "?") << "), falling back to CUDA" << std::endl;
-                            ortApi.ReleaseStatus(status);
-                        }
-                    } else {
-                        ortApi.ReleaseStatus(status);
-                    }
-                    ortApi.ReleaseTensorRTProviderOptions(trtOptions);
-                } else if (status != nullptr) {
-                    ortApi.ReleaseStatus(status);
-                }
-            } catch (...) {
-                std::cerr << "[BeatSync] Upscaler: TensorRT provider exception" << std::endl;
+            if (const char* xdg = std::getenv("XDG_CACHE_HOME")) {
+                req.trtCacheDir = std::string(xdg) + "/beatsync/trt";
+            } else if (const char* home = std::getenv("HOME")) {
+                req.trtCacheDir = std::string(home) + "/.cache/beatsync/trt";
+            } else {
+                req.trtCacheDir = (std::filesystem::temp_directory_path() / "beatsync_trt_cache").string();
             }
-
-            // CUDA is appended regardless: it handles any subgraph TensorRT
-            // declines and is the fallback when TensorRT is not installed.
-            try {
-                OrtCUDAProviderOptionsV2* cudaOptions = nullptr;
-                OrtStatus* status = ortApi.CreateCUDAProviderOptions(&cudaOptions);
-                if (status == nullptr && cudaOptions != nullptr) {
-                    const char* keys[] = {"device_id", "arena_extend_strategy"};
-                    char deviceIdStr[16];
-                    snprintf(deviceIdStr, sizeof(deviceIdStr), "%d", gpuDeviceId);
-                    const char* values[] = {deviceIdStr, "kSameAsRequested"};
-                    status = ortApi.UpdateCUDAProviderOptions(cudaOptions, keys, values, 2);
-                    if (status == nullptr) {
-                        status = ortApi.SessionOptionsAppendExecutionProvider_CUDA_V2(
-                            static_cast<OrtSessionOptions*>(*m_impl->sessionOptions), cudaOptions);
-                        if (status == nullptr) {
-                            if (activeProvider != "TensorRT") activeProvider = "CUDA";
-                            std::cerr << "[BeatSync] Upscaler: CUDA execution provider enabled" << std::endl;
-                        } else {
-                            const char* msg = ortApi.GetErrorMessage(status);
-                            std::cerr << "[BeatSync] Upscaler: CUDA append failed: " << (msg ? msg : "?") << std::endl;
-                            ortApi.ReleaseStatus(status);
-                        }
-                    } else {
-                        ortApi.ReleaseStatus(status);
-                    }
-                    ortApi.ReleaseCUDAProviderOptions(cudaOptions);
-                } else if (status != nullptr) {
-                    ortApi.ReleaseStatus(status);
-                }
-            } catch (...) {
-                std::cerr << "[BeatSync] Upscaler: CUDA provider exception" << std::endl;
-            }
-
-#ifdef _WIN32
-            if (activeProvider == "CPU") {
-                try {
-                    m_impl->sessionOptions->AppendExecutionProvider("DML", {});
-                    activeProvider = "DirectML";
-                    std::cerr << "[BeatSync] Upscaler: DirectML execution provider enabled" << std::endl;
-                } catch (...) {
-                    std::cerr << "[BeatSync] Upscaler: DirectML fallback failed" << std::endl;
-                }
-            }
-#endif
         }
-
-        m_impl->session = std::make_unique<Ort::Session>(*m_impl->env, modelPath.c_str(),
-                                                        *m_impl->sessionOptions);
+        std::string activeProvider = "CPU";
+        std::string sessionError;
+        if (useGPU) {
+            OnnxProviderResult chosen;
+            m_impl->session = createSessionWithFallback(*m_impl->env, modelPath, req,
+                [](Ort::SessionOptions& o) {
+                    o.SetIntraOpNumThreads(0);
+                    o.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+                }, chosen, sessionError);
+            activeProvider = chosen.detail;
+        } else {
+            Ort::SessionOptions o;
+            o.SetIntraOpNumThreads(0);
+            o.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+            m_impl->session = std::make_unique<Ort::Session>(*m_impl->env, modelPath.c_str(), o);
+        }
+        if (!m_impl->session) {
+            m_impl->lastError = "ONNX load failed: " + sessionError;
+            return false;
+        }
 
         Ort::AllocatorWithDefaultOptions allocator;
         if (m_impl->session->GetInputCount() != 1 || m_impl->session->GetOutputCount() != 1) {
