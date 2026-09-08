@@ -75,10 +75,10 @@ need the NVIDIA driver (535+). In the Flatpak the driver comes from
 host driver. TensorRT is not bundled; the TensorRT → CUDA → CPU fallback in the backend
 handles that. NVENC encoding needs only the driver either way.
 
-Verification: run the bundled backend with a clean environment and watch for
-`Upscaler: CUDA execution provider enabled` (see `scripts`-free check in the git history
-of this file: a tiny C program calling `bs_video_set_upscale_config` +
-`bs_video_normalize_sources` on a 320x240 clip).
+Verification: link a tiny program against the bundle's `libbeatsync_backend_shared.so`
+that calls `bs_video_set_upscale_config` + `bs_video_normalize_sources` on a small clip,
+run it with `env -i` (no LD_LIBRARY_PATH), and check stderr for
+`Upscaler: CUDA execution provider enabled`.
 
 ## Runtime behaviour worth knowing
 
